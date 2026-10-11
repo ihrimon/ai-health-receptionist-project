@@ -54,60 +54,6 @@ export async function apiFetch<T>(
   return text ? (JSON.parse(text) as T) : (undefined as T);
 }
 
-export type BookingStatus = "pending" | "confirmed" | "cancelled" | "completed";
-export type CallStatus = "ringing" | "in-progress" | "completed" | "failed";
-
-export interface Provider {
-  id: string;
-  name: string;
-  email: string;
-  phone?: string;
-  service: string;
-  slotDurationMinutes: number;
-  timezone: string;
-  isActive: boolean;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface ProviderAvailability {
-  id: string;
-  providerId: string;
-  dayOfWeek: number;
-  startTime: string;
-  endTime: string;
-  createdAt: string;
-}
-
-export interface Booking {
-  id: string;
-  name: string;
-  phone: string;
-  email: string;
-  company?: string;
-  service: string;
-  budget?: string;
-  preferredDate: string;
-  preferredTime: string;
-  providerId?: string;
-  startsAt?: string;
-  endsAt?: string;
-  googleEventId?: string;
-  notes?: string;
-  status: BookingStatus;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface CallSession {
-  id: string;
-  callSid: string;
-  status: CallStatus;
-  startedAt?: string;
-  endedAt?: string;
-  createdAt: string;
-}
-
 export interface ChatTurn {
   role: "user" | "model";
   text: string;
@@ -115,8 +61,6 @@ export interface ChatTurn {
 
 export interface Conversation {
   id: string;
-  bookingId?: string;
-  booking?: Booking;
   callSid: string;
   transcript?: ChatTurn[];
   summary?: string;
@@ -151,33 +95,10 @@ export interface LlmCredential {
   updatedAt: string;
 }
 
-export const DAY_NAMES = [
-  "Sunday",
-  "Monday",
-  "Tuesday",
-  "Wednesday",
-  "Thursday",
-  "Friday",
-  "Saturday",
-];
-
 export function formatDateTime(iso?: string): string {
   if (!iso) return "—";
   return new Date(iso).toLocaleString([], {
     dateStyle: "medium",
     timeStyle: "short",
   });
-}
-
-export function formatDate(iso?: string): string {
-  if (!iso) return "—";
-  return new Date(iso).toLocaleDateString([], { dateStyle: "medium" });
-}
-
-/** Formats a "HH:mm" or "HH:mm:ss" time-of-day string as e.g. "9:00 AM". */
-export function formatTime(time: string): string {
-  const [hours = "0", minutes = "0"] = time.split(":");
-  const date = new Date();
-  date.setHours(Number(hours), Number(minutes), 0, 0);
-  return date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 }

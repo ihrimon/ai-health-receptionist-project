@@ -3,7 +3,6 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
-  CalendarClock,
   ChevronsUpDown,
   Gauge,
   Headset,
@@ -11,7 +10,6 @@ import {
   MessageCircle,
   MessagesSquare,
   Settings,
-  Stethoscope,
 } from "lucide-react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -41,11 +39,7 @@ import { API_URL, clearDashboardSession } from "@/lib/api";
 const NAV_ITEMS = [
   { title: "Overview", href: "/admin", icon: Gauge },
   { title: "Chat", href: "/chat", icon: MessageCircle },
-  { title: "Bookings", href: "/admin/bookings", icon: CalendarClock },
-  { title: "Doctors", href: "/admin/doctors", icon: Stethoscope },
   { title: "Conversations", href: "/admin/conversations", icon: MessagesSquare },
-  // Call History temporarily disabled — see calls/page.tsx.
-  // { title: "Call History", href: "/admin/calls", icon: PhoneCall },
 ];
 
 export function AppSidebar() {

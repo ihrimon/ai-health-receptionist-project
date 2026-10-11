@@ -16,7 +16,7 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "BrainStack AI Receptionist",
-  description: "Chat with BrainStack's AI receptionist to book a service appointment",
+  description: "An AI assistant for your website that answers visitors from your own content",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {

@@ -6,11 +6,7 @@ import { Separator } from "@/components/ui/separator";
 import { ModeToggle } from "@/components/mode-toggle";
 
 const TITLES: { prefix: string; title: string }[] = [
-  { prefix: "/admin/bookings", title: "Bookings" },
-  { prefix: "/admin/doctors", title: "Doctors" },
   { prefix: "/admin/conversations", title: "Conversations" },
-  // Call History temporarily disabled — see calls/page.tsx.
-  // { prefix: "/admin/calls", title: "Call History" },
   { prefix: "/admin/settings", title: "Settings" },
 ];
 

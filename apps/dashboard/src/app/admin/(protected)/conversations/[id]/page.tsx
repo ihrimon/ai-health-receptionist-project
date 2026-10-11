@@ -2,10 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
-import Link from "next/link";
 import { PageHeader } from "@/components/page-header";
 import { TranscriptView } from "@/components/transcript-view";
-import { Badge } from "@/components/ui/badge";
 import { apiFetch, formatDateTime, type Conversation } from "@/lib/api";
 
 export default function ConversationDetailPage() {
@@ -39,19 +37,6 @@ export default function ConversationDetailPage() {
 
       <div className="chat-wallpaper min-h-0 flex-1 overflow-y-auto px-3 py-4 sm:px-8">
         <div className="mx-auto flex max-w-2xl flex-col gap-3">
-          {conversation.bookingId && (
-            <Link
-              href={`/admin/bookings/${conversation.bookingId}`}
-              className="w-fit"
-            >
-              <Badge
-                variant="outline"
-                className="border-transparent bg-green-100 text-green-700 hover:underline dark:bg-green-900/40 dark:text-green-300"
-              >
-                ✓ Booking created — view booking
-              </Badge>
-            </Link>
-          )}
           <TranscriptView transcript={conversation.transcript} />
         </div>
       </div>
