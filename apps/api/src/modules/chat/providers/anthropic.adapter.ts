@@ -5,27 +5,27 @@ import type {
   MessageParam,
   Tool,
 } from '@anthropic-ai/sdk/resources/messages';
-import { FIND_AVAILABLE_SLOTS_TOOL } from '../find-available-slots.tool';
-import { RECORD_BOOKING_TOOL } from '../record-booking.tool';
 import {
   LLM_REQUEST_TIMEOUT_MS,
   type AdapterCompleteParams,
   type AdapterCompleteResult,
   type ChatCompletionMessage,
   type ChatCompletionMessageParam,
+  type ChatCompletionTool,
   type LlmProviderAdapter,
 } from './provider-adapter.types';
 
-// Both tool constants are `{ type: 'function', function: {...} }` literals
-// (never any other Groq.ChatCompletionTool variant), so `function` is
-// always present despite the SDK's general type marking it optional.
-const TOOLS: Tool[] = [RECORD_BOOKING_TOOL, FIND_AVAILABLE_SLOTS_TOOL].map(
-  (tool) => ({
+// Our tool definitions are always `{ type: 'function', function: {...} }`
+// literals (never any other Groq.ChatCompletionTool variant), so
+// `function` is always present despite the SDK's general type marking it
+// optional.
+export function toAnthropicTools(tools: ChatCompletionTool[]): Tool[] {
+  return tools.map((tool) => ({
     name: tool.function!.name,
     description: tool.function!.description,
     input_schema: tool.function!.parameters as Tool['input_schema'],
-  }),
-);
+  }));
+}
 
 /**
  * Claude's Messages API has its own shape — a separate top-level `system`
@@ -41,6 +41,7 @@ export class AnthropicAdapter implements LlmProviderAdapter {
     apiKey,
     model,
     messages,
+    tools,
   }: AdapterCompleteParams): Promise<AdapterCompleteResult> {
     // maxRetries: 0 — see OpenAiCompatibleAdapter's identical note; our
     // own cross-credential rotation already covers retrying, and this
@@ -58,7 +59,7 @@ export class AnthropicAdapter implements LlmProviderAdapter {
         model,
         system,
         messages: anthropicMessages,
-        tools: TOOLS,
+        ...(tools?.length ? { tools: toAnthropicTools(tools) } : {}),
         max_tokens: 1024,
       })
       .withResponse();

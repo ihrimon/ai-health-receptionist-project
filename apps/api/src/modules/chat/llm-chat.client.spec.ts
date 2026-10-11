@@ -86,6 +86,33 @@ describe('LlmChatClient', () => {
     expect(keyManager.recordUsage).toHaveBeenCalledWith('cred-1', undefined);
   });
 
+  it('forwards the given tools to the adapter', async () => {
+    keyManager.getCredentialCount.mockResolvedValue(1);
+    keyManager.getCurrentCredential.mockResolvedValue({
+      id: 'cred-1',
+      provider: LlmProvider.GROQ,
+      apiKey: 'key-a',
+      model: 'model-a',
+    });
+    adapter.complete.mockResolvedValue({ message: assistantMessage('ok') });
+    const tools = [
+      {
+        type: 'function' as const,
+        function: {
+          name: 'search_products',
+          description: 'Search the catalog',
+          parameters: { type: 'object', properties: {} },
+        },
+      },
+    ];
+
+    await client.complete([], tools);
+
+    expect(adapter.complete).toHaveBeenCalledWith(
+      expect.objectContaining({ tools }),
+    );
+  });
+
   it('rotates to the next credential on a rate-limit error and retries', async () => {
     keyManager.getCredentialCount.mockResolvedValue(2);
     keyManager.getCurrentCredential

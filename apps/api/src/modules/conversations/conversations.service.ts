@@ -19,14 +19,12 @@ export class ConversationsService {
   findAll(): Promise<Conversation[]> {
     return this.conversationsRepository.find({
       order: { createdAt: 'DESC' },
-      relations: ['booking'],
     });
   }
 
   async findOne(id: string): Promise<Conversation> {
     const conversation = await this.conversationsRepository.findOne({
       where: { id },
-      relations: ['booking'],
     });
     if (!conversation) {
       throw new NotFoundException(`Conversation ${id} not found`);
@@ -40,9 +38,7 @@ export class ConversationsService {
 
   async appendTurn(
     id: string,
-    partial: Partial<
-      Pick<Conversation, 'transcript' | 'bookingId' | 'summary'>
-    >,
+    partial: Partial<Pick<Conversation, 'transcript' | 'summary'>>,
   ): Promise<Conversation> {
     const conversation = await this.findOne(id);
     Object.assign(conversation, partial);
