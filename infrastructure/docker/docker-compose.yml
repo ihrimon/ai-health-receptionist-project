@@ -71,13 +71,8 @@ services:
     ports:
       - "${DASHBOARD_PORT:-3000}:3000"
 
-# The `platform` branch (multi-tenant chatbot SaaS) uses its own volumes so
-# its new schema never touches the receptionist demo data, which stays in
-# brainstack_postgres_data / brainstack_redis_data for the `main` branch.
-# Switching branches switches databases; stop the stack before switching
-# (`docker compose ... down`), since both use the same host ports.
 volumes:
   postgres_data:
-    name: brainstack_platform_postgres_data
+    name: brainstack_postgres_data
   redis_data:
-    name: brainstack_platform_redis_data
+    name: brainstack_redis_data
