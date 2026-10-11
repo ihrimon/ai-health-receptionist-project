@@ -1,14 +1,17 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createTransport, Transporter } from 'nodemailer';
-import { Booking } from '../../database/entities';
-import { buildBookingConfirmationEmail } from './booking-confirmation.template';
+
+export interface OutgoingEmail {
+  to: string;
+  subject: string;
+  html: string;
+}
 
 /**
- * Best-effort, same resilience principle as GoogleCalendarService: a
- * booking must never fail because email isn't configured or a send
- * fails. Unconfigured (no EMAIL_USER/EMAIL_APP_PASSWORD) is a normal,
- * silent no-op — logged once at startup, not on every booking.
+ * Best-effort: callers must never fail because email isn't configured or
+ * a send fails. Unconfigured (no EMAIL_USER/EMAIL_APP_PASSWORD) is a
+ * normal, silent no-op — logged once at startup, not on every send.
  */
 @Injectable()
 export class EmailService {
@@ -31,24 +34,17 @@ export class EmailService {
     } else {
       this.transporter = null;
       this.logger.warn(
-        'EMAIL_USER/EMAIL_APP_PASSWORD not configured — booking confirmation emails are disabled.',
+        'EMAIL_USER/EMAIL_APP_PASSWORD not configured — outgoing email is disabled.',
       );
     }
   }
 
-  async sendBookingConfirmation(
-    booking: Booking,
-    providerName?: string,
-  ): Promise<void> {
+  async send({ to, subject, html }: OutgoingEmail): Promise<void> {
     if (!this.transporter) return;
 
-    const { subject, html } = buildBookingConfirmationEmail(
-      booking,
-      providerName,
-    );
     await this.transporter.sendMail({
       from: `"${this.fromName}" <${this.fromUser}>`,
-      to: booking.email,
+      to,
       subject,
       html,
     });

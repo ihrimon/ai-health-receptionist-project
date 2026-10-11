@@ -1,24 +1,7 @@
-import {
-  ConflictException,
-  Injectable,
-  Logger,
-  NotFoundException,
-} from '@nestjs/common';
+import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { randomUUID } from 'crypto';
-import { plainToInstance } from 'class-transformer';
-import { validate } from 'class-validator';
-import type {
-  ChatCompletionMessage,
-  ChatCompletionMessageParam,
-  ChatCompletionMessageToolCall,
-} from 'groq-sdk/resources/chat/completions';
-import { BookingsService } from '../bookings/bookings.service';
-import { CreateBookingDto } from '../bookings/dto/create-booking.dto';
 import { ConversationsService } from '../conversations/conversations.service';
 import { KnowledgeService } from '../knowledge/knowledge.service';
-import { ProvidersService } from '../providers/providers.service';
-import { addMinutes, combineDateAndDhakaTime } from '../providers/slot-math';
-import { ChatToolExecutor } from './chat-tool-executor';
 import { SendChatMessageDto } from './dto/send-chat-message.dto';
 import {
   AllLlmKeysExhaustedError,
@@ -27,9 +10,6 @@ import {
 import { ChatTurn, LlmChatClient } from './llm-chat.client';
 
 const CHAT_SESSION_PREFIX = 'chat-';
-const MAX_TOOL_ROUNDTRIPS = 4;
-const UNAVAILABLE_REPLY =
-  "Sorry, I'm having trouble checking availability right now — could you try again in a moment?";
 const LLM_UNAVAILABLE_REPLY =
   "Sorry, I'm having trouble processing that right now — could you try again in a moment?";
 const EMPTY_REPLY_FALLBACK =
@@ -42,44 +22,28 @@ const NO_CREDENTIALS_REPLY =
 export interface ChatReply {
   sessionId: string;
   reply: string;
-  bookingCreated: boolean;
-  booking?: { id: string };
 }
 
-interface LoopResult {
-  text: string;
-  toolInput?: Record<string, unknown>;
-}
-
+/**
+ * Interim single-tenant RAG Q&A chat for the platform branch (M1): the
+ * booking flow and its tools are gone, and M3 replaces this whole service
+ * with the tenant-aware public-chat pipeline (docs/requirements.md §9).
+ *
+ * Every conversation is persisted from its first turn. Once a row exists
+ * for the session it is the source of truth for history; the
+ * caller-supplied `dto.transcript` is only used for a session the server
+ * hasn't seen yet.
+ */
 @Injectable()
 export class ChatService {
   private readonly logger = new Logger(ChatService.name);
 
   constructor(
     private readonly llmChatClient: LlmChatClient,
-    private readonly chatToolExecutor: ChatToolExecutor,
     private readonly conversationsService: ConversationsService,
-    private readonly bookingsService: BookingsService,
-    private readonly providersService: ProvidersService,
     private readonly knowledgeService: KnowledgeService,
   ) {}
 
-  /**
-   * No longer creates a `conversations` row up front on message 1 — most
-   * chats never end in a booking, and eagerly persisting every one of
-   * them (including a session someone opens and immediately abandons)
-   * cluttered the admin conversation list with entries nobody would ever
-   * look at. Instead: while unbooked, the caller (chat UI) is the only
-   * one holding the transcript (already true — it's kept in
-   * sessionStorage for cross-navigation persistence) and resends it each
-   * turn via `dto.transcript`. A `conversations` row is only ever
-   * created the moment a booking is actually confirmed, at which point
-   * the full transcript is persisted in one shot. If a conversation
-   * *does* already exist for this session (a booking happened earlier in
-   * it and the caller kept chatting), that row — not the caller-supplied
-   * transcript — is treated as the source of truth and simply appended
-   * to, exactly as before.
-   */
   async sendMessage(dto: SendChatMessageDto): Promise<ChatReply> {
     const existingConversation = dto.sessionId
       ? await this.conversationsService.findByCallSid(
@@ -97,198 +61,38 @@ export class ChatService {
     ];
 
     const referenceChunks = await this.getReferenceChunks(dto.message);
-    const providerRoster = await this.getProviderRoster();
     const messages = this.llmChatClient.buildMessages(
       transcript,
       referenceChunks,
-      providerRoster,
     );
-    const result = await this.runConversationLoop(messages);
-
-    let bookingCreated = false;
-    let booking: { id: string } | undefined;
-    let bookingId: string | undefined = existingConversation?.bookingId;
-    let replyText = result.text;
-
-    if (result.toolInput) {
-      const bookingDto = plainToInstance(CreateBookingDto, result.toolInput);
-      const errors = await validate(bookingDto);
-      const providerId = bookingDto.providerId;
-
-      if (errors.length === 0 && providerId) {
-        try {
-          const provider = await this.providersService.findOne(providerId);
-          const startsAt = combineDateAndDhakaTime(
-            new Date(`${bookingDto.preferredDate}T00:00:00.000Z`),
-            bookingDto.preferredTime,
-          );
-          bookingDto.startsAt = startsAt.toISOString();
-          bookingDto.endsAt = addMinutes(
-            startsAt,
-            provider.slotDurationMinutes,
-          ).toISOString();
-
-          const saved = await this.bookingsService.create(bookingDto);
-          bookingCreated = true;
-          booking = { id: saved.id };
-          bookingId = saved.id;
-          if (!replyText) {
-            replyText =
-              "Perfect — you're all booked! You'll get a confirmation shortly.";
-          }
-        } catch (err) {
-          if (err instanceof NotFoundException) {
-            this.logger.warn(
-              `record_booking referenced a providerId that no longer exists: ${bookingDto.providerId}`,
-            );
-            replyText =
-              "Sorry, that provider isn't available anymore — could we find you a new time?";
-          } else if (err instanceof ConflictException) {
-            replyText =
-              'Sorry, that time slot was just booked by someone else — could you pick another time?';
-          } else if (err instanceof RangeError) {
-            // Belt-and-suspenders alongside CreateBookingDto's preferredTime
-            // format check: any other invalid-date edge case that still
-            // reaches Date arithmetic here (combineDateAndDhakaTime,
-            // .toISOString()) should fail this turn gracefully too, not
-            // crash the request with an uncaught 500.
-            this.logger.warn(
-              `record_booking produced an invalid date/time (${bookingDto.preferredDate} ${bookingDto.preferredTime}): ${err.message}`,
-            );
-            replyText =
-              "Sorry, that date or time doesn't look right — could you confirm it again?";
-          } else {
-            throw err;
-          }
-        }
-      } else {
-        const failedFields = errors.length
-          ? errors.map((e) => e.property).join(', ')
-          : 'providerId';
-        this.logger.warn(
-          `record_booking call failed validation: ${failedFields}`,
-        );
-        if (!replyText) {
-          replyText =
-            "I couldn't quite save that — could you confirm the missing details?";
-        }
-      }
+    const { reply, succeeded } = await this.generateReply(messages);
+    // A failed LLM call isn't persisted: the apology isn't a real answer,
+    // and saving it would feed it back to the model as history on retry.
+    if (!succeeded) {
+      return { sessionId, reply };
     }
 
-    const transcriptToSave: ChatTurn[] = [
+    const transcriptToSave = [
       ...transcript,
-      { role: 'model', text: replyText },
-    ];
-
-    if (existingConversation) {
-      await this.conversationsService.appendTurn(existingConversation.id, {
-        transcript: transcriptToSave as unknown as Record<string, unknown>[],
-        bookingId,
-      });
-    } else if (bookingCreated) {
-      const conversation = await this.conversationsService.create({
+      { role: 'model', text: reply },
+    ] as unknown as Record<string, unknown>[];
+    const conversation =
+      existingConversation ??
+      (await this.conversationsService.create({
         callSid: this.toCallSid(sessionId),
-      });
-      await this.conversationsService.appendTurn(conversation.id, {
-        transcript: transcriptToSave as unknown as Record<string, unknown>[],
-        bookingId,
-      });
-    }
-    // Neither existing nor just-booked: nothing to persist — the caller
-    // still has the transcript in sessionStorage and will resend it next
-    // turn via dto.transcript.
+      }));
+    await this.conversationsService.appendTurn(conversation.id, {
+      transcript: transcriptToSave,
+    });
 
-    return { sessionId, reply: replyText, bookingCreated, booking };
+    return { sessionId, reply };
   }
 
   /**
-   * Runs the multi-turn tool-calling loop for one user turn: repeatedly
-   * calls the LLM, executes find_available_slots itself and feeds the
-   * result back, until the model either calls record_booking (terminal —
-   * handled by the caller) or replies with plain text. Capped to avoid a
-   * runaway loop if the model never settles.
-   */
-  private async runConversationLoop(
-    messages: ChatCompletionMessageParam[],
-  ): Promise<LoopResult> {
-    for (let i = 0; i < MAX_TOOL_ROUNDTRIPS; i++) {
-      let message: ChatCompletionMessage;
-      try {
-        message = await this.llmChatClient.complete(messages);
-      } catch (err) {
-        // A live LLM API call is an external dependency that can fail
-        // transiently (rate limits, the model hallucinating a tool name
-        // outside what was registered, network errors) — same
-        // don't-crash-the-turn principle as getReferenceChunks() below.
-        // AllLlmKeysExhaustedError means LlmChatClient already tried
-        // every configured credential (see LlmKeyManager) — worth a
-        // distinct, less alarming reply than a generic failure.
-        // NoLlmCredentialsConfiguredError means Settings is empty.
-        this.logger.warn(
-          `LlmChatClient.complete failed: ${(err as Error).message}`,
-        );
-        if (err instanceof NoLlmCredentialsConfiguredError) {
-          return { text: NO_CREDENTIALS_REPLY };
-        }
-        if (err instanceof AllLlmKeysExhaustedError) {
-          return { text: ALL_KEYS_EXHAUSTED_REPLY };
-        }
-        return { text: LLM_UNAVAILABLE_REPLY };
-      }
-      const toolCalls = message.tool_calls ?? [];
-
-      const bookingCall = toolCalls.find(
-        (call) => call.function.name === 'record_booking',
-      );
-      if (bookingCall) {
-        return {
-          text: message.content ?? '',
-          toolInput: this.parseToolArgs(bookingCall),
-        };
-      }
-
-      const slotsCall = toolCalls.find(
-        (call) => call.function.name === 'find_available_slots',
-      );
-      if (!slotsCall) {
-        // The model occasionally returns a completely empty completion —
-        // no text, no tool call (seen from a free-tier model under load).
-        // An empty reply would otherwise get saved into the transcript
-        // and re-sent by the client on every later turn, permanently
-        // failing ChatTurnDto's validation for that whole conversation —
-        // see chat-turn.dto.ts for the other half of this fix.
-        return { text: message.content || EMPTY_REPLY_FALLBACK };
-      }
-
-      messages.push({
-        role: 'assistant',
-        content: message.content,
-        tool_calls: toolCalls,
-      });
-      const slotsResult = await this.chatToolExecutor.findAvailableSlots(
-        this.parseToolArgs(slotsCall),
-      );
-      messages.push({
-        role: 'tool',
-        tool_call_id: slotsCall.id,
-        content: JSON.stringify(slotsResult),
-      });
-    }
-
-    this.logger.warn('Tool loop exceeded max roundtrips');
-    return { text: UNAVAILABLE_REPLY };
-  }
-
-  private toCallSid(sessionId: string): string {
-    return `${CHAT_SESSION_PREFIX}${sessionId}`;
-  }
-
-  /**
-   * Public — called from the post-booking star-rating modal in the chat
-   * UI, which has no admin session. Looked up by the chat sessionId
-   * (never the conversation's internal id, which the caller never sees)
-   * so a rating can only be attached to the conversation the rater was
-   * actually part of.
+   * Public — called from the chat UI's star-rating modal, which has no
+   * admin session. Looked up by the chat sessionId (never the
+   * conversation's internal id, which the caller never sees) so a rating
+   * can only be attached to the conversation the rater was part of.
    */
   async rateConversation(sessionId: string, rating: number): Promise<void> {
     const conversation = await this.conversationsService.findByCallSid(
@@ -300,59 +104,52 @@ export class ChatService {
     await this.conversationsService.rate(conversation.id, rating);
   }
 
+  private async generateReply(
+    messages: ReturnType<LlmChatClient['buildMessages']>,
+  ): Promise<{ reply: string; succeeded: boolean }> {
+    try {
+      const message = await this.llmChatClient.complete(messages);
+      // The model occasionally returns a completely empty completion (seen
+      // from a free-tier model under load). Saving an empty reply would
+      // re-send it on every later turn — see chat-turn.dto.ts.
+      return {
+        reply: message.content || EMPTY_REPLY_FALLBACK,
+        succeeded: true,
+      };
+    } catch (err) {
+      // A live LLM API call is an external dependency that can fail
+      // transiently — reply gracefully instead of crashing the turn.
+      // AllLlmKeysExhaustedError means LlmChatClient already tried every
+      // configured credential; NoLlmCredentialsConfiguredError means
+      // Settings is empty.
+      this.logger.warn(
+        `LlmChatClient.complete failed: ${(err as Error).message}`,
+      );
+      if (err instanceof NoLlmCredentialsConfiguredError) {
+        return { reply: NO_CREDENTIALS_REPLY, succeeded: false };
+      }
+      if (err instanceof AllLlmKeysExhaustedError) {
+        return { reply: ALL_KEYS_EXHAUSTED_REPLY, succeeded: false };
+      }
+      return { reply: LLM_UNAVAILABLE_REPLY, succeeded: false };
+    }
+  }
+
+  private toCallSid(sessionId: string): string {
+    return `${CHAT_SESSION_PREFIX}${sessionId}`;
+  }
+
   private async getReferenceChunks(message: string): Promise<string[]> {
     try {
       const matches = await this.knowledgeService.search(message);
       return matches.map((match) => match.content);
     } catch (err) {
-      // Knowledge base scaffold is ahead of real content/migration being
-      // applied everywhere yet (see packages/ai/knowledge/faq.md) — chat
-      // should keep working without RAG context rather than fail the turn.
+      // Chat should keep working without RAG context (e.g. the pgvector
+      // migration not applied yet) rather than fail the turn.
       this.logger.warn(
         `Knowledge retrieval unavailable: ${(err as Error).message}`,
       );
       return [];
-    }
-  }
-
-  /**
-   * Feeds the model the exact registered `service` string per active
-   * provider so it never has to guess/paraphrase one when calling
-   * find_available_slots or record_booking — service matching against the
-   * database is an exact string comparison, and a plausible-sounding
-   * paraphrase (e.g. "Orthopedics" for a provider registered as
-   * "Orthopedic") silently fails to match, reported to the caller as "no
-   * provider found" even though one genuinely exists.
-   */
-  private async getProviderRoster(): Promise<
-    { name: string; service: string }[]
-  > {
-    try {
-      const providers = await this.providersService.findAll();
-      return providers
-        .filter((provider) => provider.isActive)
-        .map((provider) => ({
-          name: provider.name,
-          service: provider.service,
-        }));
-    } catch (err) {
-      this.logger.warn(
-        `Provider roster unavailable: ${(err as Error).message}`,
-      );
-      return [];
-    }
-  }
-
-  private parseToolArgs(
-    call: ChatCompletionMessageToolCall,
-  ): Record<string, unknown> {
-    try {
-      return JSON.parse(call.function.arguments) as Record<string, unknown>;
-    } catch {
-      this.logger.warn(
-        `${call.function.name} call had unparseable arguments: ${call.function.arguments}`,
-      );
-      return {};
     }
   }
 }

@@ -1,4 +1,4 @@
-import { toGeminiContents } from './gemini.adapter';
+import { toGeminiContents, toGeminiTools } from './gemini.adapter';
 
 describe('toGeminiContents', () => {
   it('sends a tool result back with role "user", not "function"', () => {
@@ -14,7 +14,7 @@ describe('toGeminiContents', () => {
           {
             id: 'call-1',
             type: 'function',
-            function: { name: 'find_available_slots', arguments: '{}' },
+            function: { name: 'search_products', arguments: '{}' },
           },
         ],
       },
@@ -42,7 +42,7 @@ describe('toGeminiContents', () => {
           {
             id: 'call-1',
             type: 'function',
-            function: { name: 'find_available_slots', arguments: '{}' },
+            function: { name: 'search_products', arguments: '{}' },
           },
         ],
       },
@@ -61,6 +61,38 @@ describe('toGeminiContents', () => {
         'functionResponse' in p,
     );
 
-    expect(part?.functionResponse.name).toBe('find_available_slots');
+    expect(part?.functionResponse.name).toBe('search_products');
+  });
+});
+
+describe('toGeminiTools', () => {
+  it('wraps OpenAI-shape function tools in a single functionDeclarations entry', () => {
+    const parameters = {
+      type: 'object',
+      properties: { query: { type: 'string' } },
+    };
+
+    const tools = toGeminiTools([
+      {
+        type: 'function',
+        function: {
+          name: 'search_products',
+          description: 'Search the catalog',
+          parameters,
+        },
+      },
+    ]);
+
+    expect(tools).toEqual([
+      {
+        functionDeclarations: [
+          {
+            name: 'search_products',
+            description: 'Search the catalog',
+            parameters,
+          },
+        ],
+      },
+    ]);
   });
 });

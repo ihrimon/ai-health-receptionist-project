@@ -2,26 +2,13 @@ import {
   Column,
   CreateDateColumn,
   Entity,
-  JoinColumn,
-  ManyToOne,
   PrimaryGeneratedColumn,
 } from 'typeorm';
-import { Booking } from './booking.entity';
 
 @Entity('conversations')
 export class Conversation {
   @PrimaryGeneratedColumn('uuid')
   id: string;
-
-  @Column({ name: 'booking_id', nullable: true })
-  bookingId?: string;
-
-  @ManyToOne(() => Booking, (booking) => booking.conversations, {
-    nullable: true,
-    onDelete: 'SET NULL',
-  })
-  @JoinColumn({ name: 'booking_id' })
-  booking?: Booking;
 
   @Column({ name: 'call_sid' })
   callSid: string;

@@ -8,7 +8,7 @@ import {
   type FormEvent,
 } from "react";
 import Link from "next/link";
-import { Star, Stethoscope, X } from "lucide-react";
+import { MessageCircle, Star, X } from "lucide-react";
 
 function subscribeNever() {
   return () => {};
@@ -30,7 +30,6 @@ interface ChatMessage {
   role: "user" | "model";
   text: string;
   timestamp: number;
-  bookingCreated?: boolean;
   kind?: "voice";
   audioUrl?: string;
   durationSec?: number;
@@ -42,9 +41,12 @@ class ChatApiError extends Error {}
 interface ChatApiResponse {
   sessionId: string;
   reply: string;
-  bookingCreated: boolean;
-  booking?: { id: string };
 }
+
+// Ask for a rating once the visitor has had a real exchange, not on the
+// first reply (there used to be a natural end point — a confirmed booking —
+// but plain Q&A has none).
+const RATING_PROMPT_AFTER_REPLIES = 3;
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001";
 
@@ -56,7 +58,7 @@ const STORAGE_KEY = "brainstack-chat-session";
 const GREETING: ChatMessage = {
   id: "greeting",
   role: "model",
-  text: "Hi, thanks for reaching out to BrainStack! I can help you book an appointment with one of our doctors. What brings you in today?",
+  text: "Hi! 👋 How can I help you today?",
   timestamp: Date.now(),
 };
 
@@ -116,7 +118,7 @@ export default function ChatPage() {
 
   // Restore an in-progress conversation (if any) once on mount — this is
   // what keeps the chat alive when the user navigates to another route
-  // and back before a booking is confirmed, instead of losing it. This
+  // and back, instead of losing it. This
   // has to be an effect + setState, not a lazy useState initializer or
   // useSyncExternalStore: the restored value is a one-time seed for
   // otherwise-independent local state (subsequent sends evolve it, they
@@ -202,15 +204,11 @@ export default function ChatPage() {
     setError(null);
 
     try {
-      // The backend no longer keeps its own copy of an unbooked
-      // conversation (see ChatService) — it only ever persists one once a
-      // booking is confirmed, so nothing here shows up in the admin
-      // conversation list unless the visitor actually books. Until then,
-      // this browser's own message history (already kept for
-      // cross-navigation persistence, see the sessionStorage effects
-      // above) IS the conversation's memory — resend it each turn so the
-      // assistant still has full context. The static greeting bubble is
-      // excluded: it was never actually sent through the model.
+      // The backend persists every conversation from its first turn and
+      // treats its own copy as the source of truth once it exists (see
+      // ChatService). This browser-side history is still sent so a session
+      // the server hasn't seen yet has context. The static greeting bubble
+      // is excluded: it was never actually sent through the model.
       const transcript = messages
         .filter((m) => m.id !== GREETING.id)
         .map((m) => ({ role: m.role, text: m.text }));
@@ -236,7 +234,7 @@ export default function ChatPage() {
           .json()
           .catch(() => null);
         throw new ChatApiError(
-          body?.message ?? `The clinic assistant returned an error (${res.status}).`,
+          body?.message ?? `The assistant returned an error (${res.status}).`,
         );
       }
 
@@ -249,12 +247,14 @@ export default function ChatPage() {
           id: replyId,
           role: "model",
           text: data.reply,
-          bookingCreated: data.bookingCreated,
           timestamp: Date.now(),
         },
       ]);
       if (autoSpeak) speak(replyId, data.reply);
-      if (data.bookingCreated && !ratingPromptDone) {
+      const repliesSoFar =
+        messages.filter((m) => m.role === "model" && m.id !== GREETING.id)
+          .length + 1;
+      if (repliesSoFar >= RATING_PROMPT_AFTER_REPLIES && !ratingPromptDone) {
         setShowRatingModal(true);
       }
     } catch (err) {
@@ -267,7 +267,7 @@ export default function ChatPage() {
       setError(
         err instanceof ChatApiError
           ? err.message
-          : "Couldn't reach the clinic assistant — the API might be unreachable or still starting up. Please try again in a moment.",
+          : "Couldn't reach the assistant — the API might be unreachable or still starting up. Please try again in a moment.",
       );
     } finally {
       setLoading(false);
@@ -435,7 +435,7 @@ export default function ChatPage() {
           <ArrowLeftIcon />
         </Link>
         <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-white/20">
-          <Stethoscope className="size-5" />
+          <MessageCircle className="size-5" />
         </div>
         <div className="min-w-0 flex-1">
           <h1 className="truncate text-base font-medium">
@@ -482,11 +482,6 @@ export default function ChatPage() {
                     <VoiceBubble message={m} />
                   ) : (
                     <p className="whitespace-pre-wrap">{m.text}</p>
-                  )}
-                  {m.bookingCreated && (
-                    <div className="mt-1 text-xs font-medium text-green-700 dark:text-green-300">
-                      ✓ Appointment booked
-                    </div>
                   )}
                   <div className="mt-1 flex items-center justify-end gap-1 text-[11px] text-gray-500 dark:text-gray-400">
                     {!isUser && (
@@ -622,10 +617,10 @@ function RatingModal({
           <X className="size-4" />
         </button>
         <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-[#e6f6fa] dark:bg-[#123a45]">
-          <Stethoscope className="size-6 text-[#0891b2]" />
+          <MessageCircle className="size-6 text-[#0891b2]" />
         </div>
         <h2 className="mt-3 text-base font-semibold text-gray-900 dark:text-white">
-          Your appointment is booked!
+          Thanks for chatting!
         </h2>
         <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
           How was this conversation with our assistant?

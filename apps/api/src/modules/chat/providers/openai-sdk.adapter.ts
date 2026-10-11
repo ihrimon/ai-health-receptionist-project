@@ -8,8 +8,6 @@ import type {
   ChatCompletionMessageParam as OpenAiMessageParam,
   ChatCompletionTool as OpenAiTool,
 } from 'openai/resources/chat/completions';
-import { FIND_AVAILABLE_SLOTS_TOOL } from '../find-available-slots.tool';
-import { RECORD_BOOKING_TOOL } from '../record-booking.tool';
 import {
   LLM_REQUEST_TIMEOUT_MS,
   type AdapterCompleteParams,
@@ -49,6 +47,7 @@ export class OpenAiSdkAdapter implements LlmProviderAdapter {
     apiKey,
     model,
     messages,
+    tools,
   }: AdapterCompleteParams): Promise<AdapterCompleteResult> {
     // maxRetries: 0 — see OpenAiCompatibleAdapter's identical note; our
     // own cross-credential rotation already covers retrying, and the
@@ -64,11 +63,12 @@ export class OpenAiSdkAdapter implements LlmProviderAdapter {
       .create({
         model,
         messages: messages as unknown as OpenAiMessageParam[],
-        tools: [
-          RECORD_BOOKING_TOOL,
-          FIND_AVAILABLE_SLOTS_TOOL,
-        ] as unknown as OpenAiTool[],
-        tool_choice: 'auto',
+        ...(tools?.length
+          ? {
+              tools: tools as unknown as OpenAiTool[],
+              tool_choice: 'auto' as const,
+            }
+          : {}),
         max_tokens: 1024,
       })
       .withResponse();

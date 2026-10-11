@@ -1,15 +1,7 @@
 import { Module } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
-import {
-  Booking,
-  CallSession,
-  Conversation,
-  LlmCredential,
-  Provider,
-  ProviderAvailability,
-  ProviderGoogleAccount,
-} from './entities';
+import { Conversation, LlmCredential } from './entities';
 
 @Module({
   imports: [
@@ -25,15 +17,7 @@ import {
         ssl: config.get<boolean>('database.ssl')
           ? { rejectUnauthorized: false }
           : false,
-        entities: [
-          Booking,
-          Conversation,
-          CallSession,
-          Provider,
-          ProviderAvailability,
-          ProviderGoogleAccount,
-          LlmCredential,
-        ],
+        entities: [Conversation, LlmCredential],
         // Phase 1 (dev only): auto-sync schema from entities.
         // Replace with the SQL migrations in packages/database once the schema stabilizes.
         synchronize: config.get<string>('nodeEnv') !== 'production',
