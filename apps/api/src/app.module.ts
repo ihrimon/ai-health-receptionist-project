@@ -7,6 +7,7 @@ import { DatabaseModule } from './database/database.module';
 import { QueueModule } from './queue/queue.module';
 import { RedisModule } from './redis/redis.module';
 import { RateLimitModule } from './rate-limit/rate-limit.module';
+import { TenancyModule } from './tenancy/tenancy.module';
 import { HealthModule } from './health/health.module';
 import { ConversationsModule } from './modules/conversations/conversations.module';
 import { ChatModule } from './modules/chat/chat.module';
@@ -25,6 +26,7 @@ import { WorkspacesModule } from './modules/workspaces/workspaces.module';
     QueueModule,
     RedisModule,
     RateLimitModule,
+    TenancyModule,
     HealthModule,
     ConversationsModule,
     ChatModule,

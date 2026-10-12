@@ -16,6 +16,7 @@ import {
 import { EmailService, OutgoingEmail } from '../email/email.service';
 import { RateLimitService } from '../../rate-limit/rate-limit.service';
 import { WorkspacesService } from '../workspaces/workspaces.service';
+import { WorkspaceAccessService } from '../../tenancy/workspace-access.service';
 import { resetPasswordMessage, verifyEmailMessage } from './auth-emails';
 import { AuthContext } from './auth-context';
 import { RESET_PASSWORD_TTL_MS, VERIFY_EMAIL_TTL_MS } from './auth.constants';
@@ -62,6 +63,7 @@ export class AuthService {
     private readonly rateLimit: RateLimitService,
     private readonly email: EmailService,
     private readonly config: ConfigService,
+    private readonly access: WorkspaceAccessService,
   ) {}
 
   /**
@@ -158,8 +160,11 @@ export class AuthService {
       include: { workspace: true },
       orderBy: { createdAt: 'asc' },
     });
+    // Same rule as WorkspaceGuard, so the dashboard shows the workspace
+    // its requests will actually run in.
+    const resolved = await this.access.resolveActive(session);
     const active = memberships.find(
-      (m) => m.workspaceId === session.activeWorkspaceId,
+      (m) => m.workspaceId === resolved?.workspaceId,
     );
 
     return {
