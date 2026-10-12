@@ -53,7 +53,8 @@ export class ChatService {
     const sessionId = dto.sessionId ?? randomUUID();
 
     const priorTranscript: ChatTurn[] = existingConversation
-      ? ((existingConversation.transcript as ChatTurn[] | undefined) ?? [])
+      ? ((existingConversation.transcript as unknown as ChatTurn[] | null) ??
+        [])
       : (dto.transcript ?? []);
     const transcript: ChatTurn[] = [
       ...priorTranscript,

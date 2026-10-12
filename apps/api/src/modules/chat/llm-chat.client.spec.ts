@@ -1,5 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { LlmProvider } from '../../database/entities';
+import { LlmProvider } from '../../generated/prisma/client';
 import {
   AllLlmKeysExhaustedError,
   LlmKeyManager,
@@ -65,7 +65,7 @@ describe('LlmChatClient', () => {
     keyManager.getCredentialCount.mockResolvedValue(1);
     keyManager.getCurrentCredential.mockResolvedValue({
       id: 'cred-1',
-      provider: LlmProvider.ANTHROPIC,
+      provider: LlmProvider.anthropic,
       apiKey: 'sk-ant-test',
       model: 'claude-sonnet-5',
     });
@@ -76,7 +76,7 @@ describe('LlmChatClient', () => {
 
     const result = await client.complete([{ role: 'user', content: 'hello' }]);
 
-    expect(providerRegistry.get).toHaveBeenCalledWith(LlmProvider.ANTHROPIC);
+    expect(providerRegistry.get).toHaveBeenCalledWith(LlmProvider.anthropic);
     expect(adapter.complete).toHaveBeenCalledWith({
       apiKey: 'sk-ant-test',
       model: 'claude-sonnet-5',
@@ -90,7 +90,7 @@ describe('LlmChatClient', () => {
     keyManager.getCredentialCount.mockResolvedValue(1);
     keyManager.getCurrentCredential.mockResolvedValue({
       id: 'cred-1',
-      provider: LlmProvider.GROQ,
+      provider: LlmProvider.groq,
       apiKey: 'key-a',
       model: 'model-a',
     });
@@ -118,13 +118,13 @@ describe('LlmChatClient', () => {
     keyManager.getCurrentCredential
       .mockResolvedValueOnce({
         id: 'cred-1',
-        provider: LlmProvider.GROQ,
+        provider: LlmProvider.groq,
         apiKey: 'key-a',
         model: 'model-a',
       })
       .mockResolvedValueOnce({
         id: 'cred-2',
-        provider: LlmProvider.GROQ,
+        provider: LlmProvider.groq,
         apiKey: 'key-b',
         model: 'model-b',
       });
@@ -148,13 +148,13 @@ describe('LlmChatClient', () => {
     keyManager.getCurrentCredential
       .mockResolvedValueOnce({
         id: 'cred-bad',
-        provider: LlmProvider.GROQ,
+        provider: LlmProvider.groq,
         apiKey: 'invalid-key',
         model: 'model-a',
       })
       .mockResolvedValueOnce({
         id: 'cred-good',
-        provider: LlmProvider.GROQ,
+        provider: LlmProvider.groq,
         apiKey: 'good-key',
         model: 'model-a',
       });
@@ -175,7 +175,7 @@ describe('LlmChatClient', () => {
     keyManager.getCredentialCount.mockResolvedValue(1);
     keyManager.getCurrentCredential.mockResolvedValue({
       id: 'cred-1',
-      provider: LlmProvider.GROQ,
+      provider: LlmProvider.groq,
       apiKey: 'key-a',
       model: 'model-a',
     });
@@ -190,7 +190,7 @@ describe('LlmChatClient', () => {
     keyManager.getCredentialCount.mockResolvedValue(2);
     keyManager.getCurrentCredential.mockResolvedValue({
       id: 'cred-1',
-      provider: LlmProvider.GROQ,
+      provider: LlmProvider.groq,
       apiKey: 'key-a',
       model: 'model-a',
     });

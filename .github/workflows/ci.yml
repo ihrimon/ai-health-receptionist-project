@@ -43,3 +43,9 @@ jobs:
       - run: pnpm test
 
       - run: pnpm build
+
+      # The API image runs `node dist/main.js`. If tsc picks up a .ts file
+      # outside src/ (it happened with prisma.config.ts), the output silently
+      # moves to dist/src/ while the build itself still passes.
+      - name: Check the API build entrypoint exists
+        run: test -f apps/api/dist/main.js

@@ -1,0 +1,25 @@
+# Build context is the repo root (docker-compose.yml: context ../..).
+# Without this file, `COPY . .` copied the host's node_modules (with
+# Windows-only binaries) and the .env file (secrets) into the image.
+
+# Dependencies and build output — the image runs its own `pnpm install`
+**/node_modules
+.pnpm-store
+**/dist
+**/.next
+**/.turbo
+**/coverage
+apps/api/src/generated
+
+# Secrets — pass config as environment variables instead
+.env
+.env.*
+!.env.example
+**/.env
+**/.env.local
+
+# Not needed in the image
+.git
+.github
+docs
+*.log

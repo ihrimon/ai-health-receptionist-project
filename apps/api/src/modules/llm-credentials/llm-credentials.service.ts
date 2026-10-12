@@ -3,23 +3,36 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
-import { LlmCredential, LlmProvider } from '../../database/entities';
+import { PrismaService } from '../../database/prisma.service';
+import { LlmCredential, LlmProvider } from '../../generated/prisma/client';
 import { ProviderRegistry } from '../chat/providers/provider-registry';
 import { CreateLlmCredentialDto } from './dto/create-llm-credential.dto';
 import { UpdateLlmCredentialDto } from './dto/update-llm-credential.dto';
 
+/** An undefined field means "header not sent" — Prisma leaves that column unchanged. */
+export type RateLimitSnapshot = Partial<
+  Pick<
+    LlmCredential,
+    | 'rlLimitRequests'
+    | 'rlRemainingRequests'
+    | 'rlResetRequests'
+    | 'rlLimitTokens'
+    | 'rlRemainingTokens'
+    | 'rlResetTokens'
+  >
+>;
+
 @Injectable()
 export class LlmCredentialsService {
   constructor(
-    @InjectRepository(LlmCredential)
-    private readonly repository: Repository<LlmCredential>,
+    private readonly prisma: PrismaService,
     private readonly providerRegistry: ProviderRegistry,
   ) {}
 
   findAllOrdered(): Promise<LlmCredential[]> {
-    return this.repository.find({ order: { sortOrder: 'ASC' } });
+    return this.prisma.llmCredential.findMany({
+      orderBy: { sortOrder: 'asc' },
+    });
   }
 
   /** Only the active ones, in rotation order — what LlmKeyManager actually uses. */
@@ -30,15 +43,12 @@ export class LlmCredentialsService {
 
   async create(dto: CreateLlmCredentialDto): Promise<LlmCredential> {
     await this.validateCredential(dto.provider, dto.apiKey, dto.model);
-    const maxOrder = await this.repository
-      .createQueryBuilder('c')
-      .select('MAX(c.sort_order)', 'max')
-      .getRawOne<{ max: number | null }>();
-    const credential = this.repository.create({
-      ...dto,
-      sortOrder: (maxOrder?.max ?? -1) + 1,
+    const { _max } = await this.prisma.llmCredential.aggregate({
+      _max: { sortOrder: true },
     });
-    return this.repository.save(credential);
+    return this.prisma.llmCredential.create({
+      data: { ...dto, sortOrder: (_max.sortOrder ?? -1) + 1 },
+    });
   }
 
   async update(
@@ -55,8 +65,7 @@ export class LlmCredentialsService {
         dto.model ?? credential.model,
       );
     }
-    Object.assign(credential, dto);
-    return this.repository.save(credential);
+    return this.prisma.llmCredential.update({ where: { id }, data: dto });
   }
 
   /**
@@ -87,8 +96,8 @@ export class LlmCredentialsService {
   }
 
   async remove(id: string): Promise<void> {
-    const credential = await this.findOne(id);
-    await this.repository.remove(credential);
+    await this.findOne(id);
+    await this.prisma.llmCredential.delete({ where: { id } });
   }
 
   /** Re-numbers sort_order to match the given id order — used by the settings UI's drag/move-up-down reordering. */
@@ -102,9 +111,12 @@ export class LlmCredentialsService {
         'orderedIds must contain exactly the existing credential ids',
       );
     }
-    await Promise.all(
+    await this.prisma.$transaction(
       orderedIds.map((id, index) =>
-        this.repository.update({ id }, { sortOrder: index }),
+        this.prisma.llmCredential.update({
+          where: { id },
+          data: { sortOrder: index },
+        }),
       ),
     );
     return this.findAllOrdered();
@@ -116,26 +128,17 @@ export class LlmCredentialsService {
    * for that credential. Never allowed to fail the chat turn: a write
    * error here is logged and swallowed by the caller, not surfaced.
    */
-  async recordUsage(
-    id: string,
-    snapshot: Pick<
-      LlmCredential,
-      | 'rlLimitRequests'
-      | 'rlRemainingRequests'
-      | 'rlResetRequests'
-      | 'rlLimitTokens'
-      | 'rlRemainingTokens'
-      | 'rlResetTokens'
-    >,
-  ): Promise<void> {
-    await this.repository.update(
-      { id },
-      { ...snapshot, lastUsedAt: new Date() },
-    );
+  async recordUsage(id: string, snapshot: RateLimitSnapshot): Promise<void> {
+    await this.prisma.llmCredential.update({
+      where: { id },
+      data: { ...snapshot, lastUsedAt: new Date() },
+    });
   }
 
   private async findOne(id: string): Promise<LlmCredential> {
-    const credential = await this.repository.findOne({ where: { id } });
+    const credential = await this.prisma.llmCredential.findUnique({
+      where: { id },
+    });
     if (!credential) {
       throw new NotFoundException(`LLM credential ${id} not found`);
     }

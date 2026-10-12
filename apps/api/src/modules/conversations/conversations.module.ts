@@ -1,12 +1,10 @@
 import { Module } from '@nestjs/common';
-import { TypeOrmModule } from '@nestjs/typeorm';
-import { Conversation } from '../../database/entities';
 import { AuthModule } from '../auth/auth.module';
 import { ConversationsController } from './conversations.controller';
 import { ConversationsService } from './conversations.service';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([Conversation]), AuthModule],
+  imports: [AuthModule],
   controllers: [ConversationsController],
   providers: [ConversationsService],
   exports: [ConversationsService],
