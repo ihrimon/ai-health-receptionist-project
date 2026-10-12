@@ -7,9 +7,10 @@
 // IDs default in the database (gen_random_uuid()), not in Prisma Client,
 // so rows inserted with raw SQL (KnowledgeService) get one too.
 //
-// M1 interim: only the tables the app still uses, in their current shape.
-// The full multi-tenant model (docs/design/d1-data-model.md) lands from
-// M1-14 onward.
+// Identity and tenancy (User, Workspace, WorkspaceMember, Session,
+// EmailToken) follow docs/design/d1-data-model.md. Chatbot has only its
+// M1-15 columns so far; Conversation and KnowledgeChunk are still the
+// interim single-tenant shape until M2/M3.
 
 generator client {
   provider            = "prisma-client"
@@ -26,6 +27,150 @@ generator client {
 datasource db {
   provider = "postgresql"
 }
+
+enum WorkspaceRole {
+  OWNER
+  ADMIN
+  VIEWER
+
+  @@map("workspace_role")
+}
+
+enum WorkspaceStatus {
+  ACTIVE
+  SUSPENDED
+
+  @@map("workspace_status")
+}
+
+enum EmailTokenType {
+  VERIFY_EMAIL
+  RESET_PASSWORD
+
+  @@map("email_token_type")
+}
+
+enum ChatbotStatus {
+  ENABLED
+  DISABLED
+
+  @@map("chatbot_status")
+}
+
+// ─────────────────── Identity & tenancy (M1) ───────────────────
+
+model User {
+  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  /// Always stored lowercase (CHECK constraint in the migration SQL).
+  email           String    @unique @db.VarChar(255)
+  /// argon2id (M0 decision T5).
+  passwordHash    String    @map("password_hash")
+  name            String    @db.VarChar(100)
+  emailVerifiedAt DateTime? @map("email_verified_at") @db.Timestamptz
+  /// Super-admin console access (M7-0).
+  isPlatformAdmin Boolean   @default(false) @map("is_platform_admin")
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt       DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+
+  memberships WorkspaceMember[]
+  sessions    Session[]
+  emailTokens EmailToken[]
+
+  @@map("users")
+}
+
+/// The tenant. Deleting one cascades to everything it owns (NFR-7).
+/// `planId` arrives with the Plan model (M6/M7).
+model Workspace {
+  id        String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name      String          @db.VarChar(100)
+  slug      String          @unique @db.VarChar(60)
+  status    WorkspaceStatus @default(ACTIVE)
+  createdAt DateTime        @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime        @updatedAt @map("updated_at") @db.Timestamptz
+
+  members        WorkspaceMember[]
+  chatbots       Chatbot[]
+  /// Sessions currently switched to this workspace.
+  activeSessions Session[]
+
+  @@map("workspaces")
+}
+
+model WorkspaceMember {
+  workspaceId String        @map("workspace_id") @db.Uuid
+  userId      String        @map("user_id") @db.Uuid
+  role        WorkspaceRole
+  createdAt   DateTime      @default(now()) @map("created_at") @db.Timestamptz
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([workspaceId, userId])
+  @@index([userId])
+  @@map("workspace_members")
+}
+
+/// Dashboard login session. The cookie holds the raw token; only its
+/// SHA-256 hash is stored.
+model Session {
+  id                String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tokenHash         String   @unique @map("token_hash")
+  userId            String   @map("user_id") @db.Uuid
+  activeWorkspaceId String?  @map("active_workspace_id") @db.Uuid
+  expiresAt         DateTime @map("expires_at") @db.Timestamptz
+  ipAddress         String?  @map("ip_address") @db.VarChar(45)
+  userAgent         String?  @map("user_agent") @db.VarChar(500)
+  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  user            User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// Cleared when the workspace is deleted; the user then picks another.
+  activeWorkspace Workspace? @relation(fields: [activeWorkspaceId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  /// For the expired-session cleanup job.
+  @@index([expiresAt])
+  @@map("sessions")
+}
+
+/// One-time email verification / password reset token, stored hashed.
+model EmailToken {
+  id        String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    String         @map("user_id") @db.Uuid
+  type      EmailTokenType
+  tokenHash String         @unique @map("token_hash")
+  expiresAt DateTime       @map("expires_at") @db.Timestamptz
+  usedAt    DateTime?      @map("used_at") @db.Timestamptz
+  createdAt DateTime       @default(now()) @map("created_at") @db.Timestamptz
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, type])
+  @@map("email_tokens")
+}
+
+// ─────────────── Chatbot (M1-15 minimal, completed in M2) ───────────────
+
+/// One per workspace in the MVP (M0 decision B2), created together with the
+/// workspace. Versions, allowed domains and knowledge relations come in M2.
+model Chatbot {
+  id          String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId String        @map("workspace_id") @db.Uuid
+  /// "cb_" + 16 random characters; goes in the embed snippet.
+  publicId    String        @unique @map("public_id") @db.VarChar(24)
+  status      ChatbotStatus @default(ENABLED)
+  /// ChatbotConfig (docs/design/d4-chatbot-config.md).
+  draftConfig Json          @map("draft_config")
+  createdAt   DateTime      @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt   DateTime      @updatedAt @map("updated_at") @db.Timestamptz
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId])
+  @@map("chatbots")
+}
+
+// ─────────────────────────── Platform ───────────────────────────
 
 /// Which provider an LLM credential's apiKey/model belong to; selects the
 /// adapter in modules/chat/providers. Groq, OpenAI, OpenRouter and UnoRouter
