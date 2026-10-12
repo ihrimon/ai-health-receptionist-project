@@ -6,12 +6,14 @@ import { Separator } from "@/components/ui/separator";
 import { ModeToggle } from "@/components/mode-toggle";
 
 const TITLES: { prefix: string; title: string }[] = [
+  { prefix: "/app/settings", title: "Settings" },
   { prefix: "/admin/conversations", title: "Conversations" },
   { prefix: "/admin/settings", title: "Settings" },
 ];
 
 function titleFor(pathname: string): string {
   if (pathname === "/admin") return "Overview";
+  if (pathname === "/app") return "Home";
   return TITLES.find((t) => pathname.startsWith(t.prefix))?.title ?? "Dashboard";
 }
 
