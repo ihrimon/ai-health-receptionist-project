@@ -10,6 +10,7 @@ import { ConversationsModule } from './modules/conversations/conversations.modul
 import { ChatModule } from './modules/chat/chat.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { LlmCredentialsModule } from './modules/llm-credentials/llm-credentials.module';
+import { WorkspacesModule } from './modules/workspaces/workspaces.module';
 
 @Module({
   imports: [
@@ -25,6 +26,7 @@ import { LlmCredentialsModule } from './modules/llm-credentials/llm-credentials.
     ChatModule,
     AuthModule,
     LlmCredentialsModule,
+    WorkspacesModule,
   ],
   controllers: [AppController],
   providers: [AppService],
