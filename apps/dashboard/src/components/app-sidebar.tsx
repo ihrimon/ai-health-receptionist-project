@@ -1,11 +1,12 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname } from "next/navigation";
 import {
   ChevronsUpDown,
   Gauge,
   Headset,
+  House,
   LogOut,
   MessageCircle,
   MessagesSquare,
@@ -34,7 +35,7 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
 } from "@/components/ui/sidebar";
-import { API_BASE, API_HEADERS, clearDashboardSession } from "@/lib/api";
+import { useSession } from "@/lib/session";
 
 const NAV_ITEMS = [
   { title: "Overview", href: "/admin", icon: Gauge },
@@ -44,18 +45,7 @@ const NAV_ITEMS = [
 
 export function AppSidebar() {
   const pathname = usePathname();
-  const router = useRouter();
-
-  async function handleLogout() {
-    await fetch(`${API_BASE}/auth/logout`, {
-      method: "POST",
-      headers: API_HEADERS,
-      credentials: "include",
-    }).catch(() => {});
-    clearDashboardSession();
-    router.push("/admin/login");
-    router.refresh();
-  }
+  const { me, logout } = useSession();
 
   return (
     <Sidebar collapsible="icon">
@@ -123,11 +113,13 @@ export function AppSidebar() {
                   >
                     <Avatar className="size-7 shrink-0 rounded-lg">
                       <AvatarFallback className="rounded-lg bg-primary text-primary-foreground">
-                        A
+                        {me.user.name.trim().charAt(0).toUpperCase()}
                       </AvatarFallback>
                     </Avatar>
                     <span className="grid flex-1 text-left text-sm leading-tight group-data-[collapsible=icon]:hidden">
-                      <span className="truncate font-medium">Admin</span>
+                      <span className="truncate font-medium">
+                        {me.user.name}
+                      </span>
                     </span>
                     <ChevronsUpDown className="ml-auto size-4 shrink-0 group-data-[collapsible=icon]:hidden" />
                   </Button>
@@ -135,8 +127,16 @@ export function AppSidebar() {
               />
               <DropdownMenuContent side="top" align="start" className="w-56">
                 <DropdownMenuGroup>
-                  <DropdownMenuLabel>Admin</DropdownMenuLabel>
+                  <DropdownMenuLabel>Platform admin</DropdownMenuLabel>
                   <DropdownMenuSeparator />
+                  <DropdownMenuItem
+                    render={
+                      <Link href="/app">
+                        <House />
+                        Company dashboard
+                      </Link>
+                    }
+                  />
                   <DropdownMenuItem
                     render={
                       <Link href="/admin/settings">
@@ -149,7 +149,7 @@ export function AppSidebar() {
                 <DropdownMenuSeparator />
                 <DropdownMenuItem
                   variant="destructive"
-                  onClick={handleLogout}
+                  onClick={logout}
                 >
                   <LogOut />
                   Log out

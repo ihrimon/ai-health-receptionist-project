@@ -56,11 +56,18 @@ export default function HomePage() {
           you sleep.
         </p>
 
-        <div className="mt-8">
+        <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
           <Button
             size="lg"
             nativeButton={false}
-            className="cta-glow group rounded-full bg-primary px-8 text-base text-primary-foreground transition-transform hover:scale-105 hover:bg-primary/90"
+            className="rounded-full px-8 text-base"
+            render={<Link href="/signup">Get started</Link>}
+          />
+          <Button
+            size="lg"
+            nativeButton={false}
+            variant="outline"
+            className="group rounded-full px-8 text-base"
             render={
               <Link href="/chat">
                 <MessageCircle />
@@ -92,10 +99,10 @@ export default function HomePage() {
 
       <footer className="relative z-10 pb-4 text-center">
         <Link
-          href="/admin"
-          className="text-muted-foreground/50 hover:text-muted-foreground"
+          href="/login"
+          className="text-muted-foreground/70 hover:text-muted-foreground"
         >
-          Admin
+          Sign in
         </Link>
       </footer>
     </div>
