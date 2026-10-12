@@ -1,0 +1,100 @@
+// Single source of truth for the database schema (M0 decision T15/D10).
+// Change it, then run `pnpm --filter api prisma:migrate` to generate a
+// migration. SQL Prisma can't express (extensions, CHECK constraints,
+// expression indexes) goes into a migration created with
+// `prisma migrate dev --create-only` — see docs/design/d1-data-model.md §4.
+//
+// IDs default in the database (gen_random_uuid()), not in Prisma Client,
+// so rows inserted with raw SQL (KnowledgeService) get one too.
+//
+// M1 interim: only the tables the app still uses, in their current shape.
+// The full multi-tenant model (docs/design/d1-data-model.md) lands from
+// M1-14 onward.
+
+generator client {
+  provider            = "prisma-client"
+  // Inside src/ so `nest build` (tsc) compiles it with the rest of the app;
+  // the API's tsconfig sets no rootDir, so code outside src/ isn't safe to
+  // import (see CLAUDE.md).
+  output              = "../src/generated/prisma"
+  moduleFormat        = "cjs"
+  // Extensionless relative imports: ts-node (knowledge:ingest) and Jest run
+  // the generated .ts sources directly and can't resolve the default ".js".
+  importFileExtension = ""
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+/// Which provider an LLM credential's apiKey/model belong to; selects the
+/// adapter in modules/chat/providers. Groq, OpenAI, OpenRouter and UnoRouter
+/// speak the OpenAI chat-completions format; Anthropic and Gemini have
+/// dedicated adapters.
+enum LlmProvider {
+  groq
+  openai
+  anthropic
+  gemini
+  openrouter
+  unorouter
+
+  @@map("llm_provider")
+}
+
+/// Platform-level LLM API key + model pairs managed from Settings (M0
+/// decision B3: the platform pays for LLM usage). Rotated in `sortOrder`.
+/// The rl* columns snapshot the provider's rate-limit headers from the most
+/// recent call. apiKey is plaintext for now; encryption at rest is part of
+/// the M7 security review.
+model LlmCredential {
+  id                  String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  provider            LlmProvider @default(groq)
+  apiKey              String      @map("api_key")
+  model               String
+  sortOrder           Int         @default(0) @map("sort_order")
+  isActive            Boolean     @default(true) @map("is_active")
+  lastUsedAt          DateTime?   @map("last_used_at") @db.Timestamptz
+  rlLimitRequests     Int?        @map("rl_limit_requests")
+  rlRemainingRequests Int?        @map("rl_remaining_requests")
+  rlResetRequests     String?     @map("rl_reset_requests") @db.VarChar(50)
+  rlLimitTokens       Int?        @map("rl_limit_tokens")
+  rlRemainingTokens   Int?        @map("rl_remaining_tokens")
+  rlResetTokens       String?     @map("rl_reset_tokens") @db.VarChar(50)
+  createdAt           DateTime    @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt           DateTime    @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@map("llm_credentials")
+}
+
+/// Interim single-tenant chat transcript (ChatService). Replaced by the
+/// workspace-scoped Conversation + Message models in M3.
+model Conversation {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  /// `chat-<sessionId>` for web chat sessions.
+  callSid    String   @map("call_sid")
+  transcript Json?
+  summary    String?
+  /// Seconds.
+  duration   Int?
+  /// 1–5 stars (CHECK constraint in the migration SQL).
+  rating     Int?     @db.SmallInt
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  @@index([callSid])
+  @@map("conversations")
+}
+
+/// RAG chunks. `embedding` is read and written only through raw SQL in
+/// KnowledgeService — Prisma Client can't handle Unsupported fields.
+/// Interim shape; M2-12 adds workspace/chatbot/source columns.
+model KnowledgeChunk {
+  id        String                     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  source    String                     @db.VarChar(255)
+  content   String
+  /// Xenova/all-MiniLM-L6-v2 (384 dimensions, M0 decision T7).
+  embedding Unsupported("vector(384)")
+  createdAt DateTime                   @default(now()) @map("created_at") @db.Timestamptz
+
+  @@map("knowledge_chunks")
+}

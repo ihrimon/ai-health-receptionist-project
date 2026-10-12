@@ -4,11 +4,10 @@ export default () => ({
   dashboardUrl: process.env.DASHBOARD_URL ?? 'http://localhost:3000',
 
   database: {
-    host: process.env.POSTGRES_HOST ?? 'localhost',
-    port: parseInt(process.env.POSTGRES_PORT ?? '5432', 10),
-    username: process.env.POSTGRES_USER ?? 'brainstack',
-    password: process.env.POSTGRES_PASSWORD ?? 'brainstack',
-    name: process.env.POSTGRES_DB ?? 'brainstack_booking',
+    // Prisma connects with DATABASE_URL (the Prisma CLI reads it too, via
+    // prisma.config.ts). Without it, the URL is built from the POSTGRES_*
+    // parts docker-compose uses to create the Postgres container.
+    url: process.env.DATABASE_URL ?? buildDatabaseUrl(),
     // Managed free-tier Postgres (Neon, Supabase, etc.) requires TLS and
     // usually can't present a cert the default Node trust store
     // recognizes — set POSTGRES_SSL=true for those; leave unset for a
@@ -53,3 +52,14 @@ export default () => ({
     fromName: process.env.EMAIL_FROM_NAME ?? 'BrainStack AI Receptionist',
   },
 });
+
+function buildDatabaseUrl(): string {
+  const user = encodeURIComponent(process.env.POSTGRES_USER ?? 'brainstack');
+  const password = encodeURIComponent(
+    process.env.POSTGRES_PASSWORD ?? 'brainstack',
+  );
+  const host = process.env.POSTGRES_HOST ?? 'localhost';
+  const port = process.env.POSTGRES_PORT ?? '5432';
+  const name = process.env.POSTGRES_DB ?? 'brainstack_booking';
+  return `postgresql://${user}:${password}@${host}:${port}/${name}`;
+}
