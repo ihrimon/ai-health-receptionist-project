@@ -40,7 +40,17 @@ export function clearDashboardSession() {
   document.cookie = `${DASH_SESSION_COOKIE}=; path=/; max-age=0; samesite=lax`;
 }
 
-/** Thin JSON fetch wrapper — throws with the API's own message when present. */
+/** An API error, with the HTTP status so callers can react to 401/403. */
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+  ) {
+    super(message);
+  }
+}
+
+/** Thin JSON fetch wrapper — throws ApiError with the API's own message when present. */
 export async function apiFetch<T>(
   path: string,
   init?: RequestInit,
@@ -56,7 +66,7 @@ export async function apiFetch<T>(
     const message =
       (Array.isArray(body?.message) ? body.message.join(", ") : body?.message) ??
       `API returned ${res.status}`;
-    throw new Error(message);
+    throw new ApiError(message, res.status);
   }
 
   // Some endpoints (e.g. DELETE) send a 200 with an empty body rather than
@@ -64,6 +74,30 @@ export async function apiFetch<T>(
   // code, so those don't throw "Unexpected end of JSON input".
   const text = await res.text();
   return text ? (JSON.parse(text) as T) : (undefined as T);
+}
+
+export type WorkspaceRole = "OWNER" | "ADMIN" | "VIEWER";
+
+/** GET /v1/auth/me (D-2 §2.1). */
+export interface Me {
+  user: {
+    id: string;
+    email: string;
+    name: string;
+    emailVerifiedAt: string | null;
+    isPlatformAdmin: boolean;
+  };
+  activeWorkspace: {
+    id: string;
+    name: string;
+    slug: string;
+    status: string;
+  } | null;
+  role: WorkspaceRole | null;
+  memberships: {
+    workspace: { id: string; name: string; slug: string };
+    role: WorkspaceRole;
+  }[];
 }
 
 export interface ChatTurn {
