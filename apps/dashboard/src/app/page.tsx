@@ -1,39 +1,41 @@
 import Link from "next/link";
 import {
   ArrowRight,
-  CalendarCheck,
+  BookOpen,
+  Code,
   MessageCircle,
-  ShieldCheck,
   Sparkles,
-  Stethoscope,
+  UserPlus,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 
+// Interim landing page for the platform branch (M1). The full marketing
+// page comes in M7 (docs/design/d3-screens.md §1.1).
 const FEATURES = [
   {
-    icon: MessageCircle,
-    title: "Tell us your symptoms",
+    icon: Code,
+    title: "One line to install",
     description:
-      "Describe how you're feeling or which specialist you need in plain language — by chat or voice, just like talking to a real receptionist.",
+      "Paste a single script tag into your site — Shopify, WooCommerce or plain HTML — and the chat widget appears.",
   },
   {
-    icon: CalendarCheck,
-    title: "We check real doctor availability",
+    icon: BookOpen,
+    title: "Answers from your own content",
     description:
-      "The assistant looks up actual open slots for the right specialist — no back-and-forth, no double-booked appointments.",
+      "Add your products, FAQs and policies. The assistant answers from them and never makes up prices or policies.",
   },
   {
-    icon: ShieldCheck,
-    title: "Instant confirmation",
+    icon: UserPlus,
+    title: "Turns visitors into leads",
     description:
-      "Once you confirm, your appointment is saved and synced straight to the doctor's calendar.",
+      "Interested visitors leave their contact details, and you get notified right away.",
   },
   {
     icon: Sparkles,
     title: "Available 24/7",
     description:
-      "No hold music, no waiting for office hours — book your visit anytime, day or night.",
+      "Visitors get instant answers any time of day, even when your team is offline.",
   },
 ];
 
@@ -42,28 +44,34 @@ export default function HomePage() {
     <div className="relative flex min-h-0 flex-1 flex-col overflow-y-auto bg-background">
       <div className="relative z-10 mx-auto flex w-full max-w-3xl flex-1 flex-col items-center px-6 py-16 text-center sm:py-20">
         <div className="mb-6 flex size-14 items-center justify-center rounded-2xl bg-primary text-primary-foreground shadow-sm">
-          <Stethoscope className="size-7" />
+          <MessageCircle className="size-7" />
         </div>
 
         <h1 className="text-4xl font-semibold tracking-tight text-balance sm:text-5xl">
           BrainStack AI Receptionist
         </h1>
         <p className="mt-4 max-w-xl text-base text-muted-foreground">
-          Skip the phone queue — tell us your symptoms or the specialist
-          you&apos;re looking for, and our AI receptionist finds you the
-          right doctor and time. Real-time availability, instant
-          confirmation, no calls required.
+          An AI assistant for your website that knows your products, services
+          and policies, answers visitors in seconds, and captures leads while
+          you sleep.
         </p>
 
-        <div className="mt-8">
+        <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
           <Button
             size="lg"
             nativeButton={false}
-            className="cta-glow group rounded-full bg-primary px-8 text-base text-primary-foreground transition-transform hover:scale-105 hover:bg-primary/90"
+            className="rounded-full px-8 text-base"
+            render={<Link href="/signup">Get started</Link>}
+          />
+          <Button
+            size="lg"
+            nativeButton={false}
+            variant="outline"
+            className="group rounded-full px-8 text-base"
             render={
               <Link href="/chat">
                 <MessageCircle />
-                Book Appointment
+                Try the demo
                 <ArrowRight className="transition-transform group-hover:translate-x-1" />
               </Link>
             }
@@ -91,10 +99,10 @@ export default function HomePage() {
 
       <footer className="relative z-10 pb-4 text-center">
         <Link
-          href="/admin"
-          className="text-muted-foreground/50 hover:text-muted-foreground"
+          href="/login"
+          className="text-muted-foreground/70 hover:text-muted-foreground"
         >
-          Admin
+          Sign in
         </Link>
       </footer>
     </div>

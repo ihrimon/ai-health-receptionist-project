@@ -1,0 +1,4 @@
+# Prisma stores a checksum of every applied migration. Keep migration files
+# LF on every machine, or a Windows checkout (core.autocrlf) rewrites them
+# to CRLF and Prisma reports applied migrations as modified.
+apps/api/prisma/migrations/** text eol=lf

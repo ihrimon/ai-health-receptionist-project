@@ -1,6 +1,7 @@
 import type {
   ChatCompletionMessage,
   ChatCompletionMessageParam,
+  ChatCompletionTool,
 } from 'groq-sdk/resources/chat/completions';
 import type { HeaderReader } from '../llm-key-manager';
 
@@ -14,7 +15,11 @@ import type { HeaderReader } from '../llm-key-manager';
  * provider's native API shape, so the rest of the app never has to know
  * which provider actually answered a given turn.
  */
-export type { ChatCompletionMessage, ChatCompletionMessageParam };
+export type {
+  ChatCompletionMessage,
+  ChatCompletionMessageParam,
+  ChatCompletionTool,
+};
 
 /**
  * Every provider SDK here defaults to a very generous per-request
@@ -34,6 +39,14 @@ export interface AdapterCompleteParams {
   apiKey: string;
   model: string;
   messages: ChatCompletionMessageParam[];
+  /**
+   * Tools the model may call this turn, in our canonical OpenAI shape —
+   * each adapter translates them to its provider's format. Omitted or
+   * empty means a plain text completion: adapters must then leave the
+   * provider's tools field out entirely, since some APIs reject an empty
+   * tools array.
+   */
+  tools?: ChatCompletionTool[];
 }
 
 export interface AdapterCompleteResult {

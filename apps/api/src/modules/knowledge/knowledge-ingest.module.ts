@@ -6,12 +6,9 @@ import { KnowledgeModule } from './knowledge.module';
 
 /**
  * Minimal bootstrap module for the `knowledge:ingest` CLI script —
- * deliberately NOT the full AppModule. VoiceModule's MediaStreamGateway
- * attaches to the HTTP server via HttpAdapterHost in onModuleInit(), which
- * throws ("Cannot read properties of null (reading 'getHttpServer')") when
- * bootstrapped through NestFactory.createApplicationContext(), since that
- * mode never creates an HTTP server. The ingestion script only needs
- * config + DB + knowledge retrieval, so it skips Voice/Queue/Chat entirely.
+ * deliberately NOT the full AppModule. The script runs through
+ * NestFactory.createApplicationContext() (no HTTP server) and only needs
+ * config + DB + knowledge retrieval, so it skips Queue/Chat/Auth entirely.
  */
 @Module({
   imports: [

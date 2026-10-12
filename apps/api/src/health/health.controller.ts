@@ -1,5 +1,7 @@
 import { Controller, Get } from '@nestjs/common';
+import { Public } from '../modules/auth/auth-context';
 
+@Public()
 @Controller('health')
 export class HealthController {
   @Get()

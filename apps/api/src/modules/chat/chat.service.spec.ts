@@ -1,11 +1,7 @@
-import { ConflictException, NotFoundException } from '@nestjs/common';
+import { NotFoundException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
-import { BookingsService } from '../bookings/bookings.service';
 import { ConversationsService } from '../conversations/conversations.service';
 import { KnowledgeService } from '../knowledge/knowledge.service';
-import { ProvidersService } from '../providers/providers.service';
-import { addMinutes, combineDateAndDhakaTime } from '../providers/slot-math';
-import { ChatToolExecutor } from './chat-tool-executor';
 import { ChatService } from './chat.service';
 import {
   AllLlmKeysExhaustedError,
@@ -13,52 +9,19 @@ import {
 } from './llm-key-manager';
 import { LlmChatClient } from './llm-chat.client';
 
-const PROVIDER_ID = '11111111-1111-4111-8111-111111111111';
-
-const validBookingInput = {
-  name: 'Jane Doe',
-  phone: '+15550001111',
-  email: 'jane@example.com',
-  service: 'Consulting',
-  preferredDate: '2026-09-01',
-  preferredTime: '14:00',
-  providerId: PROVIDER_ID,
-};
-
 function assistantMessage(content: string) {
   return { role: 'assistant' as const, content };
-}
-
-function toolCallMessage(
-  name: 'record_booking' | 'find_available_slots',
-  args: Record<string, unknown>,
-  id = 'call-1',
-) {
-  return {
-    role: 'assistant' as const,
-    content: null,
-    tool_calls: [
-      {
-        id,
-        type: 'function' as const,
-        function: { name, arguments: JSON.stringify(args) },
-      },
-    ],
-  };
 }
 
 describe('ChatService', () => {
   let service: ChatService;
   let llmChatClient: { buildMessages: jest.Mock; complete: jest.Mock };
-  let chatToolExecutor: { findAvailableSlots: jest.Mock };
   let conversationsService: {
     findByCallSid: jest.Mock;
     create: jest.Mock;
     appendTurn: jest.Mock;
     rate: jest.Mock;
   };
-  let bookingsService: { create: jest.Mock };
-  let providersService: { findOne: jest.Mock; findAll: jest.Mock };
   let knowledgeService: { search: jest.Mock };
 
   beforeEach(async () => {
@@ -66,17 +29,11 @@ describe('ChatService', () => {
       buildMessages: jest.fn().mockReturnValue([]),
       complete: jest.fn(),
     };
-    chatToolExecutor = { findAvailableSlots: jest.fn() };
     conversationsService = {
-      findByCallSid: jest.fn(),
-      create: jest.fn(),
+      findByCallSid: jest.fn().mockResolvedValue(null),
+      create: jest.fn().mockResolvedValue({ id: 'conv-new' }),
       appendTurn: jest.fn(),
       rate: jest.fn(),
-    };
-    bookingsService = { create: jest.fn() };
-    providersService = {
-      findOne: jest.fn(),
-      findAll: jest.fn().mockResolvedValue([]),
     };
     knowledgeService = { search: jest.fn().mockResolvedValue([]) };
 
@@ -84,10 +41,7 @@ describe('ChatService', () => {
       providers: [
         ChatService,
         { provide: LlmChatClient, useValue: llmChatClient },
-        { provide: ChatToolExecutor, useValue: chatToolExecutor },
         { provide: ConversationsService, useValue: conversationsService },
-        { provide: BookingsService, useValue: bookingsService },
-        { provide: ProvidersService, useValue: providersService },
         { provide: KnowledgeService, useValue: knowledgeService },
       ],
     }).compile();
@@ -95,37 +49,49 @@ describe('ChatService', () => {
     service = module.get<ChatService>(ChatService);
   });
 
-  it('generates a sessionId but persists nothing when a fresh conversation never books', async () => {
+  it('generates a sessionId and persists the first turn of a fresh conversation', async () => {
     llmChatClient.complete.mockResolvedValue(
-      assistantMessage('Hi! What can I help you book today?'),
+      assistantMessage('Hi! How can I help?'),
     );
 
     const result = await service.sendMessage({ message: 'Hello' });
 
-    expect(conversationsService.findByCallSid).not.toHaveBeenCalled();
-    expect(conversationsService.create).not.toHaveBeenCalled();
-    expect(conversationsService.appendTurn).not.toHaveBeenCalled();
-    expect(result.reply).toBe('Hi! What can I help you book today?');
-    expect(result.bookingCreated).toBe(false);
+    expect(result.reply).toBe('Hi! How can I help?');
     expect(result.sessionId).toBeTruthy();
+    expect(conversationsService.create).toHaveBeenCalledWith({
+      callSid: `chat-${result.sessionId}`,
+    });
+    expect(conversationsService.appendTurn).toHaveBeenCalledWith('conv-new', {
+      transcript: [
+        { role: 'user', text: 'Hello' },
+        { role: 'model', text: 'Hi! How can I help?' },
+      ],
+    });
   });
 
-  it('replies with a fallback message instead of an empty string when the model returns no text and no tool call', async () => {
+  it('calls the model without tools', async () => {
+    llmChatClient.complete.mockResolvedValue(assistantMessage('Hi!'));
+
+    await service.sendMessage({ message: 'Hello' });
+
+    expect(llmChatClient.complete).toHaveBeenCalledWith([]);
+  });
+
+  it('replies with a fallback message instead of an empty string when the model returns no text', async () => {
     llmChatClient.complete.mockResolvedValue(assistantMessage(''));
 
     const result = await service.sendMessage({ message: 'Hello' });
 
-    expect(result.reply).not.toBe('');
     expect(result.reply.length).toBeGreaterThan(0);
   });
 
-  it('sends the caller-supplied transcript plus the new message as history, for a fresh (unbooked) session', async () => {
+  it('uses the caller-supplied transcript as history for a session the server has not seen', async () => {
     llmChatClient.complete.mockResolvedValue(assistantMessage('Got it.'));
 
     await service.sendMessage({
       sessionId: 'session-1',
-      message: 'My name is Jane',
-      transcript: [{ role: 'user', text: 'I need a consultation' }],
+      message: 'Do you deliver?',
+      transcript: [{ role: 'user', text: 'Hi' }],
     });
 
     expect(conversationsService.findByCallSid).toHaveBeenCalledWith(
@@ -133,77 +99,53 @@ describe('ChatService', () => {
     );
     expect(llmChatClient.buildMessages).toHaveBeenCalledWith(
       [
-        { role: 'user', text: 'I need a consultation' },
-        { role: 'user', text: 'My name is Jane' },
+        { role: 'user', text: 'Hi' },
+        { role: 'user', text: 'Do you deliver?' },
       ],
       [],
-      [],
     );
+    expect(conversationsService.create).toHaveBeenCalledWith({
+      callSid: 'chat-session-1',
+    });
   });
 
-  it('continues an existing conversation by sessionId', async () => {
+  it('appends to an existing conversation and ignores the caller-supplied transcript', async () => {
     conversationsService.findByCallSid.mockResolvedValue({
       id: 'conv-1',
-      transcript: [{ role: 'user', text: 'earlier message' }],
-      bookingId: undefined,
+      transcript: [
+        { role: 'user', text: 'Hi' },
+        { role: 'model', text: 'Hello!' },
+      ],
     });
-    llmChatClient.complete.mockResolvedValue(assistantMessage('Got it.'));
+    llmChatClient.complete.mockResolvedValue(assistantMessage('Yes, we do.'));
 
     await service.sendMessage({
       sessionId: 'session-1',
-      message: 'Hello again',
+      message: 'Do you deliver?',
+      // A stale client-side transcript must be ignored once a row exists.
+      transcript: [{ role: 'user', text: 'something else' }],
     });
 
-    expect(conversationsService.findByCallSid).toHaveBeenCalledWith(
-      'chat-session-1',
-    );
     expect(conversationsService.create).not.toHaveBeenCalled();
     expect(llmChatClient.buildMessages).toHaveBeenCalledWith(
       [
-        { role: 'user', text: 'earlier message' },
-        { role: 'user', text: 'Hello again' },
+        { role: 'user', text: 'Hi' },
+        { role: 'model', text: 'Hello!' },
+        { role: 'user', text: 'Do you deliver?' },
       ],
       [],
-      [],
     );
-  });
-
-  it('appends to (never duplicates) an already-booked conversation when the caller keeps chatting in the same session', async () => {
-    conversationsService.findByCallSid.mockResolvedValue({
-      id: 'conv-1',
-      transcript: [{ role: 'model', text: "You're all booked!" }],
-      bookingId: 'booking-1',
-    });
-    llmChatClient.complete.mockResolvedValue(
-      assistantMessage('You’re welcome!'),
-    );
-
-    const result = await service.sendMessage({
-      sessionId: 'session-1',
-      message: 'Thank you!',
-      // A stale/empty client-side transcript must be ignored here — the
-      // existing DB row is the source of truth once one exists.
-      transcript: [],
-    });
-
-    expect(conversationsService.create).not.toHaveBeenCalled();
     expect(conversationsService.appendTurn).toHaveBeenCalledWith('conv-1', {
       transcript: [
-        { role: 'model', text: "You're all booked!" },
-        { role: 'user', text: 'Thank you!' },
-        { role: 'model', text: 'You’re welcome!' },
+        { role: 'user', text: 'Hi' },
+        { role: 'model', text: 'Hello!' },
+        { role: 'user', text: 'Do you deliver?' },
+        { role: 'model', text: 'Yes, we do.' },
       ],
-      bookingId: 'booking-1',
     });
-    expect(result.bookingCreated).toBe(false);
   });
 
   it('passes retrieved knowledge chunks through to buildMessages', async () => {
-    conversationsService.create.mockResolvedValue({
-      id: 'conv-1',
-      transcript: null,
-      bookingId: undefined,
-    });
     knowledgeService.search.mockResolvedValue([
       { source: 'faq.md', content: 'We are open 9-5.', similarity: 0.9 },
     ]);
@@ -219,16 +161,10 @@ describe('ChatService', () => {
     expect(llmChatClient.buildMessages).toHaveBeenCalledWith(
       expect.any(Array),
       ['We are open 9-5.'],
-      [],
     );
   });
 
   it('falls back to no reference chunks if knowledge retrieval fails', async () => {
-    conversationsService.create.mockResolvedValue({
-      id: 'conv-1',
-      transcript: null,
-      bookingId: undefined,
-    });
     knowledgeService.search.mockRejectedValue(
       new Error('relation "knowledge_chunks" does not exist'),
     );
@@ -240,118 +176,29 @@ describe('ChatService', () => {
     expect(llmChatClient.buildMessages).toHaveBeenCalledWith(
       expect.any(Array),
       [],
-      [],
     );
   });
 
-  it('creates and links a booking when the tool call input is valid', async () => {
-    let createdCallSid = '';
-    conversationsService.create.mockImplementation(
-      (dto: { callSid: string }) => {
-        createdCallSid = dto.callSid;
-        return Promise.resolve({ id: 'conv-1', transcript: null });
-      },
-    );
-    llmChatClient.complete.mockResolvedValue(
-      toolCallMessage('record_booking', validBookingInput),
-    );
-    providersService.findOne.mockResolvedValue({
-      id: PROVIDER_ID,
-      slotDurationMinutes: 30,
-    });
-    bookingsService.create.mockResolvedValue({ id: 'booking-1' });
-
-    const result = await service.sendMessage({ message: 'Yes, confirm it' });
-
-    const expectedStartsAt = combineDateAndDhakaTime(
-      new Date('2026-09-01T00:00:00.000Z'),
-      '14:00',
-    );
-    const expectedEndsAt = addMinutes(expectedStartsAt, 30);
-
-    expect(providersService.findOne).toHaveBeenCalledWith(PROVIDER_ID);
-    expect(bookingsService.create).toHaveBeenCalledWith(
-      expect.objectContaining({
-        providerId: PROVIDER_ID,
-        startsAt: expectedStartsAt.toISOString(),
-        endsAt: expectedEndsAt.toISOString(),
-      }),
-    );
-    expect(result.bookingCreated).toBe(true);
-    expect(result.booking).toEqual({ id: 'booking-1' });
-    // The conversation row is only created NOW that a booking exists —
-    // never eagerly on message 1.
-    expect(createdCallSid.startsWith('chat-')).toBe(true);
-    expect(conversationsService.appendTurn).toHaveBeenCalledWith(
-      'conv-1',
-      expect.objectContaining({ bookingId: 'booking-1' }),
-    );
-  });
-
-  it('does not save a booking when the tool call input fails validation', async () => {
-    conversationsService.create.mockResolvedValue({
-      id: 'conv-1',
-      transcript: null,
-      bookingId: undefined,
-    });
-    llmChatClient.complete.mockResolvedValue(
-      toolCallMessage('record_booking', { name: 'Jane Doe' }), // missing required fields
-    );
-
-    const result = await service.sendMessage({ message: 'Confirm' });
-
-    expect(bookingsService.create).not.toHaveBeenCalled();
-    expect(result.bookingCreated).toBe(false);
-    expect(result.reply.length).toBeGreaterThan(0);
-  });
-
-  it('passes the active provider roster through to buildMessages, for exact service-string grounding', async () => {
-    conversationsService.create.mockResolvedValue({
-      id: 'conv-1',
-      transcript: null,
-      bookingId: undefined,
-    });
-    providersService.findAll.mockResolvedValue([
-      { name: 'Dr. Imam Hassan', service: 'Orthopedic', isActive: true },
-      { name: 'Dr. Retired', service: 'Cardiology', isActive: false },
-    ]);
-    llmChatClient.complete.mockResolvedValue(assistantMessage('Hi there!'));
-
-    await service.sendMessage({ message: 'Hello' });
-
-    expect(llmChatClient.buildMessages).toHaveBeenCalledWith(
-      expect.any(Array),
-      [],
-      [{ name: 'Dr. Imam Hassan', service: 'Orthopedic' }],
-    );
-  });
-
-  it('replies gracefully instead of crashing the turn when the Groq API call itself fails', async () => {
-    llmChatClient.complete.mockRejectedValue(
-      new Error(
-        "Tool call validation failed: attempted to call tool 'collect_name' which was not in request.tools",
-      ),
-    );
+  it('replies gracefully and persists nothing when the LLM call fails', async () => {
+    llmChatClient.complete.mockRejectedValue(new Error('network error'));
 
     const result = await service.sendMessage({ message: 'Hello' });
 
     expect(result.reply).toMatch(/trouble processing/i);
-    expect(result.bookingCreated).toBe(false);
     expect(conversationsService.create).not.toHaveBeenCalled();
     expect(conversationsService.appendTurn).not.toHaveBeenCalled();
   });
 
-  it('replies with a reassuring message instead of a raw error when every configured LLM key is rate-limited', async () => {
+  it('replies with a reassuring message when every configured LLM key is exhausted', async () => {
     llmChatClient.complete.mockRejectedValue(new AllLlmKeysExhaustedError());
 
     const result = await service.sendMessage({ message: 'Hello' });
 
     expect(result.reply).toMatch(/give me a moment/i);
-    expect(result.bookingCreated).toBe(false);
     expect(conversationsService.appendTurn).not.toHaveBeenCalled();
   });
 
-  it('tells the caller the assistant is not set up yet when no LLM credential is configured', async () => {
+  it('tells the visitor the assistant is not set up yet when no LLM credential is configured', async () => {
     llmChatClient.complete.mockRejectedValue(
       new NoLlmCredentialsConfiguredError(),
     );
@@ -359,118 +206,7 @@ describe('ChatService', () => {
     const result = await service.sendMessage({ message: 'Hello' });
 
     expect(result.reply).toMatch(/admin needs to add an api key/i);
-    expect(result.bookingCreated).toBe(false);
     expect(conversationsService.appendTurn).not.toHaveBeenCalled();
-  });
-
-  it('runs the find_available_slots round trip before producing a final reply', async () => {
-    conversationsService.create.mockResolvedValue({
-      id: 'conv-1',
-      transcript: null,
-      bookingId: undefined,
-    });
-    llmChatClient.complete
-      .mockResolvedValueOnce(
-        toolCallMessage(
-          'find_available_slots',
-          { service: 'Consulting' },
-          'call-slots',
-        ),
-      )
-      .mockResolvedValueOnce(
-        assistantMessage('We have Friday 2pm open — does that work?'),
-      );
-    chatToolExecutor.findAvailableSlots.mockResolvedValue({
-      providerId: PROVIDER_ID,
-      providerName: 'Dr. A',
-      slots: [
-        { date: '2026-08-28', time: '14:00', label: 'Fri, Aug 28 at 2:00 PM' },
-      ],
-    });
-
-    const result = await service.sendMessage({
-      message: 'What times are open?',
-    });
-
-    expect(chatToolExecutor.findAvailableSlots).toHaveBeenCalledWith({
-      service: 'Consulting',
-    });
-    expect(llmChatClient.complete).toHaveBeenCalledTimes(2);
-    expect(result.reply).toBe('We have Friday 2pm open — does that work?');
-    expect(result.bookingCreated).toBe(false);
-  });
-
-  it('falls back to an apology after exceeding the max tool roundtrips', async () => {
-    conversationsService.create.mockResolvedValue({
-      id: 'conv-1',
-      transcript: null,
-      bookingId: undefined,
-    });
-    llmChatClient.complete.mockResolvedValue(
-      toolCallMessage('find_available_slots', { service: 'Consulting' }),
-    );
-    chatToolExecutor.findAvailableSlots.mockResolvedValue({
-      error: 'no_slots_available',
-    });
-
-    const result = await service.sendMessage({
-      message: 'What times are open?',
-    });
-
-    expect(llmChatClient.complete).toHaveBeenCalledTimes(4);
-    expect(result.reply).toMatch(/trouble checking availability/i);
-  });
-
-  it('replies gracefully when the confirmed providerId no longer exists, and persists nothing', async () => {
-    llmChatClient.complete.mockResolvedValue(
-      toolCallMessage('record_booking', validBookingInput),
-    );
-    providersService.findOne.mockRejectedValue(new NotFoundException());
-
-    const result = await service.sendMessage({ message: 'Yes, confirm it' });
-
-    expect(bookingsService.create).not.toHaveBeenCalled();
-    expect(result.bookingCreated).toBe(false);
-    expect(result.reply).toMatch(/isn't available anymore/i);
-    expect(conversationsService.create).not.toHaveBeenCalled();
-  });
-
-  it('replies gracefully when the slot was booked by someone else in the meantime, and persists nothing', async () => {
-    llmChatClient.complete.mockResolvedValue(
-      toolCallMessage('record_booking', validBookingInput),
-    );
-    providersService.findOne.mockResolvedValue({
-      id: PROVIDER_ID,
-      slotDurationMinutes: 30,
-    });
-    bookingsService.create.mockRejectedValue(new ConflictException());
-
-    const result = await service.sendMessage({ message: 'Yes, confirm it' });
-
-    expect(result.bookingCreated).toBe(false);
-    expect(result.reply).toMatch(/just booked by someone else/i);
-    expect(conversationsService.create).not.toHaveBeenCalled();
-  });
-
-  it('replies gracefully (not a crash) when the model invents a preferredTime instead of reusing a real slot', async () => {
-    // A malformed time (e.g. not 24-hour HH:MM) used to sail through as a
-    // plain non-empty string, reach combineDateAndDhakaTime's Date math,
-    // and crash with an uncaught RangeError — CreateBookingDto now
-    // rejects it at validation instead, same as any other incomplete
-    // record_booking call.
-    llmChatClient.complete.mockResolvedValue(
-      toolCallMessage('record_booking', {
-        ...validBookingInput,
-        preferredTime: '2:30 PM',
-      }),
-    );
-
-    const result = await service.sendMessage({ message: 'Yes, confirm it' });
-
-    expect(bookingsService.create).not.toHaveBeenCalled();
-    expect(result.bookingCreated).toBe(false);
-    expect(result.reply).toMatch(/couldn't quite save that/i);
-    expect(conversationsService.create).not.toHaveBeenCalled();
   });
 
   describe('rateConversation', () => {

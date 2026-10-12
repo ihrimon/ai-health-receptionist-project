@@ -1,8 +1,20 @@
 export const API_URL =
   process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001";
 
+/** Every API route except /health lives under /v1 (D-2 §1). */
+export const API_BASE = `${API_URL}/v1`;
+
 /**
- * The real admin_session cookie belongs to the API's own domain (set by
+ * The API rejects state-changing requests without X-Requested-With: fetch
+ * (its CSRF check, D-2 §1), so send it on every call.
+ */
+export const API_HEADERS = {
+  "Content-Type": "application/json",
+  "X-Requested-With": "fetch",
+};
+
+/**
+ * The real bs_session cookie belongs to the API's own domain (set by
  * its Set-Cookie response) — the browser only ever attaches it to
  * requests TO the API, never to requests to the dashboard's own domain.
  * That's invisible locally (dashboard and API are both "localhost", just
@@ -14,11 +26,11 @@ export const API_URL =
  * This is a same-domain, non-httpOnly marker cookie the dashboard sets on
  * itself right after a successful login, purely so that middleware has
  * something local to check for the redirect-to-login UX. It carries no
- * session data — proxy.ts's own comment already documents that the real
- * security boundary is AdminAuthGuard on the API, not this cookie.
+ * session data — the real security boundary is the API's session guard,
+ * not this cookie.
  */
 const DASH_SESSION_COOKIE = "dash_session";
-const DASH_SESSION_MAX_AGE_SECONDS = 7 * 24 * 60 * 60; // matches AuthService.SESSION_TTL_MS
+const DASH_SESSION_MAX_AGE_SECONDS = 7 * 24 * 60 * 60; // matches the API's SESSION_TTL_MS
 
 export function markDashboardSession() {
   document.cookie = `${DASH_SESSION_COOKIE}=1; path=/; max-age=${DASH_SESSION_MAX_AGE_SECONDS}; samesite=lax`;
@@ -28,15 +40,25 @@ export function clearDashboardSession() {
   document.cookie = `${DASH_SESSION_COOKIE}=; path=/; max-age=0; samesite=lax`;
 }
 
-/** Thin JSON fetch wrapper — throws with the API's own message when present. */
+/** An API error, with the HTTP status so callers can react to 401/403. */
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+  ) {
+    super(message);
+  }
+}
+
+/** Thin JSON fetch wrapper — throws ApiError with the API's own message when present. */
 export async function apiFetch<T>(
   path: string,
   init?: RequestInit,
 ): Promise<T> {
-  const res = await fetch(`${API_URL}${path}`, {
-    headers: { "Content-Type": "application/json" },
+  const res = await fetch(`${API_BASE}${path}`, {
     credentials: "include",
     ...init,
+    headers: { ...API_HEADERS, ...init?.headers },
   });
 
   if (!res.ok) {
@@ -44,7 +66,7 @@ export async function apiFetch<T>(
     const message =
       (Array.isArray(body?.message) ? body.message.join(", ") : body?.message) ??
       `API returned ${res.status}`;
-    throw new Error(message);
+    throw new ApiError(message, res.status);
   }
 
   // Some endpoints (e.g. DELETE) send a 200 with an empty body rather than
@@ -54,58 +76,28 @@ export async function apiFetch<T>(
   return text ? (JSON.parse(text) as T) : (undefined as T);
 }
 
-export type BookingStatus = "pending" | "confirmed" | "cancelled" | "completed";
-export type CallStatus = "ringing" | "in-progress" | "completed" | "failed";
+export type WorkspaceRole = "OWNER" | "ADMIN" | "VIEWER";
 
-export interface Provider {
-  id: string;
-  name: string;
-  email: string;
-  phone?: string;
-  service: string;
-  slotDurationMinutes: number;
-  timezone: string;
-  isActive: boolean;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface ProviderAvailability {
-  id: string;
-  providerId: string;
-  dayOfWeek: number;
-  startTime: string;
-  endTime: string;
-  createdAt: string;
-}
-
-export interface Booking {
-  id: string;
-  name: string;
-  phone: string;
-  email: string;
-  company?: string;
-  service: string;
-  budget?: string;
-  preferredDate: string;
-  preferredTime: string;
-  providerId?: string;
-  startsAt?: string;
-  endsAt?: string;
-  googleEventId?: string;
-  notes?: string;
-  status: BookingStatus;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface CallSession {
-  id: string;
-  callSid: string;
-  status: CallStatus;
-  startedAt?: string;
-  endedAt?: string;
-  createdAt: string;
+/** GET /v1/auth/me (D-2 §2.1). */
+export interface Me {
+  user: {
+    id: string;
+    email: string;
+    name: string;
+    emailVerifiedAt: string | null;
+    isPlatformAdmin: boolean;
+  };
+  activeWorkspace: {
+    id: string;
+    name: string;
+    slug: string;
+    status: string;
+  } | null;
+  role: WorkspaceRole | null;
+  memberships: {
+    workspace: { id: string; name: string; slug: string };
+    role: WorkspaceRole;
+  }[];
 }
 
 export interface ChatTurn {
@@ -115,8 +107,6 @@ export interface ChatTurn {
 
 export interface Conversation {
   id: string;
-  bookingId?: string;
-  booking?: Booking;
   callSid: string;
   transcript?: ChatTurn[];
   summary?: string;
@@ -151,33 +141,10 @@ export interface LlmCredential {
   updatedAt: string;
 }
 
-export const DAY_NAMES = [
-  "Sunday",
-  "Monday",
-  "Tuesday",
-  "Wednesday",
-  "Thursday",
-  "Friday",
-  "Saturday",
-];
-
 export function formatDateTime(iso?: string): string {
   if (!iso) return "—";
   return new Date(iso).toLocaleString([], {
     dateStyle: "medium",
     timeStyle: "short",
   });
-}
-
-export function formatDate(iso?: string): string {
-  if (!iso) return "—";
-  return new Date(iso).toLocaleDateString([], { dateStyle: "medium" });
-}
-
-/** Formats a "HH:mm" or "HH:mm:ss" time-of-day string as e.g. "9:00 AM". */
-export function formatTime(time: string): string {
-  const [hours = "0", minutes = "0"] = time.split(":");
-  const date = new Date();
-  date.setHours(Number(hours), Number(minutes), 0, 0);
-  return date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 }

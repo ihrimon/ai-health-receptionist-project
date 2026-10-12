@@ -66,7 +66,7 @@ export default function ConversationsPage() {
           <CardTitle>Conversations</CardTitle>
           <CardDescription>
             {conversations
-              ? `${conversations.length} total — only conversations that ended in a booking are kept`
+              ? `${conversations.length} total`
               : "Loading…"}
           </CardDescription>
         </CardHeader>
@@ -102,14 +102,6 @@ export default function ConversationsPage() {
                   </div>
                   <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
                     <span>{c.transcript?.length ?? 0} messages</span>
-                    {c.bookingId && (
-                      <Badge
-                        variant="outline"
-                        className="border-transparent bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300"
-                      >
-                        Booking created
-                      </Badge>
-                    )}
                     {c.rating && (
                       <Badge
                         variant="outline"
@@ -148,10 +140,7 @@ export default function ConversationsPage() {
             <DialogTitle>Delete conversation</DialogTitle>
           </DialogHeader>
           <p className="text-sm text-muted-foreground">
-            Delete this conversation transcript
-            {deleteTarget?.bookingId
-              ? " — the booking it created will NOT be deleted, only this transcript record."
-              : "?"}
+            Delete this conversation transcript?
           </p>
           <DialogFooter>
             <Button variant="outline" onClick={() => setDeleteTarget(null)}>

@@ -1,5 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
-import type { LlmCredential, LlmProvider } from '../../database/entities';
+import type { LlmCredential, LlmProvider } from '../../generated/prisma/client';
 import { LlmCredentialsService } from '../llm-credentials/llm-credentials.service';
 
 /** Thrown when no LLM credential has been configured yet (Settings page is empty). */

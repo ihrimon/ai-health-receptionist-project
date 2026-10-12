@@ -4,8 +4,6 @@ import Groq, {
   AuthenticationError,
   RateLimitError,
 } from 'groq-sdk';
-import { FIND_AVAILABLE_SLOTS_TOOL } from '../find-available-slots.tool';
-import { RECORD_BOOKING_TOOL } from '../record-booking.tool';
 import {
   LLM_REQUEST_TIMEOUT_MS,
   type AdapterCompleteParams,
@@ -32,6 +30,7 @@ export class OpenAiCompatibleAdapter implements LlmProviderAdapter {
     apiKey,
     model,
     messages,
+    tools,
   }: AdapterCompleteParams): Promise<AdapterCompleteResult> {
     // maxRetries: 0 — LlmChatClient already retries across every OTHER
     // configured credential; the SDK's own default of retrying the SAME
@@ -45,8 +44,7 @@ export class OpenAiCompatibleAdapter implements LlmProviderAdapter {
       .create({
         model,
         messages,
-        tools: [RECORD_BOOKING_TOOL, FIND_AVAILABLE_SLOTS_TOOL],
-        tool_choice: 'auto',
+        ...(tools?.length ? { tools, tool_choice: 'auto' as const } : {}),
         max_tokens: 1024,
       })
       .withResponse();

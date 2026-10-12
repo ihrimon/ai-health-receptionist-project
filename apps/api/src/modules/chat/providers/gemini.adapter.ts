@@ -9,32 +9,32 @@ import {
   type Tool,
 } from '@google/generative-ai';
 import { randomUUID } from 'crypto';
-import { FIND_AVAILABLE_SLOTS_TOOL } from '../find-available-slots.tool';
-import { RECORD_BOOKING_TOOL } from '../record-booking.tool';
 import {
   LLM_REQUEST_TIMEOUT_MS,
   type AdapterCompleteParams,
   type AdapterCompleteResult,
   type ChatCompletionMessage,
   type ChatCompletionMessageParam,
+  type ChatCompletionTool,
   type LlmProviderAdapter,
 } from './provider-adapter.types';
 
-// Both tool constants are `{ type: 'function', function: {...} }` literals
-// (never any other Groq.ChatCompletionTool variant), so `function` is
-// always present despite the SDK's general type marking it optional.
-const FUNCTION_DECLARATIONS: FunctionDeclaration[] = [
-  RECORD_BOOKING_TOOL,
-  FIND_AVAILABLE_SLOTS_TOOL,
-].map((tool) => ({
-  name: tool.function!.name,
-  description: tool.function!.description,
-  // SchemaType's enum values ARE the plain lowercase JSON Schema type
-  // strings ("object", "string", ...) our tool defs already use — this
-  // is a type-level cast, not a value conversion.
-  parameters: tool.function!.parameters as unknown as FunctionDeclarationSchema,
-}));
-const TOOLS: Tool[] = [{ functionDeclarations: FUNCTION_DECLARATIONS }];
+// Our tool definitions are always `{ type: 'function', function: {...} }`
+// literals (never any other Groq.ChatCompletionTool variant), so
+// `function` is always present despite the SDK's general type marking it
+// optional.
+export function toGeminiTools(tools: ChatCompletionTool[]): Tool[] {
+  const functionDeclarations: FunctionDeclaration[] = tools.map((tool) => ({
+    name: tool.function!.name,
+    description: tool.function!.description,
+    // SchemaType's enum values ARE the plain lowercase JSON Schema type
+    // strings ("object", "string", ...) our tool defs already use — this
+    // is a type-level cast, not a value conversion.
+    parameters: tool.function!
+      .parameters as unknown as FunctionDeclarationSchema,
+  }));
+  return [{ functionDeclarations }];
+}
 
 /**
  * Gemini's API has its own shape — `contents` with role "user"/"model"
@@ -50,12 +50,13 @@ export class GeminiAdapter implements LlmProviderAdapter {
     apiKey,
     model,
     messages,
+    tools,
   }: AdapterCompleteParams): Promise<AdapterCompleteResult> {
     const client = new GoogleGenerativeAI(apiKey);
     const { systemInstruction, contents } = toGeminiContents(messages);
     const generativeModel = client.getGenerativeModel({
       model,
-      tools: TOOLS,
+      ...(tools?.length ? { tools: toGeminiTools(tools) } : {}),
       systemInstruction,
     });
 

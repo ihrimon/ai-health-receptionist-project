@@ -2,13 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import {
-  CalendarClock,
-  Headset,
-  MessagesSquare,
-  // PhoneCall, // Call History temporarily disabled
-  Stethoscope,
-} from "lucide-react";
+import { Headset, MessagesSquare, Star } from "lucide-react";
 import {
   Card,
   CardAction,
@@ -26,75 +20,47 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { StatusBadge } from "@/components/status-badge";
-import {
-  apiFetch,
-  formatDateTime,
-  type Booking,
-  // type CallSession, // Call History temporarily disabled
-  type Conversation,
-  type Provider,
-} from "@/lib/api";
+import { apiFetch, formatDateTime, type Conversation } from "@/lib/api";
 
+// Interim overview for the platform branch (M1). The workspace dashboard
+// home with the onboarding checklist replaces it (docs/design/d3-screens.md §3.1).
 export default function AdminOverviewPage() {
-  const [bookings, setBookings] = useState<Booking[] | null>(null);
-  const [providers, setProviders] = useState<Provider[] | null>(null);
-  // const [calls, setCalls] = useState<CallSession[] | null>(null); // Call History temporarily disabled
   const [conversations, setConversations] = useState<Conversation[] | null>(
     null,
   );
 
   useEffect(() => {
-    apiFetch<Booking[]>("/bookings").then(setBookings).catch(() => setBookings([]));
-    apiFetch<Provider[]>("/providers").then(setProviders).catch(() => setProviders([]));
-    // apiFetch<CallSession[]>("/call-sessions").then(setCalls).catch(() => setCalls([])); // Call History temporarily disabled
     apiFetch<Conversation[]>("/conversations")
       .then(setConversations)
       .catch(() => setConversations([]));
   }, []);
 
-  const pendingCount = useMemo(
-    () => bookings?.filter((b) => b.status === "pending").length ?? 0,
-    [bookings],
+  const rated = useMemo(
+    () => conversations?.filter((c) => c.rating != null) ?? [],
+    [conversations],
   );
-  const activeProviders = useMemo(
-    () => providers?.filter((p) => p.isActive).length ?? 0,
-    [providers],
-  );
+  const averageRating = rated.length
+    ? (rated.reduce((sum, c) => sum + (c.rating ?? 0), 0) / rated.length).toFixed(1)
+    : undefined;
 
   const stats = [
     {
-      title: "Total Bookings",
-      value: bookings?.length,
-      description: `${pendingCount} pending`,
-      icon: CalendarClock,
-      href: "/admin/bookings",
-    },
-    {
-      title: "Active Doctors",
-      value: activeProviders,
-      description: providers ? `${providers.length} total` : undefined,
-      icon: Stethoscope,
-      href: "/admin/doctors",
-    },
-    {
       title: "Conversations",
       value: conversations?.length,
-      description: "chat & voice",
+      description: "chat sessions",
       icon: MessagesSquare,
       href: "/admin/conversations",
     },
-    // Call History temporarily disabled — see calls/page.tsx.
-    // {
-    //   title: "Calls",
-    //   value: calls?.length,
-    //   description: "Twilio call sessions",
-    //   icon: PhoneCall,
-    //   href: "/admin/calls",
-    // },
+    {
+      title: "Average rating",
+      value: averageRating,
+      description: `${rated.length} rated`,
+      icon: Star,
+      href: "/admin/conversations",
+    },
   ];
 
-  const recentBookings = bookings?.slice(0, 5) ?? [];
+  const recentConversations = conversations?.slice(0, 5) ?? [];
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto p-4 sm:p-6">
@@ -105,7 +71,7 @@ export default function AdminOverviewPage() {
         <div>
           <h1 className="text-xl font-semibold">BrainStack AI Receptionist</h1>
           <p className="text-sm text-muted-foreground">
-            AI voice &amp; chat receptionist — admin overview
+            AI chat assistant — admin overview
           </p>
         </div>
       </div>
@@ -137,11 +103,11 @@ export default function AdminOverviewPage() {
 
       <Card className="flex min-h-0 flex-1 flex-col">
         <CardHeader>
-          <CardTitle>Recent Bookings</CardTitle>
-          <CardDescription>The latest booking requests</CardDescription>
+          <CardTitle>Recent conversations</CardTitle>
+          <CardDescription>The latest chat sessions</CardDescription>
           <CardAction>
             <Link
-              href="/admin/bookings"
+              href="/admin/conversations"
               className="text-sm text-primary hover:underline"
             >
               View all
@@ -149,11 +115,11 @@ export default function AdminOverviewPage() {
           </CardAction>
         </CardHeader>
         <CardContent className="min-h-0 flex-1 overflow-auto">
-          {!bookings ? (
+          {!conversations ? (
             <p className="text-sm text-muted-foreground">Loading…</p>
-          ) : recentBookings.length === 0 ? (
+          ) : recentConversations.length === 0 ? (
             <p className="text-sm text-muted-foreground">
-              No bookings yet — try the{" "}
+              No conversations yet — try the{" "}
               <Link href="/chat" className="underline">
                 chat page
               </Link>
@@ -163,32 +129,24 @@ export default function AdminOverviewPage() {
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Name</TableHead>
-                  <TableHead>Service</TableHead>
-                  <TableHead>Scheduled</TableHead>
-                  <TableHead>Status</TableHead>
+                  <TableHead>Started</TableHead>
+                  <TableHead>Messages</TableHead>
+                  <TableHead>Rating</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {recentBookings.map((b) => (
-                  <TableRow key={b.id}>
-                    <TableCell>
+                {recentConversations.map((c) => (
+                  <TableRow key={c.id}>
+                    <TableCell className="whitespace-nowrap">
                       <Link
-                        href={`/admin/bookings/${b.id}`}
+                        href={`/admin/conversations/${c.id}`}
                         className="font-medium hover:underline"
                       >
-                        {b.name}
+                        {formatDateTime(c.createdAt)}
                       </Link>
                     </TableCell>
-                    <TableCell>{b.service}</TableCell>
-                    <TableCell className="whitespace-nowrap">
-                      {b.startsAt
-                        ? formatDateTime(b.startsAt)
-                        : `${b.preferredDate} ${b.preferredTime}`}
-                    </TableCell>
-                    <TableCell>
-                      <StatusBadge status={b.status} />
-                    </TableCell>
+                    <TableCell>{c.transcript?.length ?? 0}</TableCell>
+                    <TableCell>{c.rating ? `${c.rating} ★` : "—"}</TableCell>
                   </TableRow>
                 ))}
               </TableBody>

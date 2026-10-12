@@ -1,5 +1,5 @@
 import { IsEnum, IsNotEmpty, IsString } from 'class-validator';
-import { LlmProvider } from '../../../database/entities';
+import { LlmProvider } from '../../../generated/prisma/client';
 
 export class CreateLlmCredentialDto {
   @IsEnum(LlmProvider)
