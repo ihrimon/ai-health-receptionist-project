@@ -1,44 +1,14 @@
-import { Module } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
-import { TypeOrmModule } from '@nestjs/typeorm';
-import {
-  Booking,
-  CallSession,
-  Conversation,
-  LlmCredential,
-  Provider,
-  ProviderAvailability,
-  ProviderGoogleAccount,
-} from './entities';
+import { Global, Module } from '@nestjs/common';
+import { PrismaService } from './prisma.service';
 
+/**
+ * Global, so feature modules can inject PrismaService without importing
+ * this module. Schema and migrations live in apps/api/prisma (Prisma is the
+ * single source of truth — M0 decision T15).
+ */
+@Global()
 @Module({
-  imports: [
-    TypeOrmModule.forRootAsync({
-      inject: [ConfigService],
-      useFactory: (config: ConfigService) => ({
-        type: 'postgres',
-        host: config.get<string>('database.host'),
-        port: config.get<number>('database.port'),
-        username: config.get<string>('database.username'),
-        password: config.get<string>('database.password'),
-        database: config.get<string>('database.name'),
-        ssl: config.get<boolean>('database.ssl')
-          ? { rejectUnauthorized: false }
-          : false,
-        entities: [
-          Booking,
-          Conversation,
-          CallSession,
-          Provider,
-          ProviderAvailability,
-          ProviderGoogleAccount,
-          LlmCredential,
-        ],
-        // Phase 1 (dev only): auto-sync schema from entities.
-        // Replace with the SQL migrations in packages/database once the schema stabilizes.
-        synchronize: config.get<string>('nodeEnv') !== 'production',
-      }),
-    }),
-  ],
+  providers: [PrismaService],
+  exports: [PrismaService],
 })
 export class DatabaseModule {}

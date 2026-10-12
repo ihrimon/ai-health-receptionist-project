@@ -6,24 +6,20 @@ import {
   Param,
   Patch,
   Post,
-  UseGuards,
 } from '@nestjs/common';
-import { AdminAuthGuard } from '../auth/admin-auth.guard';
+import { PlatformAdminOnly } from '../auth/platform-admin.guard';
 import { CreateLlmCredentialDto } from './dto/create-llm-credential.dto';
 import { ReorderLlmCredentialsDto } from './dto/reorder-llm-credentials.dto';
 import { UpdateLlmCredentialDto } from './dto/update-llm-credential.dto';
 import { LlmCredentialsService } from './llm-credentials.service';
 
 /**
- * Admin-only — the whole point is these API keys aren't in .env/source
- * control anymore, so this is the only place they're readable. The
- * dashboard additionally re-prompts for the admin password before
- * showing this page at all (see apps/dashboard's Settings page); this
- * guard is the actual enforcement, that re-prompt is a UX speed bump on
- * top of it.
+ * Platform-admin only — these are the platform's own LLM keys (M0
+ * decision B3), not any workspace's, and this is the only place they're
+ * readable.
  */
 @Controller('llm-credentials')
-@UseGuards(AdminAuthGuard)
+@PlatformAdminOnly()
 export class LlmCredentialsController {
   constructor(private readonly llmCredentialsService: LlmCredentialsService) {}
 

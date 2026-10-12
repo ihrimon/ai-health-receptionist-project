@@ -5,15 +5,15 @@ import { AppService } from './app.service';
 import configuration from './config/configuration';
 import { DatabaseModule } from './database/database.module';
 import { QueueModule } from './queue/queue.module';
+import { RedisModule } from './redis/redis.module';
+import { RateLimitModule } from './rate-limit/rate-limit.module';
+import { TenancyModule } from './tenancy/tenancy.module';
 import { HealthModule } from './health/health.module';
-import { BookingsModule } from './modules/bookings/bookings.module';
 import { ConversationsModule } from './modules/conversations/conversations.module';
-import { CallSessionsModule } from './modules/call-sessions/call-sessions.module';
-import { VoiceModule } from './modules/voice/voice.module';
 import { ChatModule } from './modules/chat/chat.module';
-import { ProvidersModule } from './modules/providers/providers.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { LlmCredentialsModule } from './modules/llm-credentials/llm-credentials.module';
+import { WorkspacesModule } from './modules/workspaces/workspaces.module';
 
 @Module({
   imports: [
@@ -24,15 +24,15 @@ import { LlmCredentialsModule } from './modules/llm-credentials/llm-credentials.
     }),
     DatabaseModule,
     QueueModule,
+    RedisModule,
+    RateLimitModule,
+    TenancyModule,
     HealthModule,
-    BookingsModule,
     ConversationsModule,
-    CallSessionsModule,
-    VoiceModule,
     ChatModule,
-    ProvidersModule,
     AuthModule,
     LlmCredentialsModule,
+    WorkspacesModule,
   ],
   controllers: [AppController],
   providers: [AppService],

@@ -1,0 +1,81 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [platform, main]
+  push:
+    branches: [platform]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Lint, test, build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    # For the integration tests (tenant isolation, M1-25). Same images as
+    # infrastructure/docker/docker-compose.yml.
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: brainstack
+          POSTGRES_PASSWORD: brainstack
+          POSTGRES_DB: brainstack_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U brainstack -d brainstack_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports: ['6379:6379']
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Version comes from the root package.json "packageManager" field.
+      - uses: pnpm/action-setup@v4
+
+      # Matches the Node version in infrastructure/docker/Dockerfile.*.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm lint
+
+      # apps/api's lint script runs `eslint --fix`, which exits 0 after
+      # silently rewriting files. Fail here instead, so unfixed lint issues
+      # can't be merged just because they were auto-fixable.
+      - name: Fail if lint auto-fixed any files
+        run: git diff --exit-code
+
+      - run: pnpm test
+
+      - run: pnpm build
+
+      # The API image runs `node dist/main.js`. If tsc picks up a .ts file
+      # outside src/ (it happened with prisma.config.ts), the output silently
+      # moves to dist/src/ while the build itself still passes.
+      - name: Check the API build entrypoint exists
+        run: test -f apps/api/dist/main.js
+
+      # Applies the migrations to the service database, then proves one
+      # workspace can't reach another's data (M1-25).
+      - name: Integration tests (tenant isolation)
+        run: pnpm --filter api test:integration
+        env:
+          TEST_DATABASE_URL: postgresql://brainstack:brainstack@localhost:5432/brainstack_test
+          REDIS_HOST: localhost
+          REDIS_PORT: 6379
