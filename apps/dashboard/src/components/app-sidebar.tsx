@@ -34,7 +34,7 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
 } from "@/components/ui/sidebar";
-import { API_URL, clearDashboardSession } from "@/lib/api";
+import { API_BASE, API_HEADERS, clearDashboardSession } from "@/lib/api";
 
 const NAV_ITEMS = [
   { title: "Overview", href: "/admin", icon: Gauge },
@@ -47,8 +47,9 @@ export function AppSidebar() {
   const router = useRouter();
 
   async function handleLogout() {
-    await fetch(`${API_URL}/auth/logout`, {
+    await fetch(`${API_BASE}/auth/logout`, {
       method: "POST",
+      headers: API_HEADERS,
       credentials: "include",
     }).catch(() => {});
     clearDashboardSession();

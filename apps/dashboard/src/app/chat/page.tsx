@@ -9,6 +9,7 @@ import {
 } from "react";
 import Link from "next/link";
 import { MessageCircle, Star, X } from "lucide-react";
+import { API_BASE, API_HEADERS } from "@/lib/api";
 
 function subscribeNever() {
   return () => {};
@@ -48,7 +49,6 @@ interface ChatApiResponse {
 // but plain Q&A has none).
 const RATING_PROMPT_AFTER_REPLIES = 3;
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001";
 
 // Persisted to sessionStorage (not localStorage) so an in-progress
 // conversation survives navigating to another route and back within the
@@ -213,9 +213,9 @@ export default function ChatPage() {
         .filter((m) => m.id !== GREETING.id)
         .map((m) => ({ role: m.role, text: m.text }));
 
-      const res = await fetch(`${API_URL}/chat/message`, {
+      const res = await fetch(`${API_BASE}/chat/message`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: API_HEADERS,
         body: JSON.stringify({ sessionId, message: trimmed, transcript }),
       });
 
@@ -288,9 +288,9 @@ export default function ChatPage() {
     if (!sessionId || submittingRating) return;
     setSubmittingRating(true);
     try {
-      await fetch(`${API_URL}/chat/${sessionId}/rating`, {
+      await fetch(`${API_BASE}/chat/${sessionId}/rating`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: API_HEADERS,
         body: JSON.stringify({ rating }),
       });
     } catch {

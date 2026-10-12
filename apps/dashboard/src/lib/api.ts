@@ -1,8 +1,20 @@
 export const API_URL =
   process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001";
 
+/** Every API route except /health lives under /v1 (D-2 §1). */
+export const API_BASE = `${API_URL}/v1`;
+
 /**
- * The real admin_session cookie belongs to the API's own domain (set by
+ * The API rejects state-changing requests without X-Requested-With: fetch
+ * (its CSRF check, D-2 §1), so send it on every call.
+ */
+export const API_HEADERS = {
+  "Content-Type": "application/json",
+  "X-Requested-With": "fetch",
+};
+
+/**
+ * The real bs_session cookie belongs to the API's own domain (set by
  * its Set-Cookie response) — the browser only ever attaches it to
  * requests TO the API, never to requests to the dashboard's own domain.
  * That's invisible locally (dashboard and API are both "localhost", just
@@ -14,11 +26,11 @@ export const API_URL =
  * This is a same-domain, non-httpOnly marker cookie the dashboard sets on
  * itself right after a successful login, purely so that middleware has
  * something local to check for the redirect-to-login UX. It carries no
- * session data — proxy.ts's own comment already documents that the real
- * security boundary is AdminAuthGuard on the API, not this cookie.
+ * session data — the real security boundary is the API's session guard,
+ * not this cookie.
  */
 const DASH_SESSION_COOKIE = "dash_session";
-const DASH_SESSION_MAX_AGE_SECONDS = 7 * 24 * 60 * 60; // matches AuthService.SESSION_TTL_MS
+const DASH_SESSION_MAX_AGE_SECONDS = 7 * 24 * 60 * 60; // matches the API's SESSION_TTL_MS
 
 export function markDashboardSession() {
   document.cookie = `${DASH_SESSION_COOKIE}=1; path=/; max-age=${DASH_SESSION_MAX_AGE_SECONDS}; samesite=lax`;
@@ -33,10 +45,10 @@ export async function apiFetch<T>(
   path: string,
   init?: RequestInit,
 ): Promise<T> {
-  const res = await fetch(`${API_URL}${path}`, {
-    headers: { "Content-Type": "application/json" },
+  const res = await fetch(`${API_BASE}${path}`, {
     credentials: "include",
     ...init,
+    headers: { ...API_HEADERS, ...init?.headers },
   });
 
   if (!res.ok) {
