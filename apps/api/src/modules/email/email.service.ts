@@ -19,12 +19,14 @@ export class EmailService {
   private readonly transporter: Transporter | null;
   private readonly fromUser: string;
   private readonly fromName: string;
+  private readonly isProduction: boolean;
 
   constructor(private readonly config: ConfigService) {
     this.fromUser = this.config.get<string>('email.gmailUser') ?? '';
     this.fromName =
       this.config.get<string>('email.fromName') ?? 'BrainStack AI Receptionist';
     const pass = this.config.get<string>('email.gmailAppPassword') ?? '';
+    this.isProduction = this.config.get<string>('nodeEnv') === 'production';
 
     if (this.fromUser && pass) {
       this.transporter = createTransport({
@@ -40,7 +42,16 @@ export class EmailService {
   }
 
   async send({ to, subject, html }: OutgoingEmail): Promise<void> {
-    if (!this.transporter) return;
+    if (!this.transporter) {
+      // Without SMTP in development, show the email (with its verify/reset
+      // link) in the log so auth flows can still be tested end to end.
+      if (!this.isProduction) {
+        this.logger.log(
+          `Email disabled, not sent. To: ${to} | ${subject}\n${html}`,
+        );
+      }
+      return;
+    }
 
     await this.transporter.sendMail({
       from: `"${this.fromName}" <${this.fromUser}>`,

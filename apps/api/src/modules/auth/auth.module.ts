@@ -1,11 +1,21 @@
 import { Module } from '@nestjs/common';
-import { AdminAuthGuard } from './admin-auth.guard';
+import { APP_GUARD } from '@nestjs/core';
+import { EmailModule } from '../email/email.module';
+import { WorkspacesModule } from '../workspaces/workspaces.module';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
+import { SessionGuard } from './session.guard';
+import { SessionsService } from './sessions.service';
 
 @Module({
+  imports: [EmailModule, WorkspacesModule],
   controllers: [AuthController],
-  providers: [AuthService, AdminAuthGuard],
-  exports: [AuthService, AdminAuthGuard],
+  providers: [
+    AuthService,
+    SessionsService,
+    // Every route needs a session unless marked @Public().
+    { provide: APP_GUARD, useClass: SessionGuard },
+  ],
+  exports: [SessionsService],
 })
 export class AuthModule {}

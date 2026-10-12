@@ -35,11 +35,6 @@ export default () => ({
     topK: parseInt(process.env.KNOWLEDGE_TOP_K ?? '3', 10),
   },
 
-  admin: {
-    password: process.env.ADMIN_PASSWORD ?? '',
-    sessionSecret: process.env.ADMIN_SESSION_SECRET ?? '',
-  },
-
   // Transactional email, sent via a plain Gmail account (SMTP through
   // nodemailer's "gmail" service preset) for local development — no
   // domain/DNS setup needed. Requires 2-Step Verification enabled on that

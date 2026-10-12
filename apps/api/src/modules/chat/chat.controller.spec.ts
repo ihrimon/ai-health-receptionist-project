@@ -1,5 +1,4 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { AuthService } from '../auth/auth.service';
 import { ChatController } from './chat.controller';
 import { ChatService } from './chat.service';
 import { LlmKeyManager } from './llm-key-manager';
@@ -18,11 +17,6 @@ describe('ChatController', () => {
       providers: [
         { provide: ChatService, useValue: chatService },
         { provide: LlmKeyManager, useValue: llmKeyManager },
-        // activeCredential() is @UseGuards(AdminAuthGuard) — Nest
-        // instantiates the real guard as part of the module graph even
-        // though these tests call controller methods directly (bypassing
-        // the HTTP guard pipeline), so its own dependency needs a stub.
-        { provide: AuthService, useValue: { verifyToken: () => true } },
       ],
     }).compile();
 
