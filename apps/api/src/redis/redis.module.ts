@@ -16,7 +16,9 @@ class RedisShutdown implements OnModuleDestroy {
   constructor(@Inject(REDIS_CLIENT) private readonly redis: Redis) {}
 
   async onModuleDestroy(): Promise<void> {
-    await this.redis.quit();
+    // quit() needs a live connection; if Redis never came up, just drop it.
+    if (this.redis.status === 'ready') await this.redis.quit();
+    else this.redis.disconnect();
   }
 }
 
