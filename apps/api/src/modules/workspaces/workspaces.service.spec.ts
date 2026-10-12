@@ -2,6 +2,8 @@ import { ConflictException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { PrismaService } from '../../database/prisma.service';
 import { WorkspaceRole } from '../../generated/prisma/client';
+import { TENANT_PRISMA } from '../../tenancy/tenant-prisma';
+import { WorkspaceAccessService } from '../../tenancy/workspace-access.service';
 import { defaultChatbotConfig } from './default-chatbot-config';
 import { WorkspacesService } from './workspaces.service';
 
@@ -43,6 +45,8 @@ describe('WorkspacesService', () => {
       providers: [
         WorkspacesService,
         { provide: PrismaService, useValue: prisma },
+        { provide: TENANT_PRISMA, useValue: {} },
+        { provide: WorkspaceAccessService, useValue: {} },
       ],
     }).compile();
 

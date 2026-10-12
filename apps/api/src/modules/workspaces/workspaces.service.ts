@@ -1,6 +1,15 @@
-import { ConflictException, Injectable } from '@nestjs/common';
+import {
+  ConflictException,
+  Inject,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { PrismaService } from '../../database/prisma.service';
 import { Prisma, WorkspaceRole } from '../../generated/prisma/client';
+import { requireTenant } from '../../tenancy/tenant-context';
+import { TENANT_PRISMA, type TenantPrisma } from '../../tenancy/tenant-prisma';
+import { WorkspaceAccessService } from '../../tenancy/workspace-access.service';
+import type { AuthContext } from '../auth/auth-context';
 import { defaultChatbotConfig } from './default-chatbot-config';
 import {
   generateChatbotPublicId,
@@ -21,7 +30,30 @@ export interface CreateWorkspaceInput {
 
 @Injectable()
 export class WorkspacesService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    @Inject(TENANT_PRISMA) private readonly db: TenantPrisma,
+    private readonly access: WorkspaceAccessService,
+  ) {}
+
+  /** Points the session at another workspace the user belongs to. */
+  async switchActive(auth: AuthContext, workspaceId: string): Promise<void> {
+    const role = await this.access.roleIn(auth.user.id, workspaceId);
+    if (!role) throw new NotFoundException('Workspace not found');
+    await this.prisma.session.update({
+      where: { id: auth.session.id },
+      data: { activeWorkspaceId: workspaceId },
+    });
+  }
+
+  /** Renames the current workspace. The slug stays, so links keep working. */
+  async renameCurrent(name: string) {
+    const workspace = await this.db.workspace.update({
+      where: { id: requireTenant().workspaceId },
+      data: { name },
+    });
+    return { id: workspace.id, name: workspace.name, slug: workspace.slug };
+  }
 
   /**
    * Creates a workspace with `ownerUserId` as its OWNER, plus the workspace's

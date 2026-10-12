@@ -10,6 +10,7 @@ import { EmailTokenType, Prisma } from '../../generated/prisma/client';
 import { RateLimitService } from '../../rate-limit/rate-limit.service';
 import { EmailService } from '../email/email.service';
 import { WorkspacesService } from '../workspaces/workspaces.service';
+import { WorkspaceAccessService } from '../../tenancy/workspace-access.service';
 import { AuthService } from './auth.service';
 import { hashPassword } from './secrets';
 import { SessionsService } from './sessions.service';
@@ -82,6 +83,7 @@ describe('AuthService', () => {
         { provide: WorkspacesService, useValue: workspaces },
         { provide: RateLimitService, useValue: rateLimit },
         { provide: EmailService, useValue: email },
+        { provide: WorkspaceAccessService, useValue: {} },
         {
           provide: ConfigService,
           useValue: { get: () => 'http://dash.test' },
