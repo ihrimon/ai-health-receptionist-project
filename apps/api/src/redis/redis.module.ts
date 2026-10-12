@@ -2,6 +2,7 @@ import {
   Global,
   Inject,
   Injectable,
+  Logger,
   Module,
   OnModuleDestroy,
 } from '@nestjs/common';
@@ -30,8 +31,8 @@ class RedisShutdown implements OnModuleDestroy {
     {
       provide: REDIS_CLIENT,
       inject: [ConfigService],
-      useFactory: (config: ConfigService) =>
-        new Redis({
+      useFactory: (config: ConfigService) => {
+        const redis = new Redis({
           host: config.get<string>('redis.host'),
           port: config.get<number>('redis.port'),
           password: config.get<string>('redis.password'),
@@ -40,7 +41,17 @@ class RedisShutdown implements OnModuleDestroy {
           // requests error out rather than hang.
           enableOfflineQueue: false,
           maxRetriesPerRequest: 1,
-        }),
+        });
+        // ioredis reconnects on its own; without a listener every failed
+        // attempt is logged as an "Unhandled error event".
+        const logger = new Logger('Redis');
+        // "localhost" tries IPv4 and IPv6, so a refused connection arrives as
+        // an AggregateError with an empty message; its code is still set.
+        redis.on('error', (err: NodeJS.ErrnoException) =>
+          logger.warn(`Connection error: ${err.code ?? err.message}`),
+        );
+        return redis;
+      },
     },
     RedisShutdown,
   ],
