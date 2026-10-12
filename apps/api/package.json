@@ -19,6 +19,7 @@
     "test:cov": "jest --coverage",
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
     "test:e2e": "jest --config ./test/jest-e2e.json",
+    "test:integration": "node --experimental-vm-modules node_modules/jest/bin/jest.js --config ./test/jest-integration.json --runInBand",
     "knowledge:ingest": "ts-node -r tsconfig-paths/register src/modules/knowledge/ingest-knowledge.script.ts",
     "user:platform-admin": "ts-node -r tsconfig-paths/register src/modules/auth/platform-admin.script.ts",
     "postinstall": "prisma generate",
