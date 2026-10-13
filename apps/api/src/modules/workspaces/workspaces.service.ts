@@ -1,3 +1,4 @@
+import { defaultChatbotConfig } from '@brainstack/shared';
 import {
   ConflictException,
   Inject,
@@ -10,7 +11,6 @@ import { requireTenant } from '../../tenancy/tenant-context';
 import { TENANT_PRISMA, type TenantPrisma } from '../../tenancy/tenant-prisma';
 import { WorkspaceAccessService } from '../../tenancy/workspace-access.service';
 import type { AuthContext } from '../auth/auth-context';
-import { defaultChatbotConfig } from './default-chatbot-config';
 import {
   generateChatbotPublicId,
   slugify,
