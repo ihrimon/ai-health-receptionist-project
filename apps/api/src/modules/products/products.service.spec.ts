@@ -182,6 +182,85 @@ describe('ProductsService', () => {
     });
   });
 
+  describe('importCsv', () => {
+    const file = (...rows: string[]) =>
+      Buffer.from(['sku,name,price', ...rows].join('\n'));
+    const importFile = (...rows: string[]) =>
+      inTenant(() => service.importCsv(file(...rows)));
+
+    it('updates rows whose SKU exists and creates the rest', async () => {
+      product.findMany.mockResolvedValue([{ id: 'p-1', sku: 'OLD' }]);
+
+      const result = await importFile(
+        'OLD,Old shoe,10',
+        'NEW,New shoe,20',
+        ',No SKU,',
+      );
+
+      expect(result).toEqual({ created: 2, updated: 1, failed: 0, errors: [] });
+      expect(product.update).toHaveBeenCalledWith({
+        where: { id: 'p-1', chatbotId: 'bot-1' },
+        data: expect.not.objectContaining({ isActive: true }) as unknown,
+        select: { id: true },
+      });
+      expect(product.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            workspaceId: 'ws-1',
+            chatbotId: 'bot-1',
+            sku: 'NEW',
+            price: '20.00',
+            currency: 'BDT',
+          }) as unknown,
+        }),
+      );
+    });
+
+    it('saves good rows and reports bad ones by row number', async () => {
+      const result = await importFile('A,Shoe,10', 'B,,10', 'C,Boot,cheap');
+
+      expect(result.created).toBe(1);
+      expect(result.failed).toBe(2);
+      expect(result.errors).toEqual([
+        { row: 3, message: expect.stringContaining('name') as unknown },
+        { row: 4, message: expect.stringContaining('price') as unknown },
+      ]);
+    });
+
+    it('fails a SKU repeated in the file', async () => {
+      const result = await importFile('A,Shoe,10', 'A,Shoe again,12');
+
+      expect(result.created).toBe(1);
+      expect(result.errors).toEqual([
+        { row: 3, message: 'SKU A appears earlier in the file' },
+      ]);
+    });
+
+    it(`stops creating at ${KNOWLEDGE_LIMITS.products} products but still updates`, async () => {
+      product.count.mockResolvedValue(KNOWLEDGE_LIMITS.products - 1);
+      product.findMany.mockResolvedValue([{ id: 'p-1', sku: 'OLD' }]);
+
+      const result = await importFile('A,One,1', 'B,Two,2', 'OLD,Old,3');
+
+      expect(result).toMatchObject({ created: 1, updated: 1, failed: 1 });
+      expect(result.errors[0]).toEqual({
+        row: 3,
+        message: `A chatbot can have at most ${KNOWLEDGE_LIMITS.products} products`,
+      });
+    });
+
+    it('reports a SKU taken meanwhile instead of failing the import', async () => {
+      product.create.mockRejectedValueOnce(prismaError('P2002'));
+
+      const result = await importFile('A,Shoe,10', 'B,Boot,20');
+
+      expect(result).toMatchObject({ created: 1, failed: 1 });
+      expect(result.errors).toEqual([
+        { row: 2, message: 'SKU A already exists' },
+      ]);
+    });
+  });
+
   describe('update and remove', () => {
     it('updates only within the chatbot and returns money as strings', async () => {
       const view = await service.update('p-1', { price: '12.50' });

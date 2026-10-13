@@ -1,6 +1,8 @@
 import {
   type CreateProduct,
+  createProductSchema,
   KNOWLEDGE_LIMITS,
+  type ProductImportResult,
   type ProductListQuery,
   type UpdateProduct,
 } from '@brainstack/shared';
@@ -11,6 +13,7 @@ import { TENANT_PRISMA, type TenantPrisma } from '../../tenancy/tenant-prisma';
 import { ChatbotService } from '../chatbot/chatbot.service';
 import { limitReached, orNotFound } from '../knowledge-base/knowledge-errors';
 import { decodeCursor, encodeCursor } from './product-cursor';
+import { csvRowToProduct, parseProductCsv } from './product-csv';
 
 // The embedding columns (M2-13) and externalId (store sync, P2) stay
 // internal.
@@ -162,4 +165,106 @@ export class ProductsService {
       }),
     );
   }
+
+  /**
+   * Imports a product CSV (M2-8): a row whose SKU exists updates that
+   * product, any other row creates one. Good rows are saved and bad rows
+   * reported by number (lead's call), so a fixed file can be re-uploaded
+   * without duplicates.
+   */
+  async importCsv(file: Buffer): Promise<ProductImportResult> {
+    const rows = parseProductCsv(file);
+    const chatbotId = await this.chatbot.currentId();
+    const skus = rows.map((r) => r.values.sku).filter((s): s is string => !!s);
+    const [existing, count, currency] = await Promise.all([
+      this.db.product.findMany({
+        where: { chatbotId, sku: { in: skus } },
+        select: { id: true, sku: true },
+      }),
+      this.db.product.count({ where: { chatbotId } }),
+      this.chatbot.defaultCurrency(),
+    ]);
+    const idBySku = new Map(existing.map((p) => [p.sku, p.id]));
+    const { workspaceId } = requireTenant();
+
+    const result: ProductImportResult = {
+      created: 0,
+      updated: 0,
+      failed: 0,
+      errors: [],
+    };
+    const fail = (row: number, message: string) => {
+      result.failed++;
+      result.errors.push({ row, message });
+    };
+    const seenSkus = new Set<string>();
+    let total = count;
+
+    // One row at a time, so a failing row doesn't undo the others.
+    for (const { row, values } of rows) {
+      const parsed = createProductSchema.safeParse(csvRowToProduct(values));
+      if (!parsed.success) {
+        fail(row, formatIssues(parsed.error.issues));
+        continue;
+      }
+      const product = parsed.data;
+      if (product.sku) {
+        if (seenSkus.has(product.sku)) {
+          fail(row, `SKU ${product.sku} appears earlier in the file`);
+          continue;
+        }
+        seenSkus.add(product.sku);
+      }
+
+      const existingId = product.sku ? idBySku.get(product.sku) : undefined;
+      try {
+        if (existingId) {
+          // The CSV has no isActive or attributes columns: keep those.
+          const fields: Partial<typeof product> = { ...product };
+          delete fields.isActive;
+          delete fields.attributes;
+          await this.db.product.update({
+            where: { id: existingId, chatbotId },
+            data: fields,
+            select: { id: true },
+          });
+          result.updated++;
+        } else if (total >= KNOWLEDGE_LIMITS.products) {
+          fail(
+            row,
+            `A chatbot can have at most ${KNOWLEDGE_LIMITS.products} products`,
+          );
+        } else {
+          await this.db.product.create({
+            data: {
+              workspaceId,
+              chatbotId,
+              ...product,
+              currency: product.currency ?? currency,
+            },
+            select: { id: true },
+          });
+          result.created++;
+          total++;
+        }
+      } catch (err) {
+        // A product saved meanwhile took the SKU.
+        if (isDuplicateSku(err)) {
+          fail(row, `SKU ${product.sku} already exists`);
+          continue;
+        }
+        throw err;
+      }
+    }
+    return result;
+  }
+}
+
+/** "price: Must be an amount…; url: Invalid URL" for a row's report. */
+function formatIssues(issues: { path: PropertyKey[]; message: string }[]) {
+  return issues
+    .map((i) =>
+      i.path.length ? `${i.path.join('.')}: ${i.message}` : i.message,
+    )
+    .join('; ');
 }
