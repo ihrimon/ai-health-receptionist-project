@@ -14,6 +14,7 @@ import { ChatModule } from './modules/chat/chat.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { LlmCredentialsModule } from './modules/llm-credentials/llm-credentials.module';
 import { WorkspacesModule } from './modules/workspaces/workspaces.module';
+import { ChatbotModule } from './modules/chatbot/chatbot.module';
 
 @Module({
   imports: [
@@ -33,6 +34,7 @@ import { WorkspacesModule } from './modules/workspaces/workspaces.module';
     AuthModule,
     LlmCredentialsModule,
     WorkspacesModule,
+    ChatbotModule,
   ],
   controllers: [AppController],
   providers: [AppService],

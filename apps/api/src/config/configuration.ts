@@ -2,6 +2,9 @@ export default () => ({
   nodeEnv: process.env.NODE_ENV ?? 'development',
   apiPort: parseInt(process.env.API_PORT ?? '3001', 10),
   dashboardUrl: process.env.DASHBOARD_URL ?? 'http://localhost:3000',
+  // Script src in the embed snippet (FR-3.1). The widget arrives in M4.
+  widgetLoaderUrl:
+    process.env.WIDGET_LOADER_URL ?? 'http://localhost:3002/chatbot.js',
 
   database: {
     // Prisma connects with DATABASE_URL (the Prisma CLI reads it too, via

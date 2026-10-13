@@ -1,0 +1,9 @@
+{
+  // CommonJS output in dist/: the API (CommonJS, `node dist/main.js`) can't
+  // load .ts source, so consumers import the built package.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "declarationMap": true,
+    "sourceMap": true
+  }
+}

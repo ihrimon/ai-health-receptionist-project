@@ -8,9 +8,9 @@
 // so rows inserted with raw SQL (KnowledgeService) get one too.
 //
 // Identity and tenancy (User, Workspace, WorkspaceMember, Session,
-// EmailToken) follow docs/design/d1-data-model.md. Chatbot has only its
-// M1-15 columns so far; Conversation and KnowledgeChunk are still the
-// interim single-tenant shape until M2/M3.
+// EmailToken) and Chatbot/ChatbotVersion follow docs/design/d1-data-model.md
+// (Chatbot's installVerifiedAt arrives in M4). Conversation and
+// KnowledgeChunk are still the interim single-tenant shape until M2/M3.
 
 generator client {
   provider            = "prisma-client"
@@ -72,9 +72,11 @@ model User {
   createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz
   updatedAt       DateTime  @updatedAt @map("updated_at") @db.Timestamptz
 
-  memberships WorkspaceMember[]
-  sessions    Session[]
-  emailTokens EmailToken[]
+  memberships              WorkspaceMember[]
+  sessions                 Session[]
+  emailTokens              EmailToken[]
+  /// Chatbot versions this user published.
+  publishedChatbotVersions ChatbotVersion[]
 
   @@map("users")
 }
@@ -89,10 +91,11 @@ model Workspace {
   createdAt DateTime        @default(now()) @map("created_at") @db.Timestamptz
   updatedAt DateTime        @updatedAt @map("updated_at") @db.Timestamptz
 
-  members        WorkspaceMember[]
-  chatbots       Chatbot[]
+  members         WorkspaceMember[]
+  chatbots        Chatbot[]
+  chatbotVersions ChatbotVersion[]
   /// Sessions currently switched to this workspace.
-  activeSessions Session[]
+  activeSessions  Session[]
 
   @@map("workspaces")
 }
@@ -149,25 +152,55 @@ model EmailToken {
   @@map("email_tokens")
 }
 
-// ─────────────── Chatbot (M1-15 minimal, completed in M2) ───────────────
+// ─────────────── Chatbot and its published versions (M2) ───────────────
 
 /// One per workspace in the MVP (M0 decision B2), created together with the
-/// workspace. Versions, allowed domains and knowledge relations come in M2.
+/// workspace. Knowledge relations arrive with the knowledge tables (M2-6+).
 model Chatbot {
-  id          String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  workspaceId String        @map("workspace_id") @db.Uuid
+  id                 String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId        String        @map("workspace_id") @db.Uuid
   /// "cb_" + 16 random characters; goes in the embed snippet.
-  publicId    String        @unique @map("public_id") @db.VarChar(24)
-  status      ChatbotStatus @default(ENABLED)
-  /// ChatbotConfig (docs/design/d4-chatbot-config.md).
-  draftConfig Json          @map("draft_config")
-  createdAt   DateTime      @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt   DateTime      @updatedAt @map("updated_at") @db.Timestamptz
+  publicId           String        @unique @map("public_id") @db.VarChar(24)
+  status             ChatbotStatus @default(ENABLED)
+  /// ChatbotConfig (packages/shared, docs/design/d4-chatbot-config.md),
+  /// edited freely; the live config is publishedVersion.config.
+  draftConfig        Json          @map("draft_config")
+  /// The live version; null until the first publish.
+  publishedVersionId String?       @unique @map("published_version_id") @db.Uuid
+  /// Sites allowed to embed the widget, e.g. "shop.example.com",
+  /// "*.example.com" (enforced with frame-ancestors CSP in M4).
+  allowedDomains     String[]      @default([]) @map("allowed_domains")
+  createdAt          DateTime      @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt          DateTime      @updatedAt @map("updated_at") @db.Timestamptz
 
-  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  workspace        Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  publishedVersion ChatbotVersion?  @relation("PublishedVersion", fields: [publishedVersionId], references: [id], onDelete: SetNull)
+  versions         ChatbotVersion[] @relation("ChatbotVersions")
 
   @@index([workspaceId])
   @@map("chatbots")
+}
+
+/// An immutable copy of a chatbot's draft config, made on each publish
+/// (D-1 decision 5). Kept for rollback (FR-6.6).
+model ChatbotVersion {
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId   String   @map("workspace_id") @db.Uuid
+  chatbotId     String   @map("chatbot_id") @db.Uuid
+  /// 1, 2, 3… per chatbot.
+  version       Int
+  config        Json
+  publishedById String?  @map("published_by_id") @db.Uuid
+  publishedAt   DateTime @default(now()) @map("published_at") @db.Timestamptz
+
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  chatbot     Chatbot   @relation("ChatbotVersions", fields: [chatbotId], references: [id], onDelete: Cascade)
+  publishedBy User?     @relation(fields: [publishedById], references: [id], onDelete: SetNull)
+  publishedOf Chatbot?  @relation("PublishedVersion")
+
+  @@unique([chatbotId, version])
+  @@index([workspaceId])
+  @@map("chatbot_versions")
 }
 
 // ─────────────────────────── Platform ───────────────────────────
