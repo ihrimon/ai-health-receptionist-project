@@ -15,6 +15,7 @@ export const KNOWLEDGE_LIMITS = {
   customAnswers: 50,
   /** POLICY and TEXT pages together. */
   textSources: 50,
+  products: 200,
 } as const;
 
 /** At least one field: an empty PATCH is a mistake, not a no-op. */
