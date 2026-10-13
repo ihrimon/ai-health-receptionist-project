@@ -112,6 +112,34 @@ export const productListQuerySchema = z.strictObject({
   limit: z.coerce.number().int().min(1).max(100).default(20),
 });
 
+/**
+ * Columns of the product CSV (D-2 §2.4), in template order. Only `name` is
+ * required; a row whose `sku` already exists updates that product.
+ */
+export const PRODUCT_CSV_COLUMNS = [
+  'sku',
+  'name',
+  'description',
+  'price',
+  'compare_at_price',
+  'currency',
+  'stock_status',
+  'stock_quantity',
+  'category',
+  'url',
+  'image_url',
+] as const;
+
+export type ProductCsvColumn = (typeof PRODUCT_CSV_COLUMNS)[number];
+
+/** A CSV import's result: one entry per failed row (header = row 1). */
+export interface ProductImportResult {
+  created: number;
+  updated: number;
+  failed: number;
+  errors: { row: number; message: string }[];
+}
+
 export type CreateProduct = z.output<typeof createProductSchema>;
 export type UpdateProduct = z.output<typeof updateProductSchema>;
 export type ProductListQuery = z.output<typeof productListQuerySchema>;
