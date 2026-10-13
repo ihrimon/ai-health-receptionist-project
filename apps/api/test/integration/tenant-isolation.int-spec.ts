@@ -1,3 +1,4 @@
+import { defaultChatbotConfig } from '@brainstack/shared';
 import { NestExpressApplication } from '@nestjs/platform-express';
 import { Test } from '@nestjs/testing';
 import { randomUUID } from 'crypto';
@@ -14,8 +15,8 @@ import { runWithTenant } from '../../src/tenancy/tenant-context';
 import { TENANT_PRISMA, TenantPrisma } from '../../src/tenancy/tenant-prisma';
 
 /**
- * M1-25 (W4): two workspaces, proving A's users can't read or change B's
- * data — through the HTTP API and through the tenant Prisma client.
+ * M1-25, M2-21 (W4): two workspaces, proving A's users can't read or change
+ * B's data — through the HTTP API and through the tenant Prisma client.
  * Runs on a real Postgres (+ Redis) test database.
  */
 describe('Tenant isolation (M1-25)', () => {
@@ -57,6 +58,11 @@ describe('Tenant isolation (M1-25)', () => {
     patch: (path: string) =>
       request(http)
         .patch(path)
+        .set('Cookie', cookie)
+        .set('X-Requested-With', 'fetch'),
+    put: (path: string) =>
+      request(http)
+        .put(path)
         .set('Cookie', cookie)
         .set('X-Requested-With', 'fetch'),
   });
@@ -232,6 +238,144 @@ describe('Tenant isolation (M1-25)', () => {
     });
   });
 
+  describe('Chatbot API (M2-21)', () => {
+    interface ChatbotBody {
+      id: string;
+      status: string;
+      draftConfig: { identity: { botName: string } };
+      publishedVersion: { version: number } | null;
+      hasUnpublishedChanges: boolean;
+      allowedDomains: string[];
+    }
+    const draftA = () => {
+      const config = defaultChatbotConfig('Iso A');
+      config.identity.botName = 'Ava';
+      config.business.description = 'We sell shoes.';
+      return config;
+    };
+    const botB = () =>
+      prisma.chatbot.findUniqueOrThrow({
+        where: { id: ids.botB },
+        include: { versions: true },
+      });
+
+    it('each workspace sees only its own chatbot', async () => {
+      const a = await as(cookies.ownerA).get('/v1/chatbot').expect(200);
+      const b = await as(cookies.ownerB).get('/v1/chatbot').expect(200);
+      expect((a.body as ChatbotBody).id).toBe(ids.botA);
+      expect((b.body as ChatbotBody).id).toBe(ids.botB);
+    });
+
+    it("saving a draft changes only the caller's chatbot", async () => {
+      const res = await as(cookies.ownerA)
+        .put('/v1/chatbot/draft')
+        .send(draftA())
+        .expect(200);
+      expect((res.body as ChatbotBody).draftConfig.identity.botName).toBe(
+        'Ava',
+      );
+
+      const b = await botB();
+      expect(
+        (b.draftConfig as { identity: { botName: string } }).identity.botName,
+      ).toBe('Assistant');
+    });
+
+    it('rejects an invalid draft with field details (400)', async () => {
+      const draft = draftA();
+      draft.widget.primaryColor = 'teal';
+      const res = await as(cookies.ownerA)
+        .put('/v1/chatbot/draft')
+        .send(draft)
+        .expect(400);
+      expect(res.body).toMatchObject({
+        code: 'VALIDATION_FAILED',
+        details: [{ path: 'widget.primaryColor' }],
+      });
+    });
+
+    it("publishing creates a version in the caller's workspace only", async () => {
+      const res = await as(cookies.ownerA)
+        .post('/v1/chatbot/publish')
+        .expect(200);
+      const body = res.body as ChatbotBody;
+      expect(body.publishedVersion?.version).toBe(1);
+      expect(body.hasUnpublishedChanges).toBe(false);
+
+      const version = await prisma.chatbotVersion.findFirstOrThrow({
+        where: { chatbotId: ids.botA },
+      });
+      expect(version.workspaceId).toBe(ids.a);
+      expect(version.publishedById).toBe(users.ownerA);
+
+      const b = await botB();
+      expect(b.publishedVersionId).toBeNull();
+      expect(b.versions).toEqual([]);
+    });
+
+    it('publishing an unready draft is a 400 with the reasons', async () => {
+      const res = await as(cookies.ownerB)
+        .post('/v1/chatbot/publish')
+        .expect(400);
+      expect(res.body).toMatchObject({
+        details: [{ code: 'BUSINESS_DESCRIPTION_MISSING' }],
+      });
+    });
+
+    it("status and allowed domains change only the caller's chatbot", async () => {
+      await as(cookies.ownerA)
+        .patch('/v1/chatbot/status')
+        .send({ status: 'DISABLED' })
+        .expect(200);
+      const res = await as(cookies.ownerA)
+        .put('/v1/chatbot/allowed-domains')
+        .send({ domains: ['Shop.Example.com', '*.example.com'] })
+        .expect(200);
+      expect((res.body as ChatbotBody).allowedDomains).toEqual([
+        'shop.example.com',
+        '*.example.com',
+      ]);
+
+      const b = await botB();
+      expect(b.status).toBe('ENABLED');
+      expect(b.allowedDomains).toEqual([]);
+
+      await as(cookies.ownerA)
+        .patch('/v1/chatbot/status')
+        .send({ status: 'ENABLED' })
+        .expect(200);
+    });
+
+    it('discarding the draft brings back the live config', async () => {
+      const edited = draftA();
+      edited.identity.botName = 'Changed';
+      await as(cookies.ownerA)
+        .put('/v1/chatbot/draft')
+        .send(edited)
+        .expect(200);
+
+      const res = await as(cookies.ownerA)
+        .post('/v1/chatbot/discard-draft')
+        .expect(200);
+      const body = res.body as ChatbotBody;
+      expect(body.draftConfig.identity.botName).toBe('Ava');
+      expect(body.hasUnpublishedChanges).toBe(false);
+    });
+
+    it('a viewer can read the chatbot but not change it (403)', async () => {
+      await as(cookies.viewerA).get('/v1/chatbot').expect(200);
+      await as(cookies.viewerA)
+        .put('/v1/chatbot/draft')
+        .send(draftA())
+        .expect(403);
+      await as(cookies.viewerA).post('/v1/chatbot/publish').expect(403);
+      await as(cookies.viewerA)
+        .patch('/v1/chatbot/status')
+        .send({ status: 'DISABLED' })
+        .expect(403);
+    });
+  });
+
   describe('tenant Prisma client', () => {
     it('lists only the current workspace', async () => {
       const bots = await inWorkspace(ids.a, () => db.chatbot.findMany());
@@ -261,6 +405,26 @@ describe('Tenant isolation (M1-25)', () => {
           db.workspace.findUnique({ where: { id: ids.b } }),
         ),
       ).resolves.toBeNull();
+    });
+
+    it("can't see another workspace's chatbot versions", async () => {
+      // Runs after the Chatbot API tests, so A has a published version.
+      const versionA = await prisma.chatbotVersion.findFirstOrThrow({
+        where: { workspaceId: ids.a },
+      });
+      await expect(
+        inWorkspace(ids.b, () => db.chatbotVersion.findMany()),
+      ).resolves.toEqual([]);
+      await expect(
+        inWorkspace(ids.b, () =>
+          db.chatbotVersion.findUnique({ where: { id: versionA.id } }),
+        ),
+      ).resolves.toBeNull();
+      await expect(
+        inWorkspace(ids.b, () =>
+          db.chatbotVersion.deleteMany({ where: { id: versionA.id } }),
+        ),
+      ).resolves.toEqual({ count: 0 });
     });
 
     it("counts only the current workspace's rows", async () => {
