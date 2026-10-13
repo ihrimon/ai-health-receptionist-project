@@ -57,6 +57,29 @@ enum ChatbotStatus {
   @@map("chatbot_status")
 }
 
+enum KnowledgeSourceType {
+  /// Written in the dashboard (Markdown).
+  POLICY
+  /// Any other business information (Markdown).
+  TEXT
+  /// Uploaded PDF/DOCX/TXT/MD (M2-10).
+  DOCUMENT
+  /// Website crawl (P1).
+  URL
+
+  @@map("knowledge_source_type")
+}
+
+/// Where a knowledge source is in the indexing pipeline (M2-11).
+enum IngestStatus {
+  QUEUED
+  PROCESSING
+  READY
+  FAILED
+
+  @@map("ingest_status")
+}
+
 // ─────────────────── Identity & tenancy (M1) ───────────────────
 
 model User {
@@ -94,6 +117,9 @@ model Workspace {
   members         WorkspaceMember[]
   chatbots        Chatbot[]
   chatbotVersions ChatbotVersion[]
+  faqs            Faq[]
+  customAnswers   CustomAnswer[]
+  sources         KnowledgeSource[]
   /// Sessions currently switched to this workspace.
   activeSessions  Session[]
 
@@ -155,7 +181,7 @@ model EmailToken {
 // ─────────────── Chatbot and its published versions (M2) ───────────────
 
 /// One per workspace in the MVP (M0 decision B2), created together with the
-/// workspace. Knowledge relations arrive with the knowledge tables (M2-6+).
+/// workspace. FAQs, custom answers and knowledge sources belong to it.
 model Chatbot {
   id                 String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   workspaceId        String        @map("workspace_id") @db.Uuid
@@ -173,9 +199,12 @@ model Chatbot {
   createdAt          DateTime      @default(now()) @map("created_at") @db.Timestamptz
   updatedAt          DateTime      @updatedAt @map("updated_at") @db.Timestamptz
 
-  workspace        Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  publishedVersion ChatbotVersion?  @relation("PublishedVersion", fields: [publishedVersionId], references: [id], onDelete: SetNull)
-  versions         ChatbotVersion[] @relation("ChatbotVersions")
+  workspace        Workspace         @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  publishedVersion ChatbotVersion?   @relation("PublishedVersion", fields: [publishedVersionId], references: [id], onDelete: SetNull)
+  versions         ChatbotVersion[]  @relation("ChatbotVersions")
+  faqs             Faq[]
+  customAnswers    CustomAnswer[]
+  sources          KnowledgeSource[]
 
   @@index([workspaceId])
   @@map("chatbots")
@@ -201,6 +230,82 @@ model ChatbotVersion {
   @@unique([chatbotId, version])
   @@index([workspaceId])
   @@map("chatbot_versions")
+}
+
+// ───────────────────── Knowledge (M2-6) ─────────────────────
+// Saved knowledge is live right away; only the chatbot config has a draft
+// (D-4 question 2). Item caps per chatbot: KNOWLEDGE_LIMITS in packages/shared.
+
+model Faq {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId String   @map("workspace_id") @db.Uuid
+  chatbotId   String   @map("chatbot_id") @db.Uuid
+  question    String   @db.VarChar(500)
+  /// ≤ 4000 characters (checked by the API).
+  answer      String
+  /// Display order in the dashboard; new FAQs go last.
+  sortOrder   Int      @default(0) @map("sort_order")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  chatbot   Chatbot   @relation(fields: [chatbotId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId, chatbotId])
+  @@map("faqs")
+}
+
+/// "When asked X, answer exactly Y" (FR-2.6); matched before search.
+model CustomAnswer {
+  id              String                      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId     String                      @map("workspace_id") @db.Uuid
+  chatbotId       String                      @map("chatbot_id") @db.Uuid
+  triggerQuestion String                      @map("trigger_question") @db.VarChar(500)
+  answer          String
+  /// Embedding of triggerQuestion, filled by indexing (M2-13).
+  embedding       Unsupported("vector(384)")?
+  embeddingModel  String?                     @map("embedding_model") @db.VarChar(100)
+  isActive        Boolean                     @default(true) @map("is_active")
+  createdAt       DateTime                    @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt       DateTime                    @updatedAt @map("updated_at") @db.Timestamptz
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  chatbot   Chatbot   @relation(fields: [chatbotId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId, chatbotId])
+  @@map("custom_answers")
+}
+
+/// A policy or text page written in the dashboard, or (M2-10) an uploaded
+/// document. Indexing splits it into knowledge chunks (M2-11).
+model KnowledgeSource {
+  id          String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId String              @map("workspace_id") @db.Uuid
+  chatbotId   String              @map("chatbot_id") @db.Uuid
+  type        KnowledgeSourceType
+  /// e.g. "Return policy".
+  title       String              @db.VarChar(200)
+  /// POLICY/TEXT: Markdown. DOCUMENT: the extracted text.
+  content     String?
+  /// DOCUMENT: S3/MinIO object key (M2-9).
+  fileKey     String?             @map("file_key")
+  fileName    String?             @map("file_name") @db.VarChar(255)
+  /// Bytes.
+  fileSize    Int?                @map("file_size")
+  mimeType    String?             @map("mime_type") @db.VarChar(100)
+  /// URL type (P1).
+  url         String?
+  status      IngestStatus        @default(QUEUED)
+  /// Why indexing failed, worded for the company to read.
+  error       String?
+  createdAt   DateTime            @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt   DateTime            @updatedAt @map("updated_at") @db.Timestamptz
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  chatbot   Chatbot   @relation(fields: [chatbotId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId, chatbotId, type])
+  @@map("knowledge_sources")
 }
 
 // ─────────────────────────── Platform ───────────────────────────
