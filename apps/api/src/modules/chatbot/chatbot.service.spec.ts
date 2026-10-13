@@ -39,6 +39,8 @@ describe('ChatbotService', () => {
   let db: {
     chatbot: { findFirst: jest.Mock; update: jest.Mock };
     chatbotVersion: { aggregate: jest.Mock; create: jest.Mock };
+    faq: { count: jest.Mock };
+    knowledgeSource: { count: jest.Mock };
     $transaction: jest.Mock;
   };
   let nodeEnv: string;
@@ -64,6 +66,9 @@ describe('ChatbotService', () => {
           Promise.resolve({ id: 'ver-1', ...data }),
         ),
       },
+      // One FAQ, so the knowledge rule passes unless a test says otherwise.
+      faq: { count: jest.fn().mockResolvedValue(1) },
+      knowledgeSource: { count: jest.fn().mockResolvedValue(0) },
       $transaction: jest.fn((fn: (tx: typeof db) => unknown) => fn(db)),
     };
     // Applies the update to `row`; a new publishedVersionId stands in for
@@ -128,6 +133,22 @@ describe('ChatbotService', () => {
       };
 
       expect((await service.get()).hasUnpublishedChanges).toBe(false);
+    });
+
+    it('needs at least one FAQ, policy or ready document to publish', async () => {
+      db.faq.count.mockResolvedValue(0);
+      expect((await service.get()).publishProblems).toEqual([
+        expect.objectContaining({ code: 'KNOWLEDGE_MISSING' }),
+      ]);
+      expect(db.knowledgeSource.count).toHaveBeenCalledWith({
+        where: {
+          chatbotId: 'bot-1',
+          OR: [{ type: { in: ['POLICY', 'TEXT'] } }, { status: 'READY' }],
+        },
+      });
+
+      db.knowledgeSource.count.mockResolvedValue(1);
+      expect((await service.get()).publishProblems).toEqual([]);
     });
 
     it('lists publish problems for the dashboard', async () => {
@@ -277,6 +298,17 @@ describe('ChatbotService', () => {
         BadRequestException,
       );
       expect(db.chatbot.update).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('currentId', () => {
+    it("returns the workspace's chatbot ID", async () => {
+      await expect(service.currentId()).resolves.toBe('bot-1');
+    });
+
+    it('is a 404 when the workspace has no chatbot', async () => {
+      db.chatbot.findFirst.mockResolvedValue(null);
+      await expect(service.currentId()).rejects.toThrow(NotFoundException);
     });
   });
 

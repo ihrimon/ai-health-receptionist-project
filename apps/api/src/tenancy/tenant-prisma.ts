@@ -10,6 +10,9 @@ export const TENANT_MODELS = new Set<string>([
   'WorkspaceMember',
   'Chatbot',
   'ChatbotVersion',
+  'Faq',
+  'CustomAnswer',
+  'KnowledgeSource',
 ]);
 
 const READ_MANY_OPS = new Set([

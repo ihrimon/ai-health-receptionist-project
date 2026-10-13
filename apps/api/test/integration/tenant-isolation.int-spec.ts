@@ -65,6 +65,11 @@ describe('Tenant isolation (M1-25)', () => {
         .put(path)
         .set('Cookie', cookie)
         .set('X-Requested-With', 'fetch'),
+    delete: (path: string) =>
+      request(http)
+        .delete(path)
+        .set('Cookie', cookie)
+        .set('X-Requested-With', 'fetch'),
   });
 
   // Prisma queries are lazy: they run when awaited, so await inside the
@@ -295,6 +300,12 @@ describe('Tenant isolation (M1-25)', () => {
     });
 
     it("publishing creates a version in the caller's workspace only", async () => {
+      // Publishing needs knowledge to answer from (D-4 §4).
+      await as(cookies.ownerA)
+        .post('/v1/faqs')
+        .send({ question: 'Opening hours?', answer: '9 to 5.' })
+        .expect(201);
+
       const res = await as(cookies.ownerA)
         .post('/v1/chatbot/publish')
         .expect(200);
@@ -318,7 +329,10 @@ describe('Tenant isolation (M1-25)', () => {
         .post('/v1/chatbot/publish')
         .expect(400);
       expect(res.body).toMatchObject({
-        details: [{ code: 'BUSINESS_DESCRIPTION_MISSING' }],
+        details: [
+          { code: 'BUSINESS_DESCRIPTION_MISSING' },
+          { code: 'KNOWLEDGE_MISSING' },
+        ],
       });
     });
 
@@ -376,6 +390,118 @@ describe('Tenant isolation (M1-25)', () => {
     });
   });
 
+  describe('Knowledge base API (M2-21)', () => {
+    // A's items, created through the API; B then tries to reach them.
+    const itemsA = { faq: '', customAnswer: '', source: '' };
+    const paths = () => ({
+      faq: `/v1/faqs/${itemsA.faq}`,
+      customAnswer: `/v1/custom-answers/${itemsA.customAnswer}`,
+      source: `/v1/knowledge-sources/${itemsA.source}`,
+    });
+    const listIds = async (cookie: string, path: string) =>
+      ((await as(cookie).get(path).expect(200)).body as { id: string }[]).map(
+        (row) => row.id,
+      );
+
+    beforeAll(async () => {
+      const owner = as(cookies.ownerA);
+      const faq = await owner
+        .post('/v1/faqs')
+        .send({ question: 'Do you ship abroad?', answer: 'Yes.' })
+        .expect(201);
+      const customAnswer = await owner
+        .post('/v1/custom-answers')
+        .send({ triggerQuestion: 'Who owns the shop?', answer: 'Rina.' })
+        .expect(201);
+      const source = await owner
+        .post('/v1/knowledge-sources')
+        .send({ type: 'POLICY', title: 'Returns', content: '30 days.' })
+        .expect(201);
+      itemsA.faq = (faq.body as { id: string }).id;
+      itemsA.customAnswer = (customAnswer.body as { id: string }).id;
+      itemsA.source = (source.body as { id: string; status: string }).id;
+      expect((source.body as { status: string }).status).toBe('QUEUED');
+    });
+
+    it("lists show only the caller's items", async () => {
+      expect(await listIds(cookies.ownerA, '/v1/faqs')).toContain(itemsA.faq);
+      expect(await listIds(cookies.ownerB, '/v1/faqs')).toEqual([]);
+      expect(await listIds(cookies.ownerB, '/v1/custom-answers')).toEqual([]);
+      expect(await listIds(cookies.ownerB, '/v1/knowledge-sources')).toEqual(
+        [],
+      );
+    });
+
+    it("another workspace's items are a 404 for read, edit and delete", async () => {
+      const b = as(cookies.ownerB);
+      const p = paths();
+      await b.get(p.source).expect(404);
+      await b.patch(p.faq).send({ answer: 'Hijacked' }).expect(404);
+      await b.patch(p.customAnswer).send({ answer: 'Hijacked' }).expect(404);
+      await b.patch(p.source).send({ content: 'Hijacked' }).expect(404);
+      await b.delete(p.faq).expect(404);
+      await b.delete(p.customAnswer).expect(404);
+      await b.delete(p.source).expect(404);
+
+      const [faq, customAnswer, source] = await Promise.all([
+        prisma.faq.findUniqueOrThrow({ where: { id: itemsA.faq } }),
+        prisma.customAnswer.findUniqueOrThrow({
+          where: { id: itemsA.customAnswer },
+        }),
+        prisma.knowledgeSource.findUniqueOrThrow({
+          where: { id: itemsA.source },
+        }),
+      ]);
+      expect(faq.answer).toBe('Yes.');
+      expect(customAnswer.answer).toBe('Rina.');
+      expect(source.content).toBe('30 days.');
+    });
+
+    it("reordering with another workspace's FAQ IDs is a 404", async () => {
+      await as(cookies.ownerB)
+        .put('/v1/faqs/order')
+        .send({ ids: [itemsA.faq] })
+        .expect(404);
+    });
+
+    it('the owner can edit, reorder and delete their own items', async () => {
+      const owner = as(cookies.ownerA);
+      const p = paths();
+      await owner.patch(p.faq).send({ answer: 'Yes, worldwide.' }).expect(200);
+      await owner.get(p.source).expect(200);
+
+      const ids = await listIds(cookies.ownerA, '/v1/faqs');
+      const reordered = await owner
+        .put('/v1/faqs/order')
+        .send({ ids: [...ids].reverse() })
+        .expect(200);
+      expect((reordered.body as { id: string }[]).map((f) => f.id)).toEqual(
+        [...ids].reverse(),
+      );
+
+      await owner.delete(p.customAnswer).expect(204);
+      expect(await listIds(cookies.ownerA, '/v1/custom-answers')).toEqual([]);
+    });
+
+    it('a viewer can read but not change knowledge (403)', async () => {
+      const viewer = as(cookies.viewerA);
+      await viewer.get('/v1/faqs').expect(200);
+      await viewer
+        .post('/v1/faqs')
+        .send({ question: 'Q', answer: 'A' })
+        .expect(403);
+      await viewer.delete(paths().faq).expect(403);
+      await viewer
+        .post('/v1/custom-answers')
+        .send({ triggerQuestion: 'Q', answer: 'A' })
+        .expect(403);
+      await viewer
+        .post('/v1/knowledge-sources')
+        .send({ type: 'TEXT', title: 'T', content: 'C' })
+        .expect(403);
+    });
+  });
+
   describe('tenant Prisma client', () => {
     it('lists only the current workspace', async () => {
       const bots = await inWorkspace(ids.a, () => db.chatbot.findMany());
@@ -405,6 +531,30 @@ describe('Tenant isolation (M1-25)', () => {
           db.workspace.findUnique({ where: { id: ids.b } }),
         ),
       ).resolves.toBeNull();
+    });
+
+    it("can't see another workspace's knowledge", async () => {
+      // Runs after the Knowledge base API tests, so A has FAQs and a policy.
+      const [faqA, sourceA] = await Promise.all([
+        prisma.faq.findFirstOrThrow({ where: { workspaceId: ids.a } }),
+        prisma.knowledgeSource.findFirstOrThrow({
+          where: { workspaceId: ids.a },
+        }),
+      ]);
+      await expect(
+        inWorkspace(ids.b, () => db.faq.findMany()),
+      ).resolves.toEqual([]);
+      await expect(
+        inWorkspace(ids.b, () => db.customAnswer.findMany()),
+      ).resolves.toEqual([]);
+      await expect(
+        inWorkspace(ids.b, () => db.faq.findUnique({ where: { id: faqA.id } })),
+      ).resolves.toBeNull();
+      await expect(
+        inWorkspace(ids.b, () =>
+          db.knowledgeSource.deleteMany({ where: { id: sourceA.id } }),
+        ),
+      ).resolves.toEqual({ count: 0 });
     });
 
     it("can't see another workspace's chatbot versions", async () => {

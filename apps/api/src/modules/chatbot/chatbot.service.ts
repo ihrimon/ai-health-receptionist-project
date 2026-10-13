@@ -69,6 +69,20 @@ export class ChatbotService {
     return this.view(await this.load());
   }
 
+  /**
+   * The current workspace's chatbot ID, for modules that store data per
+   * chatbot (knowledge). Always found through the tenant client, so a row
+   * never points at another workspace's chatbot.
+   */
+  async currentId(): Promise<string> {
+    const bot = await this.db.chatbot.findFirst({
+      select: { id: true },
+      orderBy: { createdAt: 'asc' },
+    });
+    if (!bot) throw new NotFoundException('Chatbot not found');
+    return bot.id;
+  }
+
   /** Saves the draft. The live config only changes on publish (FR-6.5). */
   async saveDraft(draft: ChatbotConfig): Promise<ChatbotView> {
     // Images must come from our upload API (D-4 §3), which needs file
@@ -103,7 +117,7 @@ export class ChatbotService {
    */
   async publish(publishedById: string): Promise<ChatbotView> {
     const bot = await this.load();
-    const problems = this.publishProblems(bot);
+    const problems = await this.publishProblems(bot);
     if (problems.length) {
       throw badRequest(problems.map((p) => p.message).join(' '), problems);
     }
@@ -208,9 +222,7 @@ export class ChatbotService {
     );
   }
 
-  // Knowledge-based rules (at least one FAQ/policy/product/document) join
-  // here once those tables exist (M2-6).
-  private publishProblems(bot: ChatbotRow): PublishProblem[] {
+  private async publishProblems(bot: ChatbotRow): Promise<PublishProblem[]> {
     // Drafts are validated on save, but one saved under an older schema
     // version could still fail; it must be fixed before going live.
     const draft = chatbotConfigSchema.safeParse(bot.draftConfig);
@@ -222,10 +234,36 @@ export class ChatbotService {
         },
       ];
     }
-    return configPublishProblems(draft.data);
+    const problems = configPublishProblems(draft.data);
+    if ((await this.knowledgeItemCount(bot.id)) === 0) {
+      problems.push({
+        code: 'KNOWLEDGE_MISSING',
+        message:
+          'Add at least one FAQ or policy so the bot has something to answer from.',
+      });
+    }
+    return problems;
   }
 
-  private view(bot: ChatbotRow): ChatbotView {
+  /**
+   * Knowledge the bot can answer from (D-4 §4): FAQs, policy/text pages and
+   * ready documents. Products join in M2-7. Custom answers don't count:
+   * they only cover the exact questions they name.
+   */
+  private async knowledgeItemCount(chatbotId: string): Promise<number> {
+    const [faqs, sources] = await Promise.all([
+      this.db.faq.count({ where: { chatbotId } }),
+      this.db.knowledgeSource.count({
+        where: {
+          chatbotId,
+          OR: [{ type: { in: ['POLICY', 'TEXT'] } }, { status: 'READY' }],
+        },
+      }),
+    ]);
+    return faqs + sources;
+  }
+
+  private async view(bot: ChatbotRow): Promise<ChatbotView> {
     const loaderUrl = this.config.get<string>('widgetLoaderUrl');
     return {
       id: bot.id,
@@ -237,7 +275,7 @@ export class ChatbotService {
         publishedAt: bot.publishedVersion.publishedAt,
       },
       hasUnpublishedChanges: this.hasUnpublishedChanges(bot),
-      publishProblems: this.publishProblems(bot),
+      publishProblems: await this.publishProblems(bot),
       allowedDomains: bot.allowedDomains,
       embedSnippet: `<script src="${loaderUrl}" data-chatbot-id="${bot.publicId}" async></script>`,
     };
