@@ -606,6 +606,85 @@ describe('Tenant isolation (M1-25)', () => {
         .expect(403);
       await viewer.delete(`/v1/products/${productA.id}`).expect(403);
     });
+
+    describe('CSV import (M2-8)', () => {
+      interface ImportBody {
+        created: number;
+        updated: number;
+        failed: number;
+        errors: { row: number; message: string }[];
+      }
+      const upload = (cookie: string, ...lines: string[]) =>
+        as(cookie)
+          .post('/v1/products/import')
+          .attach('file', Buffer.from(lines.join('\n')), 'products.csv');
+
+      it("importing another workspace's SKU creates the caller's own product", async () => {
+        const res = await upload(
+          cookies.ownerB,
+          'sku,name,price',
+          'SKU-1,Other shop shoe,5',
+        ).expect(200);
+        expect(res.body).toEqual({
+          created: 1,
+          updated: 0,
+          failed: 0,
+          errors: [],
+        });
+
+        const a = await prisma.product.findUniqueOrThrow({
+          where: { id: productA.id },
+        });
+        expect(a.name).toBe('Trail shoe');
+        expect(a.price?.toFixed(2)).toBe('49.90');
+
+        // Later tests expect B to have no products.
+        await prisma.product.deleteMany({ where: { workspaceId: ids.b } });
+      });
+
+      it('updates by SKU, creates new rows and reports bad ones', async () => {
+        const res = await upload(
+          cookies.ownerA,
+          'sku,name,price',
+          'SKU-1,Trail shoe v2,59',
+          'SKU-9,Socks,3',
+          'SKU-10,,1',
+        ).expect(200);
+        const body = res.body as ImportBody;
+        expect(body).toMatchObject({ created: 1, updated: 1, failed: 1 });
+        expect(body.errors.map((e) => e.row)).toEqual([4]);
+
+        const updated = await prisma.product.findUniqueOrThrow({
+          where: { id: productA.id },
+        });
+        expect(updated.name).toBe('Trail shoe v2');
+        expect(updated.isActive).toBe(true);
+      });
+
+      it('is a 400 without a file or with unknown columns', async () => {
+        await as(cookies.ownerA).post('/v1/products/import').expect(400);
+        await upload(cookies.ownerA, 'name,colour', 'Shoe,red').expect(400);
+      });
+
+      it('is a 413 for a file over 1 MB', async () => {
+        await as(cookies.ownerA)
+          .post('/v1/products/import')
+          .attach('file', Buffer.alloc(1024 * 1024 + 1, 'a'), 'big.csv')
+          .expect(413);
+      });
+
+      it('a viewer can download the template but not import (403)', async () => {
+        const viewer = as(cookies.viewerA);
+        const res = await viewer
+          .get('/v1/products/import/template.csv')
+          .expect(200)
+          .expect('Content-Type', /text\/csv/);
+        expect(res.text.split('\r\n')[0]).toBe(
+          'sku,name,description,price,compare_at_price,currency,stock_status,stock_quantity,category,url,image_url',
+        );
+        await upload(cookies.viewerA, 'name', 'Shoe').expect(403);
+      });
+    });
   });
 
   describe('tenant Prisma client', () => {
