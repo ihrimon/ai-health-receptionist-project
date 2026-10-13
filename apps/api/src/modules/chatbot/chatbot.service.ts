@@ -83,6 +83,20 @@ export class ChatbotService {
     return bot.id;
   }
 
+  /**
+   * The currency new products get when none is given: the draft config's
+   * business.currency, or USD (the D-4 default) if the draft is unreadable.
+   */
+  async defaultCurrency(): Promise<string> {
+    const bot = await this.db.chatbot.findFirst({
+      select: { draftConfig: true },
+      orderBy: { createdAt: 'asc' },
+    });
+    if (!bot) throw new NotFoundException('Chatbot not found');
+    const draft = chatbotConfigSchema.safeParse(bot.draftConfig);
+    return draft.success ? draft.data.business.currency : 'USD';
+  }
+
   /** Saves the draft. The live config only changes on publish (FR-6.5). */
   async saveDraft(draft: ChatbotConfig): Promise<ChatbotView> {
     // Images must come from our upload API (D-4 §3), which needs file
@@ -239,19 +253,19 @@ export class ChatbotService {
       problems.push({
         code: 'KNOWLEDGE_MISSING',
         message:
-          'Add at least one FAQ or policy so the bot has something to answer from.',
+          'Add at least one FAQ, policy or product so the bot has something to answer from.',
       });
     }
     return problems;
   }
 
   /**
-   * Knowledge the bot can answer from (D-4 §4): FAQs, policy/text pages and
-   * ready documents. Products join in M2-7. Custom answers don't count:
-   * they only cover the exact questions they name.
+   * Knowledge the bot can answer from (D-4 §4): FAQs, policy/text pages,
+   * active products and ready documents. Custom answers don't count: they
+   * only cover the exact questions they name.
    */
   private async knowledgeItemCount(chatbotId: string): Promise<number> {
-    const [faqs, sources] = await Promise.all([
+    const [faqs, sources, products] = await Promise.all([
       this.db.faq.count({ where: { chatbotId } }),
       this.db.knowledgeSource.count({
         where: {
@@ -259,8 +273,9 @@ export class ChatbotService {
           OR: [{ type: { in: ['POLICY', 'TEXT'] } }, { status: 'READY' }],
         },
       }),
+      this.db.product.count({ where: { chatbotId, isActive: true } }),
     ]);
-    return faqs + sources;
+    return faqs + sources + products;
   }
 
   private async view(bot: ChatbotRow): Promise<ChatbotView> {
