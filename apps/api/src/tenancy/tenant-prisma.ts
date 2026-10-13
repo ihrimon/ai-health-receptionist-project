@@ -6,7 +6,11 @@ import { requireTenant } from './tenant-context';
  * through the tenant client is limited to the current workspace. Grows as
  * M2+ adds tenant-owned models.
  */
-export const TENANT_MODELS = new Set<string>(['WorkspaceMember', 'Chatbot']);
+export const TENANT_MODELS = new Set<string>([
+  'WorkspaceMember',
+  'Chatbot',
+  'ChatbotVersion',
+]);
 
 const READ_MANY_OPS = new Set([
   'findMany',
