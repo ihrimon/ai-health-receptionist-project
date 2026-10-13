@@ -36,3 +36,12 @@ export function optional<T extends z.ZodType>(inner: T) {
     return trimmed === '' ? null : trimmed;
   }, inner.nullable());
 }
+
+/** ISO 4217 code, e.g. USD or BDT; lowercase input is accepted. */
+export const isoCurrency = z
+  .string()
+  .trim()
+  .toUpperCase()
+  .refine((code) => Intl.supportedValuesOf('currency').includes(code), {
+    message: 'Must be a 3-letter ISO 4217 currency code',
+  });

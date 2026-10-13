@@ -41,6 +41,7 @@ describe('ChatbotService', () => {
     chatbotVersion: { aggregate: jest.Mock; create: jest.Mock };
     faq: { count: jest.Mock };
     knowledgeSource: { count: jest.Mock };
+    product: { count: jest.Mock };
     $transaction: jest.Mock;
   };
   let nodeEnv: string;
@@ -69,6 +70,7 @@ describe('ChatbotService', () => {
       // One FAQ, so the knowledge rule passes unless a test says otherwise.
       faq: { count: jest.fn().mockResolvedValue(1) },
       knowledgeSource: { count: jest.fn().mockResolvedValue(0) },
+      product: { count: jest.fn().mockResolvedValue(0) },
       $transaction: jest.fn((fn: (tx: typeof db) => unknown) => fn(db)),
     };
     // Applies the update to `row`; a new publishedVersionId stands in for
@@ -149,6 +151,16 @@ describe('ChatbotService', () => {
 
       db.knowledgeSource.count.mockResolvedValue(1);
       expect((await service.get()).publishProblems).toEqual([]);
+    });
+
+    it('counts active products as knowledge', async () => {
+      db.faq.count.mockResolvedValue(0);
+      db.product.count.mockResolvedValue(1);
+
+      expect((await service.get()).publishProblems).toEqual([]);
+      expect(db.product.count).toHaveBeenCalledWith({
+        where: { chatbotId: 'bot-1', isActive: true },
+      });
     });
 
     it('lists publish problems for the dashboard', async () => {
@@ -298,6 +310,21 @@ describe('ChatbotService', () => {
         BadRequestException,
       );
       expect(db.chatbot.update).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('defaultCurrency', () => {
+    it("is the draft's business currency", async () => {
+      const draft = publishable();
+      draft.business.currency = 'BDT';
+      row.draftConfig = draft;
+
+      await expect(service.defaultCurrency()).resolves.toBe('BDT');
+    });
+
+    it('falls back to USD when the draft is unreadable', async () => {
+      row.draftConfig = { broken: true };
+      await expect(service.defaultCurrency()).resolves.toBe('USD');
     });
   });
 

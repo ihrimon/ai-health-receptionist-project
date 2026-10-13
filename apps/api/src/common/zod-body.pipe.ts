@@ -2,7 +2,7 @@ import { BadRequestException, PipeTransform } from '@nestjs/common';
 import type { z } from 'zod';
 
 /**
- * Validates a request body with a zod schema (schemas shared with the
+ * Validates a request body (or query) with a zod schema (schemas shared with the
  * dashboard live in @brainstack/shared) and passes on the parsed value.
  * Use as `@Body(new ZodBodyPipe(schema)) body: z.output<typeof schema>`.
  *

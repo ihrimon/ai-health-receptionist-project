@@ -13,6 +13,7 @@ export const TENANT_MODELS = new Set<string>([
   'Faq',
   'CustomAnswer',
   'KnowledgeSource',
+  'Product',
 ]);
 
 const READ_MANY_OPS = new Set([

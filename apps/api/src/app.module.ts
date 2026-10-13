@@ -16,6 +16,7 @@ import { LlmCredentialsModule } from './modules/llm-credentials/llm-credentials.
 import { WorkspacesModule } from './modules/workspaces/workspaces.module';
 import { ChatbotModule } from './modules/chatbot/chatbot.module';
 import { KnowledgeBaseModule } from './modules/knowledge-base/knowledge-base.module';
+import { ProductsModule } from './modules/products/products.module';
 
 @Module({
   imports: [
@@ -37,6 +38,7 @@ import { KnowledgeBaseModule } from './modules/knowledge-base/knowledge-base.mod
     WorkspacesModule,
     ChatbotModule,
     KnowledgeBaseModule,
+    ProductsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

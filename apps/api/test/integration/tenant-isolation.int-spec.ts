@@ -502,6 +502,112 @@ describe('Tenant isolation (M1-25)', () => {
     });
   });
 
+  describe('Products API (M2-21)', () => {
+    interface ProductBody {
+      id: string;
+      name: string;
+      sku: string | null;
+      price: string | null;
+      currency: string;
+    }
+    interface Page {
+      items: ProductBody[];
+      nextCursor: string | null;
+    }
+    let productA: ProductBody;
+
+    beforeAll(async () => {
+      const res = await as(cookies.ownerA)
+        .post('/v1/products')
+        .send({ name: 'Trail shoe', sku: 'SKU-1', price: '49.9' })
+        .expect(201);
+      productA = res.body as ProductBody;
+    });
+
+    it("stores money as a string and uses the chatbot's currency", () => {
+      expect(productA.price).toBe('49.90');
+      expect(productA.currency).toBe('USD');
+    });
+
+    it("lists and searches only the caller's products", async () => {
+      const a = (await as(cookies.ownerA).get('/v1/products').expect(200))
+        .body as Page;
+      expect(a.items.map((p) => p.id)).toContain(productA.id);
+
+      const b = (
+        await as(cookies.ownerB).get('/v1/products?q=trail').expect(200)
+      ).body as Page;
+      expect(b.items).toEqual([]);
+    });
+
+    it("another workspace's product is a 404 for edit and delete", async () => {
+      const b = as(cookies.ownerB);
+      await b
+        .patch(`/v1/products/${productA.id}`)
+        .send({ price: '1' })
+        .expect(404);
+      await b.delete(`/v1/products/${productA.id}`).expect(404);
+
+      const row = await prisma.product.findUniqueOrThrow({
+        where: { id: productA.id },
+      });
+      expect(row.price?.toFixed(2)).toBe('49.90');
+    });
+
+    it('SKUs are unique per chatbot, not across workspaces', async () => {
+      await as(cookies.ownerA)
+        .post('/v1/products')
+        .send({ name: 'Copy', sku: 'SKU-1' })
+        .expect(409);
+      const res = await as(cookies.ownerB)
+        .post('/v1/products')
+        .send({ name: 'Other shop shoe', sku: 'SKU-1' })
+        .expect(201);
+      await as(cookies.ownerB)
+        .delete(`/v1/products/${(res.body as ProductBody).id}`)
+        .expect(204);
+    });
+
+    it("pages through the caller's products with a cursor", async () => {
+      const owner = as(cookies.ownerA);
+      for (const name of ['Sandal', 'Boot']) {
+        await owner.post('/v1/products').send({ name }).expect(201);
+      }
+
+      const first = (await owner.get('/v1/products?limit=2').expect(200))
+        .body as Page;
+      expect(first.items.map((p) => p.name)).toEqual(['Boot', 'Sandal']);
+      expect(first.nextCursor).not.toBeNull();
+
+      const second = (
+        await owner
+          .get(`/v1/products?limit=2&cursor=${first.nextCursor}`)
+          .expect(200)
+      ).body as Page;
+      expect(second.items.map((p) => p.name)).toEqual(['Trail shoe']);
+      expect(second.nextCursor).toBeNull();
+
+      // A's cursor in B's hands only pages through B's (empty) list.
+      const b = (
+        await as(cookies.ownerB)
+          .get(`/v1/products?cursor=${first.nextCursor}`)
+          .expect(200)
+      ).body as Page;
+      expect(b.items).toEqual([]);
+    });
+
+    it('a viewer can read products but not change them (403)', async () => {
+      const viewer = as(cookies.viewerA);
+      await viewer.get('/v1/products').expect(200);
+      await viewer.post('/v1/products').send({ name: 'X' }).expect(403);
+      await viewer
+        .patch(`/v1/products/${productA.id}`)
+        .send({ name: 'X' })
+        .expect(403);
+      await viewer.delete(`/v1/products/${productA.id}`).expect(403);
+    });
+  });
+
   describe('tenant Prisma client', () => {
     it('lists only the current workspace', async () => {
       const bots = await inWorkspace(ids.a, () => db.chatbot.findMany());
@@ -553,6 +659,24 @@ describe('Tenant isolation (M1-25)', () => {
       await expect(
         inWorkspace(ids.b, () =>
           db.knowledgeSource.deleteMany({ where: { id: sourceA.id } }),
+        ),
+      ).resolves.toEqual({ count: 0 });
+    });
+
+    it("can't see another workspace's products", async () => {
+      // Runs after the Products API tests, so A has products.
+      const productA = await prisma.product.findFirstOrThrow({
+        where: { workspaceId: ids.a },
+      });
+      await expect(
+        inWorkspace(ids.b, () => db.product.findMany()),
+      ).resolves.toEqual([]);
+      await expect(
+        inWorkspace(ids.b, () =>
+          db.product.updateMany({
+            where: { id: productA.id },
+            data: { name: 'hijacked' },
+          }),
         ),
       ).resolves.toEqual({ count: 0 });
     });

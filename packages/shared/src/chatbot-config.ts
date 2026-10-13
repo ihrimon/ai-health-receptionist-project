@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { optional, text } from './text';
+import { isoCurrency, optional, text } from './text';
 
 /**
  * ChatbotConfig: everything a company can configure about its chatbot
@@ -24,14 +24,6 @@ const phone = z.string().max(200).refine(isPhoneNumber, {
 const email = z.email().max(200);
 
 const httpsUrl = z.url({ protocol: /^https$/ }).max(500);
-
-const isoCurrency = z
-  .string()
-  .trim()
-  .toUpperCase()
-  .refine((code) => Intl.supportedValuesOf('currency').includes(code), {
-    message: 'Must be a 3-letter ISO 4217 currency code',
-  });
 
 const topicList = z.array(text(1, 80)).max(20);
 
