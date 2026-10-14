@@ -9,8 +9,8 @@
 //
 // Identity and tenancy (User, Workspace, WorkspaceMember, Session,
 // EmailToken) and Chatbot/ChatbotVersion follow docs/design/d1-data-model.md
-// (Chatbot's installVerifiedAt arrives in M4). Conversation and
-// KnowledgeChunk are still the interim single-tenant shape until M2/M3.
+// (Chatbot's installVerifiedAt arrives in M4). Conversation is still the
+// interim single-tenant shape until M3.
 
 generator client {
   provider            = "prisma-client"
@@ -19,7 +19,7 @@ generator client {
   // import (see CLAUDE.md).
   output              = "../src/generated/prisma"
   moduleFormat        = "cjs"
-  // Extensionless relative imports: ts-node (knowledge:ingest) and Jest run
+  // Extensionless relative imports: ts-node (CLI scripts) and Jest run
   // the generated .ts sources directly and can't resolve the default ".js".
   importFileExtension = ""
 }
@@ -130,6 +130,7 @@ model Workspace {
   customAnswers   CustomAnswer[]
   sources         KnowledgeSource[]
   products        Product[]
+  knowledgeChunks KnowledgeChunk[]
   /// Sessions currently switched to this workspace.
   activeSessions  Session[]
 
@@ -216,6 +217,7 @@ model Chatbot {
   customAnswers    CustomAnswer[]
   sources          KnowledgeSource[]
   products         Product[]
+  chunks           KnowledgeChunk[]
 
   @@index([workspaceId])
   @@map("chatbots")
@@ -259,8 +261,9 @@ model Faq {
   createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz
   updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz
 
-  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  chatbot   Chatbot   @relation(fields: [chatbotId], references: [id], onDelete: Cascade)
+  workspace Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  chatbot   Chatbot          @relation(fields: [chatbotId], references: [id], onDelete: Cascade)
+  chunks    KnowledgeChunk[]
 
   @@index([workspaceId, chatbotId])
   @@map("faqs")
@@ -312,8 +315,9 @@ model KnowledgeSource {
   createdAt   DateTime            @default(now()) @map("created_at") @db.Timestamptz
   updatedAt   DateTime            @updatedAt @map("updated_at") @db.Timestamptz
 
-  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  chatbot   Chatbot   @relation(fields: [chatbotId], references: [id], onDelete: Cascade)
+  workspace Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  chatbot   Chatbot          @relation(fields: [chatbotId], references: [id], onDelete: Cascade)
+  chunks    KnowledgeChunk[]
 
   @@index([workspaceId, chatbotId, type])
   @@map("knowledge_sources")
@@ -421,16 +425,37 @@ model Conversation {
   @@map("conversations")
 }
 
-/// RAG chunks. `embedding` is read and written only through raw SQL in
-/// KnowledgeService — Prisma Client can't handle Unsupported fields.
-/// Interim shape; M2-12 adds workspace/chatbot/source columns.
+/// A searchable piece of an FAQ, policy, text page or document (M2-12).
+/// `embedding` is written and searched only through raw SQL in
+/// KnowledgeService (Prisma Client can't handle Unsupported fields).
+/// Exactly one of faqId and sourceId is set (CHECK in the migration SQL);
+/// keyword search uses the hand-written knowledge_chunks_fts index.
 model KnowledgeChunk {
-  id        String                     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  source    String                     @db.VarChar(255)
-  content   String
-  /// Xenova/all-MiniLM-L6-v2 (384 dimensions, M0 decision T7).
-  embedding Unsupported("vector(384)")
-  createdAt DateTime                   @default(now()) @map("created_at") @db.Timestamptz
+  id             String                     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId    String                     @map("workspace_id") @db.Uuid
+  chatbotId      String                     @map("chatbot_id") @db.Uuid
+  /// FAQ chunks arrive with M2-13.
+  faqId          String?                    @map("faq_id") @db.Uuid
+  sourceId       String?                    @map("source_id") @db.Uuid
+  /// Order within its FAQ or source, from 0.
+  chunkIndex     Int                        @map("chunk_index")
+  content        String
+  /// { title, headingPath, page } for citing where an answer came from.
+  metadata       Json                       @default("{}")
+  /// 384 dimensions for Xenova/all-MiniLM-L6-v2 (M0 decision T7).
+  embedding      Unsupported("vector(384)")
+  /// The model that made `embedding` (M2-14), so a model change can find
+  /// and re-embed old chunks (M2-15).
+  embeddingModel String                     @map("embedding_model") @db.VarChar(100)
+  createdAt      DateTime                   @default(now()) @map("created_at") @db.Timestamptz
 
+  workspace Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  chatbot   Chatbot          @relation(fields: [chatbotId], references: [id], onDelete: Cascade)
+  faq       Faq?             @relation(fields: [faqId], references: [id], onDelete: Cascade)
+  source    KnowledgeSource? @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId, chatbotId])
+  @@index([faqId])
+  @@index([sourceId])
   @@map("knowledge_chunks")
 }
