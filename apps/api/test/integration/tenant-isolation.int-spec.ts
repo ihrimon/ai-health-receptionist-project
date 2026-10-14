@@ -23,7 +23,7 @@ import { FAKE_EMBEDDING_MODEL, fakeEmbeddingService } from './fake-embedding';
 /**
  * M1-25, M2-21 (W4): two workspaces, proving A's users can't read or change
  * B's data — through the HTTP API and through the tenant Prisma client.
- * Runs on a real Postgres, Redis and MinIO; background jobs (knowledge
+ * Runs on a real Postgres and MinIO (no Redis); background jobs (knowledge
  * indexing) run in the app as in production, with a fake embedding model.
  */
 describe('Tenant isolation (M1-25)', () => {
@@ -278,6 +278,26 @@ describe('Tenant isolation (M1-25)', () => {
       const body = me.body as { activeWorkspace: { id: string }; role: string };
       expect(body.activeWorkspace.id).toBe(ids.a);
       expect(body.role).toBe('VIEWER');
+    });
+  });
+
+  describe('rate limits in Postgres', () => {
+    it('allows 5 wrong logins a minute, then answers 429 with Retry-After', async () => {
+      // Counters outlive a test run in the test database; start clean.
+      await prisma.rateLimit.deleteMany({});
+      const attempt = () =>
+        request(http)
+          .post('/v1/auth/login')
+          .set('X-Requested-With', 'fetch')
+          .send({ email: email('nobody'), password: 'wrong-password-123' });
+
+      for (let i = 0; i < 5; i++) await attempt().expect(401);
+      const blocked = await attempt().expect(429);
+
+      const retryAfter = Number(blocked.headers['retry-after']);
+      expect(retryAfter).toBeGreaterThan(0);
+      expect(retryAfter).toBeLessThanOrEqual(60);
+      await prisma.rateLimit.deleteMany({});
     });
   });
 

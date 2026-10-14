@@ -22,20 +22,6 @@ services:
       timeout: 5s
       retries: 10
 
-  redis:
-    image: redis:7-alpine
-    restart: unless-stopped
-    command: ["redis-server", "--appendonly", "yes"]
-    ports:
-      - "${REDIS_PORT:-6379}:6379"
-    volumes:
-      - redis_data:/data
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
-
   # S3-compatible file storage for uploads (M0 decision T9, M2-9).
   # MinIO stopped publishing free images on Docker Hub and quay.io in 2025;
   # this is Chainguard's build of the same server. Its free tier only has a
@@ -71,8 +57,6 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      redis:
-        condition: service_healthy
       minio:
         condition: service_healthy
     environment:
@@ -81,8 +65,6 @@ services:
       # Inside the compose network Postgres is `postgres:5432`, not the
       # host-mapped localhost:5433 from the root .env.
       DATABASE_URL: postgresql://${POSTGRES_USER:-brainstack}:${POSTGRES_PASSWORD:-brainstack}@postgres:5432/${POSTGRES_DB:-brainstack_booking}
-      REDIS_HOST: redis
-      REDIS_PORT: 6379
       # Inside the compose network MinIO is `minio:9000`. NODE_ENV is
       # production here, so bucket creation is switched on explicitly.
       S3_ENDPOINT: http://minio:9000
@@ -113,7 +95,5 @@ services:
 volumes:
   postgres_data:
     name: brainstack_platform_postgres_data
-  redis_data:
-    name: brainstack_platform_redis_data
   minio_data:
     name: brainstack_platform_minio_data

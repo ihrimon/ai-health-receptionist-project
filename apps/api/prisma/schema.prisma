@@ -382,6 +382,21 @@ enum LlmProvider {
   @@map("llm_provider")
 }
 
+/// Fixed-window rate-limit counters (login, signup… D-2 §5), in Postgres
+/// since the MVP has no Redis (lead's call, 2026-10-14). One row per key
+/// and window; expired rows are deleted now and then.
+model RateLimit {
+  /// e.g. `login:ip-email:1.2.3.4:a@b.com`.
+  key         String   @db.VarChar(300)
+  windowStart DateTime @map("window_start") @db.Timestamptz
+  count       Int      @default(0)
+  expiresAt   DateTime @map("expires_at") @db.Timestamptz
+
+  @@id([key, windowStart])
+  @@index([expiresAt])
+  @@map("rate_limits")
+}
+
 /// Platform-level LLM API key + model pairs managed from Settings (M0
 /// decision B3: the platform pays for LLM usage). Rotated in `sortOrder`.
 /// The rl* columns snapshot the provider's rate-limit headers from the most

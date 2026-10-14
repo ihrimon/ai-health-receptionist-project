@@ -18,13 +18,12 @@ export default () => ({
     ssl: process.env.POSTGRES_SSL === 'true',
   },
 
-  redis: {
-    host: process.env.REDIS_HOST ?? 'localhost',
-    port: parseInt(process.env.REDIS_PORT ?? '6379', 10),
-    // Managed free-tier Redis (Upstash, Redis Cloud, etc.) requires a
-    // password and TLS; a local/Docker Redis typically has neither.
-    password: process.env.REDIS_PASSWORD || undefined,
-    tls: process.env.REDIS_TLS === 'true',
+  // Background jobs run on pg-boss in the app's own Postgres (no Redis in
+  // the MVP). Workers check for new jobs this often when idle.
+  queue: {
+    pollingIntervalSeconds: parseFloat(
+      process.env.QUEUE_POLLING_INTERVAL_SECONDS ?? '2',
+    ),
   },
 
   // LLM API key(s) + model are no longer read from env — they're managed
