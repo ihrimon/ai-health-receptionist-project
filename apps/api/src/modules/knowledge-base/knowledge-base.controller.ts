@@ -13,8 +13,12 @@ import {
   updateFaqSchema,
   type UpdateTextSource,
   updateTextSourceSchema,
+  DOCUMENT_MAX_BYTES,
+  type UploadDocument,
+  uploadDocumentSchema,
 } from '@brainstack/shared';
 import {
+  BadRequestException,
   Body,
   Controller,
   Delete,
@@ -28,7 +32,10 @@ import {
   Post,
   Put,
   Query,
+  UploadedFile,
+  UseInterceptors,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { ZodBodyPipe } from '../../common/zod-body.pipe';
 import {
   KnowledgeSourceType,
@@ -119,8 +126,8 @@ export class CustomAnswersController {
 }
 
 /**
- * D-2 §2.3: knowledge sources. Policy and text pages for now; upload and
- * reindex arrive with M2-10/M2-11.
+ * D-2 §2.3: knowledge sources: policy and text pages, and uploaded
+ * documents. Reindex arrives with M2-11.
  */
 @Controller('knowledge-sources')
 export class KnowledgeSourcesController {
@@ -147,6 +154,36 @@ export class KnowledgeSourcesController {
     @Body(new ZodBodyPipe(createTextSourceSchema)) body: CreateTextSource,
   ) {
     return this.sources.createText(body);
+  }
+
+  /**
+   * Document upload (M2-10): `file` plus an optional `title`. 202, as the
+   * text is extracted and indexed later (M2-11). Over 10 MB is a 413.
+   */
+  @Post('upload')
+  @HttpCode(HttpStatus.ACCEPTED)
+  @Roles(WorkspaceRole.ADMIN)
+  @UseInterceptors(
+    FileInterceptor('file', {
+      limits: { fileSize: DOCUMENT_MAX_BYTES, files: 1 },
+    }),
+  )
+  upload(
+    @UploadedFile() file: Express.Multer.File | undefined,
+    @Body(new ZodBodyPipe(uploadDocumentSchema)) body: UploadDocument,
+  ) {
+    if (!file) {
+      throw new BadRequestException('Attach the document as the "file" field');
+    }
+    return this.sources.uploadDocument(
+      {
+        // Multer reads the name as Latin-1; browsers send UTF-8.
+        originalName: Buffer.from(file.originalname, 'latin1').toString('utf8'),
+        mimeType: file.mimetype,
+        buffer: file.buffer,
+      },
+      body.title,
+    );
   }
 
   @Patch(':id')

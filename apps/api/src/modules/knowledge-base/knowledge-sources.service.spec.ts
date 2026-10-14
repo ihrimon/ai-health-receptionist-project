@@ -7,6 +7,7 @@ import {
 import { Test } from '@nestjs/testing';
 import { runWithTenant } from '../../tenancy/tenant-context';
 import { TENANT_PRISMA } from '../../tenancy/tenant-prisma';
+import { StorageService } from '../../storage/storage.service';
 import { ChatbotService } from '../chatbot/chatbot.service';
 import { CustomAnswersService } from './custom-answers.service';
 import { KnowledgeSourcesService } from './knowledge-sources.service';
@@ -29,10 +30,17 @@ describe('KnowledgeSourcesService and CustomAnswersService', () => {
   });
   let knowledgeSource: ReturnType<typeof mockModel>;
   let customAnswer: ReturnType<typeof mockModel>;
+  let storage: { put: jest.Mock; delete: jest.Mock };
 
   beforeEach(async () => {
     knowledgeSource = mockModel();
     customAnswer = mockModel();
+    storage = {
+      put: jest
+        .fn()
+        .mockResolvedValue('workspaces/ws-1/documents/u/manual.pdf'),
+      delete: jest.fn().mockResolvedValue(undefined),
+    };
     const module = await Test.createTestingModule({
       providers: [
         KnowledgeSourcesService,
@@ -42,6 +50,7 @@ describe('KnowledgeSourcesService and CustomAnswersService', () => {
           provide: ChatbotService,
           useValue: { currentId: () => Promise.resolve('bot-1') },
         },
+        { provide: StorageService, useValue: storage },
       ],
     }).compile();
     sources = module.get(KnowledgeSourcesService);
@@ -107,6 +116,103 @@ describe('KnowledgeSourcesService and CustomAnswersService', () => {
         BadRequestException,
       );
       expect(knowledgeSource.update).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('documents', () => {
+    const pdf = {
+      originalName: 'Return policy.pdf',
+      mimeType: 'application/pdf',
+      buffer: Buffer.from('%PDF-1.7 ...'),
+    };
+
+    it('stores the file and records a queued document', async () => {
+      await inTenant(() => sources.uploadDocument(pdf));
+
+      expect(storage.put).toHaveBeenCalledWith(
+        'documents',
+        'Return policy.pdf',
+        pdf.buffer,
+        'application/pdf',
+      );
+      expect(knowledgeSource.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: {
+            workspaceId: 'ws-1',
+            chatbotId: 'bot-1',
+            type: 'DOCUMENT',
+            title: 'Return policy',
+            fileKey: 'workspaces/ws-1/documents/u/manual.pdf',
+            fileName: 'Return policy.pdf',
+            fileSize: pdf.buffer.length,
+            mimeType: 'application/pdf',
+          },
+        }),
+      );
+    });
+
+    it('uses a given title', async () => {
+      await inTenant(() => sources.uploadDocument(pdf, 'Returns'));
+      expect(knowledgeSource.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ title: 'Returns' }) as unknown,
+        }),
+      );
+    });
+
+    it('rejects a bad file before storing anything', async () => {
+      await expect(
+        inTenant(() =>
+          sources.uploadDocument({ ...pdf, buffer: Buffer.from('not a pdf') }),
+        ),
+      ).rejects.toThrow(BadRequestException);
+      expect(storage.put).not.toHaveBeenCalled();
+    });
+
+    it(`stops at ${KNOWLEDGE_LIMITS.documents} documents`, async () => {
+      knowledgeSource.count.mockResolvedValue(KNOWLEDGE_LIMITS.documents);
+
+      await expect(inTenant(() => sources.uploadDocument(pdf))).rejects.toThrow(
+        ConflictException,
+      );
+      expect(knowledgeSource.count).toHaveBeenCalledWith({
+        where: { chatbotId: 'bot-1', type: 'DOCUMENT' },
+      });
+      expect(storage.put).not.toHaveBeenCalled();
+    });
+
+    it('deletes the stored file when the row cannot be saved', async () => {
+      knowledgeSource.create.mockRejectedValue(new Error('database down'));
+
+      await expect(inTenant(() => sources.uploadDocument(pdf))).rejects.toThrow(
+        'database down',
+      );
+      expect(storage.delete).toHaveBeenCalledWith(
+        'workspaces/ws-1/documents/u/manual.pdf',
+      );
+    });
+
+    it("deletes a document's file with it", async () => {
+      knowledgeSource.delete.mockResolvedValue({ fileKey: 'key-1' });
+
+      await sources.remove('src-1');
+
+      expect(storage.delete).toHaveBeenCalledWith('key-1');
+    });
+
+    it('still deletes the row when the file is already gone', async () => {
+      knowledgeSource.delete.mockResolvedValue({ fileKey: 'key-1' });
+      storage.delete.mockRejectedValue(new Error('storage down'));
+
+      await expect(sources.remove('src-1')).resolves.toBeUndefined();
+    });
+
+    it('touches no storage when deleting a policy page', async () => {
+      knowledgeSource.delete.mockResolvedValue({ fileKey: null });
+
+      await sources.remove('src-1');
+
+      expect(storage.delete).not.toHaveBeenCalled();
     });
   });
 
