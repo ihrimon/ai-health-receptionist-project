@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
+  BookOpen,
   Bot,
   Check,
   ChevronsUpDown,
@@ -42,6 +43,7 @@ import { toastError } from "@/lib/toast";
 const NAV_ITEMS = [
   { title: "Home", href: "/app", icon: House },
   { title: "Chatbot", href: "/app/chatbot", icon: Bot },
+  { title: "Knowledge", href: "/app/knowledge", icon: BookOpen },
   { title: "Settings", href: "/app/settings", icon: Settings },
 ];
 
