@@ -19,6 +19,7 @@ import { QUEUE_NAMES } from './queue.constants';
     BullModule.registerQueue(
       { name: QUEUE_NAMES.TRANSCRIPT },
       { name: QUEUE_NAMES.NOTIFICATION },
+      { name: QUEUE_NAMES.KNOWLEDGE_INGEST },
     ),
   ],
   exports: [BullModule],
