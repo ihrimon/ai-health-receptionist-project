@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
+  Bot,
   Check,
   ChevronsUpDown,
   House,
@@ -40,6 +41,7 @@ import { toastError } from "@/lib/toast";
 // only pages that exist are listed.
 const NAV_ITEMS = [
   { title: "Home", href: "/app", icon: House },
+  { title: "Chatbot", href: "/app/chatbot", icon: Bot },
   { title: "Settings", href: "/app/settings", icon: Settings },
 ];
 
