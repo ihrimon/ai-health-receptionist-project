@@ -5,10 +5,12 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
+import { Prisma } from '../../generated/prisma/client';
 import { runWithTenant } from '../../tenancy/tenant-context';
 import { TENANT_PRISMA } from '../../tenancy/tenant-prisma';
 import { StorageService } from '../../storage/storage.service';
 import { ChatbotService } from '../chatbot/chatbot.service';
+import { KnowledgeIngestQueue } from '../knowledge/knowledge-ingest.queue';
 import { CustomAnswersService } from './custom-answers.service';
 import { KnowledgeSourcesService } from './knowledge-sources.service';
 
@@ -31,10 +33,12 @@ describe('KnowledgeSourcesService and CustomAnswersService', () => {
   let knowledgeSource: ReturnType<typeof mockModel>;
   let customAnswer: ReturnType<typeof mockModel>;
   let storage: { put: jest.Mock; delete: jest.Mock };
+  let ingestQueue: { enqueue: jest.Mock };
 
   beforeEach(async () => {
     knowledgeSource = mockModel();
     customAnswer = mockModel();
+    ingestQueue = { enqueue: jest.fn().mockResolvedValue(undefined) };
     storage = {
       put: jest
         .fn()
@@ -51,6 +55,7 @@ describe('KnowledgeSourcesService and CustomAnswersService', () => {
           useValue: { currentId: () => Promise.resolve('bot-1') },
         },
         { provide: StorageService, useValue: storage },
+        { provide: KnowledgeIngestQueue, useValue: ingestQueue },
       ],
     }).compile();
     sources = module.get(KnowledgeSourcesService);
@@ -68,8 +73,12 @@ describe('KnowledgeSourcesService and CustomAnswersService', () => {
       expect(args.select.content).toBeUndefined();
     });
 
-    it('creates a page on the chatbot, queued for indexing by default', async () => {
+    it('creates a page on the chatbot and queues it for indexing', async () => {
+      knowledgeSource.create.mockResolvedValue({ id: 'src-1' });
+
       await inTenant(() => sources.createText(page));
+
+      expect(ingestQueue.enqueue).toHaveBeenCalledWith('src-1');
 
       expect(knowledgeSource.create).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -101,6 +110,8 @@ describe('KnowledgeSourcesService and CustomAnswersService', () => {
 
       await sources.updateText('src-1', { content: 'New' });
 
+      expect(ingestQueue.enqueue).toHaveBeenCalledWith('src-1');
+
       expect(knowledgeSource.update).toHaveBeenCalledWith(
         expect.objectContaining({
           where: { id: 'src-1', chatbotId: 'bot-1' },
@@ -119,6 +130,32 @@ describe('KnowledgeSourcesService and CustomAnswersService', () => {
     });
   });
 
+  describe('reindex', () => {
+    it('queues the source again and clears its error', async () => {
+      await sources.reindex('src-1');
+
+      expect(knowledgeSource.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 'src-1', chatbotId: 'bot-1' },
+          data: { status: 'QUEUED', error: null },
+        }),
+      );
+      expect(ingestQueue.enqueue).toHaveBeenCalledWith('src-1');
+    });
+
+    it("is a 404 for a missing (or another workspace's) source", async () => {
+      knowledgeSource.update.mockRejectedValue(
+        new Prisma.PrismaClientKnownRequestError('No record', {
+          code: 'P2025',
+          clientVersion: 'test',
+        }),
+      );
+
+      await expect(sources.reindex('x')).rejects.toThrow(NotFoundException);
+      expect(ingestQueue.enqueue).not.toHaveBeenCalled();
+    });
+  });
+
   describe('documents', () => {
     const pdf = {
       originalName: 'Return policy.pdf',
@@ -126,8 +163,12 @@ describe('KnowledgeSourcesService and CustomAnswersService', () => {
       buffer: Buffer.from('%PDF-1.7 ...'),
     };
 
-    it('stores the file and records a queued document', async () => {
+    it('stores the file, records a queued document and queues it', async () => {
+      knowledgeSource.create.mockResolvedValue({ id: 'src-9' });
+
       await inTenant(() => sources.uploadDocument(pdf));
+
+      expect(ingestQueue.enqueue).toHaveBeenCalledWith('src-9');
 
       expect(storage.put).toHaveBeenCalledWith(
         'documents',
@@ -187,6 +228,7 @@ describe('KnowledgeSourcesService and CustomAnswersService', () => {
       await expect(inTenant(() => sources.uploadDocument(pdf))).rejects.toThrow(
         'database down',
       );
+      expect(ingestQueue.enqueue).not.toHaveBeenCalled();
       expect(storage.delete).toHaveBeenCalledWith(
         'workspaces/ws-1/documents/u/manual.pdf',
       );

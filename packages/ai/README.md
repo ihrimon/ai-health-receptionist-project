@@ -17,13 +17,10 @@ shared between `apps/api` and a future standalone voice worker (Phase 2/3
 territory) — at that point, move the client wrapper, tool definitions, and
 chat orchestration here.
 
-## Knowledge base (RAG scaffold, added 2026-08-16)
+## Knowledge base
 
-`knowledge/faq.md` is the source doc for the FAQ/policy RAG feature —
-currently placeholder content. Edit it with real business info (services,
-pricing, hours, cancellation policy, etc.), then run `pnpm --filter api
-knowledge:ingest` to (re-)embed it into Postgres. The retrieval/embedding
-code itself lives in `apps/api/src/modules/knowledge/` (local embeddings via
-`@xenova/transformers`, pgvector similarity search) — same reasoning as
-above for why it's not here: no `@brainstack/*` package has a proven
-consumer yet.
+The single-tenant demo FAQ (`knowledge/faq.md` and the `knowledge:ingest`
+script) was retired in M2 (2026-10-14). Each workspace now adds its own
+FAQs, policies and documents in the dashboard; indexing and search live in
+`apps/api/src/modules/knowledge/` (local embeddings via
+`@xenova/transformers`, pgvector).

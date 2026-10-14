@@ -12,15 +12,19 @@ import { PrismaService } from '../../src/database/prisma.service';
 import { WorkspaceRole } from '../../src/generated/prisma/client';
 import { SESSION_COOKIE } from '../../src/modules/auth/auth.constants';
 import { SessionsService } from '../../src/modules/auth/sessions.service';
+import { EmbeddingService } from '../../src/modules/knowledge/embedding.service';
+import { KnowledgeService } from '../../src/modules/knowledge/knowledge.service';
 import { WorkspacesService } from '../../src/modules/workspaces/workspaces.service';
 import { S3_CLIENT } from '../../src/storage/storage.service';
 import { runWithTenant } from '../../src/tenancy/tenant-context';
 import { TENANT_PRISMA, TenantPrisma } from '../../src/tenancy/tenant-prisma';
+import { FAKE_EMBEDDING_MODEL, fakeEmbeddingService } from './fake-embedding';
 
 /**
  * M1-25, M2-21 (W4): two workspaces, proving A's users can't read or change
  * B's data — through the HTTP API and through the tenant Prisma client.
- * Runs on a real Postgres (+ Redis) test database.
+ * Runs on a real Postgres, Redis and MinIO; background jobs (knowledge
+ * indexing) run in the app as in production, with a fake embedding model.
  */
 describe('Tenant isolation (M1-25)', () => {
   const run = randomUUID().slice(0, 8);
@@ -83,10 +87,28 @@ describe('Tenant isolation (M1-25)', () => {
       async () => await fn(),
     );
 
+  /** Polls a knowledge source until background indexing settles on `status`. */
+  async function waitForStatus(
+    cookie: string,
+    id: string,
+    status: 'READY' | 'FAILED',
+  ): Promise<{ status: string; error: string | null }> {
+    for (let i = 0; i < 100; i++) {
+      const res = await as(cookie).get(`/v1/knowledge-sources/${id}`);
+      const body = res.body as { status: string; error: string | null };
+      if (body.status === status) return body;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    throw new Error(`Source ${id} never reached ${status}`);
+  }
+
   beforeAll(async () => {
     const moduleRef = await Test.createTestingModule({
       imports: [AppModule],
-    }).compile();
+    })
+      .overrideProvider(EmbeddingService)
+      .useValue(fakeEmbeddingService)
+      .compile();
     app = moduleRef.createNestApplication<NestExpressApplication>();
     configureApp(app);
     await app.init();
@@ -585,6 +607,92 @@ describe('Tenant isolation (M1-25)', () => {
 
       it('a viewer cannot upload (403)', async () => {
         await upload(cookies.viewerA, PDF, 'x.pdf').expect(403);
+      });
+
+      describe('indexing (M2-11, M2-12)', () => {
+        let txtA: SourceBody;
+        const chunksOf = (sourceId: string) =>
+          prisma.$queryRaw<
+            {
+              workspace_id: string;
+              chatbot_id: string;
+              content: string;
+              embedding_model: string;
+            }[]
+          >`SELECT workspace_id::text, chatbot_id::text, content, embedding_model
+            FROM knowledge_chunks WHERE source_id = ${sourceId}::uuid`;
+
+        beforeAll(async () => {
+          const res = await upload(
+            cookies.ownerA,
+            Buffer.from('# Shipping\n\nWe ship to Dhaka within 2 days.'),
+            'shipping.md',
+          ).expect(202);
+          txtA = res.body as SourceBody;
+        });
+
+        it('indexes an upload into chunks owned by its workspace and chatbot', async () => {
+          await waitForStatus(cookies.ownerA, txtA.id, 'READY');
+
+          const chunks = await chunksOf(txtA.id);
+          expect(chunks).toEqual([
+            {
+              workspace_id: ids.a,
+              chatbot_id: ids.botA,
+              content: 'Shipping\nWe ship to Dhaka within 2 days.',
+              embedding_model: FAKE_EMBEDDING_MODEL,
+            },
+          ]);
+          const detail = (
+            await as(cookies.ownerA)
+              .get(`/v1/knowledge-sources/${txtA.id}`)
+              .expect(200)
+          ).body as { content: string };
+          expect(detail.content).toContain('We ship to Dhaka');
+        });
+
+        it("search finds only the caller's chunks", async () => {
+          const knowledge = app.get(KnowledgeService);
+          const inA = await inWorkspace(ids.a, () =>
+            knowledge.search(ids.botA, 'shipping to Dhaka'),
+          );
+          expect(inA.map((m) => m.content)).toContain(
+            'Shipping\nWe ship to Dhaka within 2 days.',
+          );
+          // B asking about A's chatbot, or its own: nothing of A's.
+          await expect(
+            inWorkspace(ids.b, () => knowledge.search(ids.botA, 'shipping')),
+          ).resolves.toEqual([]);
+          await expect(
+            inWorkspace(ids.b, () => knowledge.search(ids.botB, 'shipping')),
+          ).resolves.toEqual([]);
+          await expect(
+            inWorkspace(ids.b, () => db.knowledgeChunk.findMany()),
+          ).resolves.toEqual([]);
+        });
+
+        it('marks an unreadable PDF FAILED with a readable reason', async () => {
+          const failed = await waitForStatus(cookies.ownerA, docA.id, 'FAILED');
+          expect(failed.error).toMatch(/PDF/);
+        });
+
+        it("another workspace can't reindex the source (404); the owner can", async () => {
+          await as(cookies.ownerB)
+            .post(`/v1/knowledge-sources/${docA.id}/reindex`)
+            .expect(404);
+          const res = await as(cookies.ownerA)
+            .post(`/v1/knowledge-sources/${docA.id}/reindex`)
+            .expect(202);
+          expect((res.body as SourceBody).status).toBe('QUEUED');
+          await waitForStatus(cookies.ownerA, docA.id, 'FAILED');
+        });
+
+        it('deleting a source deletes its chunks', async () => {
+          await as(cookies.ownerA)
+            .delete(`/v1/knowledge-sources/${txtA.id}`)
+            .expect(204);
+          await expect(chunksOf(txtA.id)).resolves.toEqual([]);
+        });
       });
 
       it('deleting the document deletes its file', async () => {

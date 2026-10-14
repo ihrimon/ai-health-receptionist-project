@@ -127,7 +127,7 @@ export class CustomAnswersController {
 
 /**
  * D-2 §2.3: knowledge sources: policy and text pages, and uploaded
- * documents. Reindex arrives with M2-11.
+ * documents, each indexed in the background (M2-11).
  */
 @Controller('knowledge-sources')
 export class KnowledgeSourcesController {
@@ -193,6 +193,14 @@ export class KnowledgeSourcesController {
     @Body(new ZodBodyPipe(updateTextSourceSchema)) body: UpdateTextSource,
   ) {
     return this.sources.updateText(id, body);
+  }
+
+  /** Indexes the source again, e.g. after it FAILED (202: it runs later). */
+  @Post(':id/reindex')
+  @HttpCode(HttpStatus.ACCEPTED)
+  @Roles(WorkspaceRole.ADMIN)
+  reindex(@Param('id', uuid) id: string) {
+    return this.sources.reindex(id);
   }
 
   @Delete(':id')

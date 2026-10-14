@@ -1,7 +1,6 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { randomUUID } from 'crypto';
 import { ConversationsService } from '../conversations/conversations.service';
-import { KnowledgeService } from '../knowledge/knowledge.service';
 import { SendChatMessageDto } from './dto/send-chat-message.dto';
 import {
   AllLlmKeysExhaustedError,
@@ -25,9 +24,11 @@ export interface ChatReply {
 }
 
 /**
- * Interim single-tenant RAG Q&A chat for the platform branch (M1): the
+ * Interim single-tenant Q&A chat for the platform branch (M1): the
  * booking flow and its tools are gone, and M3 replaces this whole service
  * with the tenant-aware public-chat pipeline (docs/requirements.md §9).
+ * It no longer uses knowledge: chunks belong to workspaces now (M2-12),
+ * and this platform-admin chat has no workspace to search in.
  *
  * Every conversation is persisted from its first turn. Once a row exists
  * for the session it is the source of truth for history; the
@@ -41,7 +42,6 @@ export class ChatService {
   constructor(
     private readonly llmChatClient: LlmChatClient,
     private readonly conversationsService: ConversationsService,
-    private readonly knowledgeService: KnowledgeService,
   ) {}
 
   async sendMessage(dto: SendChatMessageDto): Promise<ChatReply> {
@@ -61,11 +61,7 @@ export class ChatService {
       { role: 'user', text: dto.message },
     ];
 
-    const referenceChunks = await this.getReferenceChunks(dto.message);
-    const messages = this.llmChatClient.buildMessages(
-      transcript,
-      referenceChunks,
-    );
+    const messages = this.llmChatClient.buildMessages(transcript);
     const { reply, succeeded } = await this.generateReply(messages);
     // A failed LLM call isn't persisted: the apology isn't a real answer,
     // and saving it would feed it back to the model as history on retry.
@@ -138,19 +134,5 @@ export class ChatService {
 
   private toCallSid(sessionId: string): string {
     return `${CHAT_SESSION_PREFIX}${sessionId}`;
-  }
-
-  private async getReferenceChunks(message: string): Promise<string[]> {
-    try {
-      const matches = await this.knowledgeService.search(message);
-      return matches.map((match) => match.content);
-    } catch (err) {
-      // Chat should keep working without RAG context (e.g. the pgvector
-      // migration not applied yet) rather than fail the turn.
-      this.logger.warn(
-        `Knowledge retrieval unavailable: ${(err as Error).message}`,
-      );
-      return [];
-    }
   }
 }

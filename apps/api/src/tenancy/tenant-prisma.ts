@@ -14,6 +14,7 @@ export const TENANT_MODELS = new Set<string>([
   'CustomAnswer',
   'KnowledgeSource',
   'Product',
+  'KnowledgeChunk',
 ]);
 
 const READ_MANY_OPS = new Set([

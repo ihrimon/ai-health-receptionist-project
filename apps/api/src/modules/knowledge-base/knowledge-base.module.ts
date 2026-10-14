@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { ChatbotModule } from '../chatbot/chatbot.module';
+import { KnowledgeModule } from '../knowledge/knowledge.module';
 import { CustomAnswersService } from './custom-answers.service';
 import {
   CustomAnswersController,
@@ -11,11 +12,11 @@ import { KnowledgeSourcesService } from './knowledge-sources.service';
 
 /**
  * The company-managed knowledge base (M2-6): FAQs, custom answers, policy
- * and text pages. Not to be confused with modules/knowledge, the interim
- * single-tenant RAG search that M2-11 replaces.
+ * and text pages, uploaded documents. Indexing and search live in
+ * modules/knowledge.
  */
 @Module({
-  imports: [ChatbotModule],
+  imports: [ChatbotModule, KnowledgeModule],
   controllers: [
     FaqsController,
     CustomAnswersController,

@@ -7,8 +7,8 @@ import * as path from 'path';
  * $queryRaw elsewhere fails this test and has to be reviewed and added
  * here on purpose.
  *
- * knowledge_chunks has no workspace column yet; its isolation test comes
- * with M2-12, when it gets one.
+ * knowledge.service.ts adds workspace_id to every knowledge_chunks query;
+ * the integration suite proves it (M2-12).
  */
 const ALLOWED = new Set(['modules/knowledge/knowledge.service.ts']);
 
