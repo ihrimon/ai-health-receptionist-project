@@ -1,4 +1,6 @@
+import { HeadObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { defaultChatbotConfig } from '@brainstack/shared';
+import { ConfigService } from '@nestjs/config';
 import { NestExpressApplication } from '@nestjs/platform-express';
 import { Test } from '@nestjs/testing';
 import { randomUUID } from 'crypto';
@@ -11,6 +13,7 @@ import { WorkspaceRole } from '../../src/generated/prisma/client';
 import { SESSION_COOKIE } from '../../src/modules/auth/auth.constants';
 import { SessionsService } from '../../src/modules/auth/sessions.service';
 import { WorkspacesService } from '../../src/modules/workspaces/workspaces.service';
+import { S3_CLIENT } from '../../src/storage/storage.service';
 import { runWithTenant } from '../../src/tenancy/tenant-context';
 import { TENANT_PRISMA, TenantPrisma } from '../../src/tenancy/tenant-prisma';
 
@@ -499,6 +502,97 @@ describe('Tenant isolation (M1-25)', () => {
         .post('/v1/knowledge-sources')
         .send({ type: 'TEXT', title: 'T', content: 'C' })
         .expect(403);
+    });
+
+    describe('document upload (M2-10, real MinIO)', () => {
+      interface SourceBody {
+        id: string;
+        type: string;
+        title: string;
+        status: string;
+        mimeType: string;
+      }
+      const PDF = Buffer.from('%PDF-1.7\n1 0 obj\n<<>>\nendobj\n%%EOF');
+      const upload = (cookie: string, file: Buffer, name: string) =>
+        as(cookie)
+          .post('/v1/knowledge-sources/upload')
+          .attach('file', file, name);
+      const fileExists = async (key: string) => {
+        const s3 = app.get<S3Client>(S3_CLIENT);
+        const Bucket = app
+          .get(ConfigService)
+          .getOrThrow<string>('storage.bucket');
+        return s3.send(new HeadObjectCommand({ Bucket, Key: key })).then(
+          () => true,
+          () => false,
+        );
+      };
+      let docA: SourceBody;
+      let keyA: string;
+
+      beforeAll(async () => {
+        const res = await upload(cookies.ownerA, PDF, 'Return policy.pdf')
+          .field('title', 'Returns')
+          .expect(202);
+        docA = res.body as SourceBody;
+        keyA = (
+          await prisma.knowledgeSource.findUniqueOrThrow({
+            where: { id: docA.id },
+          })
+        ).fileKey!;
+      });
+
+      it("stores the file under the caller's workspace and queues it", async () => {
+        expect(docA).toMatchObject({
+          type: 'DOCUMENT',
+          title: 'Returns',
+          status: 'QUEUED',
+          mimeType: 'application/pdf',
+        });
+        expect(keyA.startsWith(`workspaces/${ids.a}/documents/`)).toBe(true);
+        expect(await fileExists(keyA)).toBe(true);
+      });
+
+      it("another workspace can't see or delete the document (404)", async () => {
+        const b = as(cookies.ownerB);
+        await b.get(`/v1/knowledge-sources/${docA.id}`).expect(404);
+        await b.delete(`/v1/knowledge-sources/${docA.id}`).expect(404);
+        const list = (
+          await b.get('/v1/knowledge-sources?type=DOCUMENT').expect(200)
+        ).body as SourceBody[];
+        expect(list).toEqual([]);
+        expect(await fileExists(keyA)).toBe(true);
+      });
+
+      it('rejects a file whose content is not what its name says (400)', async () => {
+        await upload(
+          cookies.ownerA,
+          Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00]),
+          'cat.pdf',
+        ).expect(400);
+        await as(cookies.ownerA)
+          .post('/v1/knowledge-sources/upload')
+          .expect(400);
+      });
+
+      it('is a 413 for a document over 10 MB', async () => {
+        await upload(
+          cookies.ownerA,
+          Buffer.alloc(10 * 1024 * 1024 + 1, 'a'),
+          'big.txt',
+        ).expect(413);
+      });
+
+      it('a viewer cannot upload (403)', async () => {
+        await upload(cookies.viewerA, PDF, 'x.pdf').expect(403);
+      });
+
+      it('deleting the document deletes its file', async () => {
+        await as(cookies.ownerA)
+          .delete(`/v1/knowledge-sources/${docA.id}`)
+          .expect(204);
+        expect(await fileExists(keyA)).toBe(false);
+      });
     });
   });
 
