@@ -88,6 +88,19 @@ describe('Tenant isolation (M1-25)', () => {
     );
 
   /** Polls a knowledge source until background indexing settles on `status`. */
+  /** Polls until `check` returns a value (background jobs settle). */
+  async function waitUntil<T>(
+    what: string,
+    check: () => Promise<T | null | undefined | false>,
+  ): Promise<T> {
+    for (let i = 0; i < 100; i++) {
+      const value = await check();
+      if (value) return value;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    throw new Error(`Timed out waiting for ${what}`);
+  }
+
   async function waitForStatus(
     cookie: string,
     id: string,
@@ -524,6 +537,101 @@ describe('Tenant isolation (M1-25)', () => {
         .post('/v1/knowledge-sources')
         .send({ type: 'TEXT', title: 'T', content: 'C' })
         .expect(403);
+    });
+
+    describe('automatic re-indexing (M2-13)', () => {
+      const faqChunks = (faqId: string) =>
+        prisma.$queryRaw<{ workspace_id: string; content: string }[]>`
+          SELECT workspace_id::text, content FROM knowledge_chunks
+          WHERE faq_id = ${faqId}::uuid`;
+      const rowModel = (table: 'custom_answers' | 'products', id: string) =>
+        table === 'custom_answers'
+          ? prisma.customAnswer
+              .findUniqueOrThrow({
+                where: { id },
+                select: { embeddingModel: true },
+              })
+              .then((r) => r.embeddingModel)
+          : prisma.product
+              .findUniqueOrThrow({
+                where: { id },
+                select: { embeddingModel: true },
+              })
+              .then((r) => r.embeddingModel);
+
+      it("indexes an FAQ's latest text into its workspace's chunks", async () => {
+        // Edited to "Yes, worldwide." by an earlier test; the edit re-queued it.
+        const chunks = await waitUntil(
+          'the edited FAQ to be indexed',
+          async () => {
+            const rows = await faqChunks(itemsA.faq);
+            return rows.some((r) => r.content.includes('worldwide')) && rows;
+          },
+        );
+        expect(chunks).toEqual([
+          {
+            workspace_id: ids.a,
+            content: 'Do you ship abroad?\n\nYes, worldwide.',
+          },
+        ]);
+      });
+
+      it("B's search never finds A's FAQ", async () => {
+        const knowledge = app.get(KnowledgeService);
+        const inA = await inWorkspace(ids.a, () =>
+          knowledge.search(ids.botA, 'do you ship abroad'),
+        );
+        expect(inA.map((m) => m.content)).toContain(
+          'Do you ship abroad?\n\nYes, worldwide.',
+        );
+        await expect(
+          inWorkspace(ids.b, () => knowledge.search(ids.botB, 'ship abroad')),
+        ).resolves.toEqual([]);
+      });
+
+      it("embeds a custom answer's trigger question", async () => {
+        const res = await as(cookies.ownerA)
+          .post('/v1/custom-answers')
+          .send({ triggerQuestion: 'Who founded the shop?', answer: 'Rina.' })
+          .expect(201);
+        const id = (res.body as { id: string }).id;
+
+        await expect(
+          waitUntil('the custom answer embedding', () =>
+            rowModel('custom_answers', id),
+          ),
+        ).resolves.toBe(FAKE_EMBEDDING_MODEL);
+        await as(cookies.ownerA).delete(`/v1/custom-answers/${id}`).expect(204);
+      });
+
+      it('deleting an FAQ deletes its chunks', async () => {
+        const res = await as(cookies.ownerA)
+          .post('/v1/faqs')
+          .send({ question: 'Gift wrap?', answer: 'Yes, free.' })
+          .expect(201);
+        const id = (res.body as { id: string }).id;
+        await waitUntil(
+          'the new FAQ to be indexed',
+          async () => (await faqChunks(id)).length > 0,
+        );
+
+        await as(cookies.ownerA).delete(`/v1/faqs/${id}`).expect(204);
+
+        await expect(faqChunks(id)).resolves.toEqual([]);
+      });
+
+      it('embeds products', async () => {
+        const res = await as(cookies.ownerA)
+          .post('/v1/products')
+          .send({ name: 'Rain boot', category: 'Footwear' })
+          .expect(201);
+        const id = (res.body as { id: string }).id;
+
+        await expect(
+          waitUntil('the product embedding', () => rowModel('products', id)),
+        ).resolves.toBe(FAKE_EMBEDDING_MODEL);
+        await as(cookies.ownerA).delete(`/v1/products/${id}`).expect(204);
+      });
     });
 
     describe('document upload (M2-10, real MinIO)', () => {
