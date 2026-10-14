@@ -32,6 +32,26 @@ export default () => ({
   // LlmCredentialsService/LlmKeyManager) so they can be edited without a
   // redeploy and aren't tied to a single provider like Groq.
 
+  // S3-compatible file storage (M0 decision T9): MinIO locally (see
+  // docker-compose.yml), Cloudflare R2 or AWS S3 in production. The
+  // defaults match the local MinIO container.
+  storage: {
+    endpoint: process.env.S3_ENDPOINT ?? 'http://localhost:9000',
+    region: process.env.S3_REGION ?? 'us-east-1',
+    bucket: process.env.S3_BUCKET ?? 'brainstack-local',
+    accessKeyId: process.env.S3_ACCESS_KEY_ID ?? 'brainstack',
+    secretAccessKey:
+      process.env.S3_SECRET_ACCESS_KEY ?? 'brainstack-dev-secret',
+    // MinIO needs path-style URLs (endpoint/bucket/key); R2 and S3 don't.
+    forcePathStyle: (process.env.S3_FORCE_PATH_STYLE ?? 'true') === 'true',
+    // Create the bucket on first upload if it's missing: handy for a fresh
+    // local MinIO. Off by default in production, where buckets come with
+    // the hosting setup (M7).
+    createBucket:
+      (process.env.S3_CREATE_BUCKET ??
+        String(process.env.NODE_ENV !== 'production')) === 'true',
+  },
+
   knowledge: {
     embeddingModel:
       process.env.KNOWLEDGE_EMBEDDING_MODEL ?? 'Xenova/all-MiniLM-L6-v2',
