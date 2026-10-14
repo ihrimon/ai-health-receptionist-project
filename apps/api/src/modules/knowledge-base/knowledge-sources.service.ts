@@ -93,7 +93,7 @@ export class KnowledgeSourcesService {
       data: { workspaceId: requireTenant().workspaceId, chatbotId, ...input },
       select: DETAIL_FIELDS,
     });
-    await this.ingestQueue.enqueue(source.id);
+    await this.ingestQueue.enqueue('source', source.id);
     return source;
   }
 
@@ -142,7 +142,7 @@ export class KnowledgeSourcesService {
         await this.deleteFile(fileKey);
         throw err;
       });
-    await this.ingestQueue.enqueue(source.id);
+    await this.ingestQueue.enqueue('source', source.id);
     return source;
   }
 
@@ -166,7 +166,7 @@ export class KnowledgeSourcesService {
         select: DETAIL_FIELDS,
       }),
     );
-    await this.ingestQueue.enqueue(id);
+    await this.ingestQueue.enqueue('source', id);
     return updated;
   }
 
@@ -183,7 +183,7 @@ export class KnowledgeSourcesService {
         select: SUMMARY_FIELDS,
       }),
     );
-    await this.ingestQueue.enqueue(id);
+    await this.ingestQueue.enqueue('source', id);
     return source;
   }
 

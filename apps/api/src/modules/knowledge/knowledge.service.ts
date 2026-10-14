@@ -53,16 +53,71 @@ export class KnowledgeService {
     chunks: EmbeddedChunk[],
   ): Promise<void> {
     const { workspaceId } = requireTenant();
-    const model = this.embedding.modelName;
     await tx.$executeRaw`
       DELETE FROM knowledge_chunks
       WHERE source_id = ${sourceId}::uuid AND workspace_id = ${workspaceId}::uuid`;
+    await this.insertChunks(tx, chatbotId, { sourceId }, chunks);
+  }
+
+  /** Replaces an FAQ's chunks (M2-13), like replaceSourceChunks. */
+  async replaceFaqChunks(
+    tx: TenantTx,
+    chatbotId: string,
+    faqId: string,
+    chunks: EmbeddedChunk[],
+  ): Promise<void> {
+    const { workspaceId } = requireTenant();
+    await tx.$executeRaw`
+      DELETE FROM knowledge_chunks
+      WHERE faq_id = ${faqId}::uuid AND workspace_id = ${workspaceId}::uuid`;
+    await this.insertChunks(tx, chatbotId, { faqId }, chunks);
+  }
+
+  /** Stores a custom answer's trigger-question embedding (M2-13). */
+  async setCustomAnswerEmbedding(
+    tx: TenantTx,
+    id: string,
+    embedding: number[],
+  ): Promise<void> {
+    const { workspaceId } = requireTenant();
+    // Raw SQL leaves updated_at alone, so this doesn't look like an edit.
+    await tx.$executeRaw`
+      UPDATE custom_answers
+      SET embedding = ${toVectorLiteral(embedding)}::vector,
+          embedding_model = ${this.embedding.modelName}
+      WHERE id = ${id}::uuid AND workspace_id = ${workspaceId}::uuid`;
+  }
+
+  /** Stores a product's embedding (name + category + description, M2-13). */
+  async setProductEmbedding(
+    tx: TenantTx,
+    id: string,
+    embedding: number[],
+  ): Promise<void> {
+    const { workspaceId } = requireTenant();
+    await tx.$executeRaw`
+      UPDATE products
+      SET embedding = ${toVectorLiteral(embedding)}::vector,
+          embedding_model = ${this.embedding.modelName}
+      WHERE id = ${id}::uuid AND workspace_id = ${workspaceId}::uuid`;
+  }
+
+  private async insertChunks(
+    tx: TenantTx,
+    chatbotId: string,
+    owner: { sourceId?: string; faqId?: string },
+    chunks: EmbeddedChunk[],
+  ): Promise<void> {
+    const { workspaceId } = requireTenant();
+    const model = this.embedding.modelName;
+    const sourceId = owner.sourceId ?? null;
+    const faqId = owner.faqId ?? null;
     for (const [index, chunk] of chunks.entries()) {
       await tx.$executeRaw`
         INSERT INTO knowledge_chunks
-          (workspace_id, chatbot_id, source_id, chunk_index, content, metadata, embedding, embedding_model)
+          (workspace_id, chatbot_id, source_id, faq_id, chunk_index, content, metadata, embedding, embedding_model)
         VALUES (
-          ${workspaceId}::uuid, ${chatbotId}::uuid, ${sourceId}::uuid, ${index},
+          ${workspaceId}::uuid, ${chatbotId}::uuid, ${sourceId}::uuid, ${faqId}::uuid, ${index},
           ${chunk.content}, ${JSON.stringify(chunk.metadata)}::jsonb,
           ${toVectorLiteral(chunk.embedding)}::vector, ${model}
         )`;

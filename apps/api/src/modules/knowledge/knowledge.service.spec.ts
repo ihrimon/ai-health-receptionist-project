@@ -58,6 +58,7 @@ describe('KnowledgeService', () => {
       'ws-1',
       'bot-1',
       'src-1',
+      null,
       0,
       'Within 30 days.',
       '{"title":"Returns","headingPath":[]}',
@@ -65,6 +66,53 @@ describe('KnowledgeService', () => {
       'Xenova/all-MiniLM-L6-v2',
     ]);
   });
+
+  it("replaces an FAQ's chunks, linked by faq_id", async () => {
+    const tx = { $executeRaw: jest.fn().mockResolvedValue(1) };
+
+    await inTenant(() =>
+      service.replaceFaqChunks(tx as unknown as TenantTx, 'bot-1', 'faq-1', [
+        {
+          content: 'Q\n\nA',
+          metadata: { title: 'Q', headingPath: [] },
+          embedding: [1],
+        },
+      ]),
+    );
+
+    const [del, ins] = tx.$executeRaw.mock.calls as unknown[][];
+    expect(sqlOf(del)).toContain(
+      'WHERE faq_id = ?::uuid AND workspace_id = ?::uuid',
+    );
+    expect(del.slice(1)).toEqual(['faq-1', 'ws-1']);
+    expect(ins.slice(1, 5)).toEqual(['ws-1', 'bot-1', null, 'faq-1']);
+  });
+
+  it.each([
+    ['setCustomAnswerEmbedding', 'custom_answers'],
+    ['setProductEmbedding', 'products'],
+  ] as const)(
+    '%s writes the row embedding in the current workspace',
+    async (method, table) => {
+      const tx = { $executeRaw: jest.fn().mockResolvedValue(1) };
+
+      await inTenant(() =>
+        service[method](tx as unknown as TenantTx, 'row-1', [0.5]),
+      );
+
+      const [call] = tx.$executeRaw.mock.calls as unknown[][];
+      expect(sqlOf(call)).toContain(`UPDATE ${table}`);
+      expect(sqlOf(call)).toContain(
+        'WHERE id = ?::uuid AND workspace_id = ?::uuid',
+      );
+      expect(call.slice(1)).toEqual([
+        '[0.5]',
+        'Xenova/all-MiniLM-L6-v2',
+        'row-1',
+        'ws-1',
+      ]);
+    },
+  );
 
   it("searches only the current workspace's chatbot", async () => {
     await inTenant(() => service.search('bot-1', 'return policy', 5));
