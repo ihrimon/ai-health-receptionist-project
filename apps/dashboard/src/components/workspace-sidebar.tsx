@@ -10,6 +10,7 @@ import {
   House,
   LogOut,
   MessageCircle,
+  Package,
   Settings,
   Shield,
 } from "lucide-react";
@@ -44,6 +45,7 @@ const NAV_ITEMS = [
   { title: "Home", href: "/app", icon: House },
   { title: "Chatbot", href: "/app/chatbot", icon: Bot },
   { title: "Knowledge", href: "/app/knowledge", icon: BookOpen },
+  { title: "Products", href: "/app/products", icon: Package },
   { title: "Settings", href: "/app/settings", icon: Settings },
 ];
 
