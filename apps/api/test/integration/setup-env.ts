@@ -5,3 +5,8 @@ import { assertTestDatabase, testDatabaseUrl } from './test-db';
 const url = testDatabaseUrl();
 assertTestDatabase(url);
 process.env.DATABASE_URL = url;
+
+// Uploads go to their own bucket, created on first use, so tests never
+// mix with files from local development.
+process.env.S3_BUCKET = 'brainstack-test';
+process.env.S3_CREATE_BUCKET = 'true';
