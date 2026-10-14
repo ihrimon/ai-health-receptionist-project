@@ -1,7 +1,6 @@
 import { NotFoundException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { ConversationsService } from '../conversations/conversations.service';
-import { KnowledgeService } from '../knowledge/knowledge.service';
 import { ChatService } from './chat.service';
 import {
   AllLlmKeysExhaustedError,
@@ -22,7 +21,6 @@ describe('ChatService', () => {
     appendTurn: jest.Mock;
     rate: jest.Mock;
   };
-  let knowledgeService: { search: jest.Mock };
 
   beforeEach(async () => {
     llmChatClient = {
@@ -35,14 +33,12 @@ describe('ChatService', () => {
       appendTurn: jest.fn(),
       rate: jest.fn(),
     };
-    knowledgeService = { search: jest.fn().mockResolvedValue([]) };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         ChatService,
         { provide: LlmChatClient, useValue: llmChatClient },
         { provide: ConversationsService, useValue: conversationsService },
-        { provide: KnowledgeService, useValue: knowledgeService },
       ],
     }).compile();
 
@@ -97,13 +93,10 @@ describe('ChatService', () => {
     expect(conversationsService.findByCallSid).toHaveBeenCalledWith(
       'chat-session-1',
     );
-    expect(llmChatClient.buildMessages).toHaveBeenCalledWith(
-      [
-        { role: 'user', text: 'Hi' },
-        { role: 'user', text: 'Do you deliver?' },
-      ],
-      [],
-    );
+    expect(llmChatClient.buildMessages).toHaveBeenCalledWith([
+      { role: 'user', text: 'Hi' },
+      { role: 'user', text: 'Do you deliver?' },
+    ]);
     expect(conversationsService.create).toHaveBeenCalledWith({
       callSid: 'chat-session-1',
     });
@@ -127,14 +120,11 @@ describe('ChatService', () => {
     });
 
     expect(conversationsService.create).not.toHaveBeenCalled();
-    expect(llmChatClient.buildMessages).toHaveBeenCalledWith(
-      [
-        { role: 'user', text: 'Hi' },
-        { role: 'model', text: 'Hello!' },
-        { role: 'user', text: 'Do you deliver?' },
-      ],
-      [],
-    );
+    expect(llmChatClient.buildMessages).toHaveBeenCalledWith([
+      { role: 'user', text: 'Hi' },
+      { role: 'model', text: 'Hello!' },
+      { role: 'user', text: 'Do you deliver?' },
+    ]);
     expect(conversationsService.appendTurn).toHaveBeenCalledWith('conv-1', {
       transcript: [
         { role: 'user', text: 'Hi' },
@@ -145,38 +135,14 @@ describe('ChatService', () => {
     });
   });
 
-  it('passes retrieved knowledge chunks through to buildMessages', async () => {
-    knowledgeService.search.mockResolvedValue([
-      { source: 'faq.md', content: 'We are open 9-5.', similarity: 0.9 },
-    ]);
-    llmChatClient.complete.mockResolvedValue(
-      assistantMessage('We are open 9-5.'),
-    );
-
-    await service.sendMessage({ message: 'What are your hours?' });
-
-    expect(knowledgeService.search).toHaveBeenCalledWith(
-      'What are your hours?',
-    );
-    expect(llmChatClient.buildMessages).toHaveBeenCalledWith(
-      expect.any(Array),
-      ['We are open 9-5.'],
-    );
-  });
-
-  it('falls back to no reference chunks if knowledge retrieval fails', async () => {
-    knowledgeService.search.mockRejectedValue(
-      new Error('relation "knowledge_chunks" does not exist'),
-    );
+  it('builds the prompt from the conversation only (no knowledge)', async () => {
     llmChatClient.complete.mockResolvedValue(assistantMessage('Hi there!'));
 
-    const result = await service.sendMessage({ message: 'Hello' });
+    await service.sendMessage({ message: 'Hello' });
 
-    expect(result.reply).toBe('Hi there!');
-    expect(llmChatClient.buildMessages).toHaveBeenCalledWith(
-      expect.any(Array),
-      [],
-    );
+    expect(llmChatClient.buildMessages).toHaveBeenCalledWith([
+      { role: 'user', text: 'Hello' },
+    ]);
   });
 
   it('replies gracefully and persists nothing when the LLM call fails', async () => {
