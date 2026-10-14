@@ -9,6 +9,7 @@ import { PublishBanner } from "@/components/publish-banner";
 const TITLES: { prefix: string; title: string }[] = [
   { prefix: "/app/chatbot", title: "Chatbot" },
   { prefix: "/app/knowledge", title: "Knowledge" },
+  { prefix: "/app/products", title: "Products" },
   { prefix: "/app/settings", title: "Settings" },
   { prefix: "/admin/conversations", title: "Conversations" },
   { prefix: "/admin/settings", title: "Settings" },

@@ -2,21 +2,16 @@
 
 import { useState } from "react";
 import { MailWarning } from "lucide-react";
+import { OnboardingChecklist } from "@/components/onboarding-checklist";
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { apiFetch, ApiError } from "@/lib/api";
 import { useSession } from "@/lib/session";
 import { toastError, toastSuccess } from "@/lib/toast";
 
 /**
- * M1-27 home. The onboarding checklist replaces the "what's next" card in
- * M2-17 (D-3 §3.1).
+ * Home (M1-27): the onboarding checklist (M2-17, D-3 §3.1) until the
+ * chatbot is set up and published.
  */
 export default function AppHomePage() {
   const { me } = useSession();
@@ -35,16 +30,7 @@ export default function AppHomePage() {
 
       {!me.user.emailVerifiedAt && <VerifyEmailBanner email={me.user.email} />}
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Your chatbot is ready to set up</CardTitle>
-          <CardDescription>
-            Next you&apos;ll add your business details, FAQs, policies and
-            products, then put the chat widget on your website. These screens
-            are coming soon.
-          </CardDescription>
-        </CardHeader>
-      </Card>
+      {me.activeWorkspace && <OnboardingChecklist key={me.activeWorkspace.id} />}
     </div>
   );
 }
