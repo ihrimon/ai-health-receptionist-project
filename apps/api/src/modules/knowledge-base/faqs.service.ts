@@ -12,6 +12,7 @@ import {
 import { requireTenant } from '../../tenancy/tenant-context';
 import { TENANT_PRISMA, type TenantPrisma } from '../../tenancy/tenant-prisma';
 import { ChatbotService } from '../chatbot/chatbot.service';
+import { KnowledgeIngestQueue } from '../knowledge/knowledge-ingest.queue';
 import { limitReached, orNotFound } from './knowledge-errors';
 
 const FAQ_FIELDS = {
@@ -24,14 +25,15 @@ const FAQ_FIELDS = {
 } as const;
 
 /**
- * The chatbot's FAQs (D-2 §2.3). Saved FAQs are live right away; indexing
- * them for search arrives with M2-13.
+ * The chatbot's FAQs (D-2 §2.3). Saved FAQs are live right away and are
+ * indexed for search in the background (M2-13).
  */
 @Injectable()
 export class FaqsService {
   constructor(
     @Inject(TENANT_PRISMA) private readonly db: TenantPrisma,
     private readonly chatbot: ChatbotService,
+    private readonly ingestQueue: KnowledgeIngestQueue,
   ) {}
 
   async list() {
@@ -58,7 +60,7 @@ export class FaqsService {
     if (count >= KNOWLEDGE_LIMITS.faqs) {
       throw limitReached('FAQs', KNOWLEDGE_LIMITS.faqs);
     }
-    return this.db.faq.create({
+    const faq = await this.db.faq.create({
       data: {
         workspaceId: requireTenant().workspaceId,
         chatbotId,
@@ -67,17 +69,24 @@ export class FaqsService {
       },
       select: FAQ_FIELDS,
     });
+    await this.ingestQueue.enqueue('faq', faq.id);
+    return faq;
   }
 
   async update(id: string, input: UpdateFaq) {
     const chatbotId = await this.chatbot.currentId();
-    return orNotFound('FAQ', () =>
+    const faq = await orNotFound('FAQ', () =>
       this.db.faq.update({
         where: { id, chatbotId },
         data: input,
         select: FAQ_FIELDS,
       }),
     );
+    // Re-index on a text change (FR-7.5); its chunks go with a delete.
+    if (input.question !== undefined || input.answer !== undefined) {
+      await this.ingestQueue.enqueue('faq', id);
+    }
+    return faq;
   }
 
   async remove(id: string): Promise<void> {

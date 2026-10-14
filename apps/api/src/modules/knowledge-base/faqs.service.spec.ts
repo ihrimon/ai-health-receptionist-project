@@ -9,6 +9,7 @@ import { Prisma } from '../../generated/prisma/client';
 import { runWithTenant } from '../../tenancy/tenant-context';
 import { TENANT_PRISMA } from '../../tenancy/tenant-prisma';
 import { ChatbotService } from '../chatbot/chatbot.service';
+import { KnowledgeIngestQueue } from '../knowledge/knowledge-ingest.queue';
 import { FaqsService } from './faqs.service';
 
 const inTenant = <T>(fn: () => T): T =>
@@ -22,6 +23,7 @@ const notFound = () =>
 
 describe('FaqsService', () => {
   let service: FaqsService;
+  let ingestQueue: { enqueue: jest.Mock };
   let faq: {
     findMany: jest.Mock;
     count: jest.Mock;
@@ -40,6 +42,7 @@ describe('FaqsService', () => {
       update: jest.fn().mockResolvedValue({}),
       delete: jest.fn().mockResolvedValue({}),
     };
+    ingestQueue = { enqueue: jest.fn().mockResolvedValue(undefined) };
     const db = {
       faq,
       $transaction: jest.fn((fn: (tx: { faq: typeof faq }) => unknown) =>
@@ -54,6 +57,7 @@ describe('FaqsService', () => {
           provide: ChatbotService,
           useValue: { currentId: () => Promise.resolve('bot-1') },
         },
+        { provide: KnowledgeIngestQueue, useValue: ingestQueue },
       ],
     }).compile();
     service = module.get(FaqsService);
@@ -128,6 +132,29 @@ describe('FaqsService', () => {
   it('passes other database errors through', async () => {
     faq.delete.mockRejectedValue(new Error('connection lost'));
     await expect(service.remove('x')).rejects.toThrow('connection lost');
+  });
+
+  describe('re-indexing (M2-13)', () => {
+    it('queues a new FAQ', async () => {
+      faq.create.mockResolvedValue({ id: 'faq-1' });
+
+      await inTenant(() => service.create({ question: 'Q', answer: 'A' }));
+
+      expect(ingestQueue.enqueue).toHaveBeenCalledWith('faq', 'faq-1');
+    });
+
+    it('queues an FAQ whose question or answer changed', async () => {
+      await service.update('faq-1', { answer: 'New' });
+      expect(ingestQueue.enqueue).toHaveBeenCalledWith('faq', 'faq-1');
+    });
+
+    it("doesn't re-index on reorder", async () => {
+      faq.findMany.mockResolvedValue([{ id: 'a' }, { id: 'b' }]);
+
+      await service.reorder(['b', 'a']);
+
+      expect(ingestQueue.enqueue).not.toHaveBeenCalled();
+    });
   });
 
   describe('reorder', () => {

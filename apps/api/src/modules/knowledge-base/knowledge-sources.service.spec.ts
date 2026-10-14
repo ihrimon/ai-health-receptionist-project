@@ -78,7 +78,7 @@ describe('KnowledgeSourcesService and CustomAnswersService', () => {
 
       await inTenant(() => sources.createText(page));
 
-      expect(ingestQueue.enqueue).toHaveBeenCalledWith('src-1');
+      expect(ingestQueue.enqueue).toHaveBeenCalledWith('source', 'src-1');
 
       expect(knowledgeSource.create).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -110,7 +110,7 @@ describe('KnowledgeSourcesService and CustomAnswersService', () => {
 
       await sources.updateText('src-1', { content: 'New' });
 
-      expect(ingestQueue.enqueue).toHaveBeenCalledWith('src-1');
+      expect(ingestQueue.enqueue).toHaveBeenCalledWith('source', 'src-1');
 
       expect(knowledgeSource.update).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -140,7 +140,7 @@ describe('KnowledgeSourcesService and CustomAnswersService', () => {
           data: { status: 'QUEUED', error: null },
         }),
       );
-      expect(ingestQueue.enqueue).toHaveBeenCalledWith('src-1');
+      expect(ingestQueue.enqueue).toHaveBeenCalledWith('source', 'src-1');
     });
 
     it("is a 404 for a missing (or another workspace's) source", async () => {
@@ -168,7 +168,7 @@ describe('KnowledgeSourcesService and CustomAnswersService', () => {
 
       await inTenant(() => sources.uploadDocument(pdf));
 
-      expect(ingestQueue.enqueue).toHaveBeenCalledWith('src-9');
+      expect(ingestQueue.enqueue).toHaveBeenCalledWith('source', 'src-9');
 
       expect(storage.put).toHaveBeenCalledWith(
         'documents',
@@ -280,8 +280,23 @@ describe('KnowledgeSourcesService and CustomAnswersService', () => {
       expect(customAnswer.create).not.toHaveBeenCalled();
     });
 
+    it('queues a new custom answer, and a changed trigger question', async () => {
+      customAnswer.create.mockResolvedValue({ id: 'ca-1' });
+
+      await inTenant(() => customAnswers.create(answer));
+      await customAnswers.update('ca-1', { triggerQuestion: 'New Q' });
+
+      expect(ingestQueue.enqueue.mock.calls).toEqual([
+        ['customAnswer', 'ca-1'],
+        ['customAnswer', 'ca-1'],
+      ]);
+    });
+
     it('updates only within the chatbot', async () => {
       await customAnswers.update('ca-1', { isActive: false });
+
+      // Switching an answer on or off needs no new embedding.
+      expect(ingestQueue.enqueue).not.toHaveBeenCalled();
 
       expect(customAnswer.update).toHaveBeenCalledWith(
         expect.objectContaining({
