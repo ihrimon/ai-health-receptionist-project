@@ -1,7 +1,6 @@
-import { InjectQueue } from '@nestjs/bullmq';
-import { Injectable } from '@nestjs/common';
-import type { JobsOptions, Queue } from 'bullmq';
-import { QUEUE_NAMES } from '../../queue/queue.constants';
+import { Inject, Injectable } from '@nestjs/common';
+import type { PgBoss, SendOptions } from 'pg-boss';
+import { PG_BOSS, QUEUE_NAMES } from '../../queue/queue.constants';
 import { requireTenant } from '../../tenancy/tenant-context';
 
 /**
@@ -21,20 +20,17 @@ export interface IngestJobData {
 /** Attempts per job; IngestErrors stop early (retrying can't help). */
 export const INGEST_ATTEMPTS = 3;
 
-const JOB_OPTIONS: JobsOptions = {
-  attempts: INGEST_ATTEMPTS,
-  backoff: { type: 'exponential', delay: 5000 },
-  removeOnComplete: 1000,
-  removeOnFail: 1000,
+/** Retries after 5 s, then about 10 s (pg-boss backs off exponentially). */
+const JOB_OPTIONS: SendOptions = {
+  retryLimit: INGEST_ATTEMPTS - 1,
+  retryDelay: 5,
+  retryBackoff: true,
 };
 
-/** Queues knowledge for indexing (M2-11, M2-13). */
+/** Queues knowledge for indexing (M2-11, M2-13), with pg-boss. */
 @Injectable()
 export class KnowledgeIngestQueue {
-  constructor(
-    @InjectQueue(QUEUE_NAMES.KNOWLEDGE_INGEST)
-    private readonly queue: Queue<IngestJobData>,
-  ) {}
+  constructor(@Inject(PG_BOSS) private readonly boss: PgBoss) {}
 
   /**
    * One job per save, not one per item: an edit made while an older job
@@ -47,18 +43,19 @@ export class KnowledgeIngestQueue {
     id: string,
     workspaceId = requireTenant().workspaceId,
   ): Promise<void> {
-    await this.queue.add(kind, { workspaceId, kind, id }, JOB_OPTIONS);
+    const data: IngestJobData = { workspaceId, kind, id };
+    await this.boss.send(QUEUE_NAMES.KNOWLEDGE_INGEST, data, JOB_OPTIONS);
   }
 
   /** Several items in one round trip, e.g. after a CSV import. */
   async enqueueMany(kind: IngestKind, ids: string[]): Promise<void> {
     if (ids.length === 0) return;
     const { workspaceId } = requireTenant();
-    await this.queue.addBulk(
+    await this.boss.insert(
+      QUEUE_NAMES.KNOWLEDGE_INGEST,
       ids.map((id) => ({
-        name: kind,
-        data: { workspaceId, kind, id },
-        opts: JOB_OPTIONS,
+        data: { workspaceId, kind, id } satisfies IngestJobData,
+        ...JOB_OPTIONS,
       })),
     );
   }

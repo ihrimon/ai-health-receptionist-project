@@ -1,8 +1,13 @@
-import { Processor, WorkerHost } from '@nestjs/bullmq';
-import { Logger } from '@nestjs/common';
-import type { Job } from 'bullmq';
+import {
+  Inject,
+  Injectable,
+  Logger,
+  OnApplicationBootstrap,
+} from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import type { PgBoss } from 'pg-boss';
 import { WorkspaceRole } from '../../generated/prisma/client';
-import { QUEUE_NAMES } from '../../queue/queue.constants';
+import { PG_BOSS, QUEUE_NAMES } from '../../queue/queue.constants';
 import { runWithTenant } from '../../tenancy/tenant-context';
 import { IngestError } from './ingest-error';
 import { type IngestJobData, INGEST_ATTEMPTS } from './knowledge-ingest.queue';
@@ -11,21 +16,47 @@ import {
   KnowledgeIngestService,
 } from './knowledge-ingest.service';
 
+/** What a worker needs of a pg-boss job. */
+export interface IngestJob {
+  data: IngestJobData;
+  /** 0 on the first attempt, 1 on the first retry, … */
+  retryCount: number;
+}
+
 /**
  * Runs `knowledge-ingest` jobs (M2-11) inside the API process for now; a
  * separate worker process comes with M7-7. One at a time: embedding is
  * CPU-heavy and runs on the same machine as the API.
  */
-@Processor(QUEUE_NAMES.KNOWLEDGE_INGEST, { concurrency: 1 })
-export class KnowledgeIngestProcessor extends WorkerHost {
+@Injectable()
+export class KnowledgeIngestProcessor implements OnApplicationBootstrap {
   private readonly logger = new Logger(KnowledgeIngestProcessor.name);
 
-  constructor(private readonly ingest: KnowledgeIngestService) {
-    super();
+  constructor(
+    private readonly ingest: KnowledgeIngestService,
+    @Inject(PG_BOSS) private readonly boss: PgBoss,
+    private readonly config: ConfigService,
+  ) {}
+
+  async onApplicationBootstrap(): Promise<void> {
+    await this.boss.work<IngestJobData>(
+      QUEUE_NAMES.KNOWLEDGE_INGEST,
+      {
+        batchSize: 1,
+        localConcurrency: 1,
+        pollingIntervalSeconds:
+          this.config.get<number>('queue.pollingIntervalSeconds') ?? 2,
+      },
+      async (jobs) => {
+        for (const job of jobs) await this.process(job);
+      },
+    );
   }
 
-  async process(job: Job<IngestJobData>): Promise<void> {
+  /** Throws to let pg-boss retry the job with backoff. */
+  async process(job: IngestJob): Promise<void> {
     const { workspaceId, kind, id } = job.data;
+    const attempt = job.retryCount + 1;
     // No request here, so the job sets the workspace context itself; the
     // tenant client and raw SQL then only touch that workspace's rows.
     await runWithTenant(
@@ -42,14 +73,13 @@ export class KnowledgeIngestProcessor extends WorkerHost {
             await this.ingest.fail(kind, id, err.message);
             return; // The same file would fail again; no retry.
           }
-          const attempts = job.opts.attempts ?? INGEST_ATTEMPTS;
-          if (job.attemptsMade + 1 >= attempts) {
+          if (attempt >= INGEST_ATTEMPTS) {
             await this.ingest.fail(kind, id, INGEST_FAILED_MESSAGE);
           }
           this.logger.error(
-            `Indexing ${kind} ${id} failed (attempt ${job.attemptsMade + 1}/${attempts}): ${err instanceof Error ? err.message : String(err)}`,
+            `Indexing ${kind} ${id} failed (attempt ${attempt}/${INGEST_ATTEMPTS}): ${err instanceof Error ? err.message : String(err)}`,
           );
-          throw err; // Lets BullMQ retry with backoff.
+          throw err;
         }
       },
     );

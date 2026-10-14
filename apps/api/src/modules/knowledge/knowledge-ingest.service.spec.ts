@@ -1,12 +1,15 @@
 import { Test } from '@nestjs/testing';
-import type { Job } from 'bullmq';
 import { StorageService } from '../../storage/storage.service';
 import { requireTenant, runWithTenant } from '../../tenancy/tenant-context';
 import { TENANT_PRISMA } from '../../tenancy/tenant-prisma';
 import { EmbeddingService } from './embedding.service';
 import { IngestError } from './ingest-error';
-import { KnowledgeIngestProcessor } from './knowledge-ingest.processor';
-import type { IngestJobData } from './knowledge-ingest.queue';
+import { ConfigService } from '@nestjs/config';
+import { PG_BOSS, QUEUE_NAMES } from '../../queue/queue.constants';
+import {
+  type IngestJob,
+  KnowledgeIngestProcessor,
+} from './knowledge-ingest.processor';
 import {
   INGEST_FAILED_MESSAGE,
   KnowledgeIngestService,
@@ -157,26 +160,45 @@ describe('KnowledgeIngestService', () => {
 describe('KnowledgeIngestProcessor', () => {
   let processor: KnowledgeIngestProcessor;
   let ingest: { ingest: jest.Mock; fail: jest.Mock };
+  let boss: { work: jest.Mock };
 
-  const job = (attemptsMade: number) =>
-    ({
-      data: { workspaceId: 'ws-1', kind: 'source', id: 'src-1' },
-      attemptsMade,
-      opts: { attempts: 3 },
-    }) as unknown as Job<IngestJobData>;
+  /** A pg-boss job on its first attempt (retryCount 0) or a retry. */
+  const job = (retryCount: number): IngestJob => ({
+    data: { workspaceId: 'ws-1', kind: 'source', id: 'src-1' },
+    retryCount,
+  });
 
   beforeEach(async () => {
     ingest = {
       ingest: jest.fn().mockResolvedValue(undefined),
       fail: jest.fn().mockResolvedValue(undefined),
     };
+    boss = { work: jest.fn().mockResolvedValue('worker-1') };
     const module = await Test.createTestingModule({
       providers: [
         KnowledgeIngestProcessor,
         { provide: KnowledgeIngestService, useValue: ingest },
+        { provide: PG_BOSS, useValue: boss },
+        { provide: ConfigService, useValue: { get: () => 1 } },
       ],
     }).compile();
     processor = module.get(KnowledgeIngestProcessor);
+  });
+
+  it('works the knowledge-ingest queue one job at a time', async () => {
+    await processor.onApplicationBootstrap();
+
+    expect(boss.work).toHaveBeenCalledWith(
+      QUEUE_NAMES.KNOWLEDGE_INGEST,
+      { batchSize: 1, localConcurrency: 1, pollingIntervalSeconds: 1 },
+      expect.any(Function),
+    );
+    // The handler processes each job of the batch it gets.
+    const handler = (boss.work.mock.calls[0] as unknown[])[2] as (
+      jobs: IngestJob[],
+    ) => Promise<void>;
+    await handler([job(0)]);
+    expect(ingest.ingest).toHaveBeenCalledWith('source', 'src-1');
   });
 
   it("runs the job in the source's workspace", async () => {

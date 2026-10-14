@@ -5,7 +5,6 @@ import { AppService } from './app.service';
 import configuration from './config/configuration';
 import { DatabaseModule } from './database/database.module';
 import { QueueModule } from './queue/queue.module';
-import { RedisModule } from './redis/redis.module';
 import { StorageModule } from './storage/storage.module';
 import { RateLimitModule } from './rate-limit/rate-limit.module';
 import { TenancyModule } from './tenancy/tenancy.module';
@@ -28,7 +27,6 @@ import { ProductsModule } from './modules/products/products.module';
     }),
     DatabaseModule,
     QueueModule,
-    RedisModule,
     StorageModule,
     RateLimitModule,
     TenancyModule,
