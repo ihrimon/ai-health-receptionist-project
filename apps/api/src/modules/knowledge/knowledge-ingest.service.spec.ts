@@ -71,7 +71,7 @@ describe('KnowledgeIngestService', () => {
   });
 
   it('indexes a policy page and marks it READY', async () => {
-    await inTenant(() => service.ingest('src-1'));
+    await inTenant(() => service.ingest('source', 'src-1'));
 
     expect(knowledgeSource.update).toHaveBeenNthCalledWith(1, {
       where: { id: 'src-1' },
@@ -109,7 +109,7 @@ describe('KnowledgeIngestService', () => {
       .mockResolvedValueOnce({ updatedAt: STARTED });
     storage.get.mockResolvedValue(Buffer.from('Open 9 to 5.'));
 
-    await inTenant(() => service.ingest('src-1'));
+    await inTenant(() => service.ingest('source', 'src-1'));
 
     expect(storage.get).toHaveBeenCalledWith(
       'workspaces/ws-1/documents/u/faq.txt',
@@ -126,7 +126,7 @@ describe('KnowledgeIngestService', () => {
       .mockResolvedValueOnce(policy)
       .mockResolvedValueOnce({ updatedAt: new Date('2026-10-14T10:00:05Z') });
 
-    await inTenant(() => service.ingest('src-1'));
+    await inTenant(() => service.ingest('source', 'src-1'));
 
     expect(replaceSourceChunks).not.toHaveBeenCalled();
     expect(knowledgeSource.update).toHaveBeenCalledTimes(1); // PROCESSING only
@@ -136,7 +136,7 @@ describe('KnowledgeIngestService', () => {
     knowledgeSource.findFirst.mockReset();
     knowledgeSource.findFirst.mockResolvedValue(null);
 
-    await inTenant(() => service.ingest('src-1'));
+    await inTenant(() => service.ingest('source', 'src-1'));
 
     expect(knowledgeSource.update).not.toHaveBeenCalled();
   });
@@ -148,9 +148,9 @@ describe('KnowledgeIngestService', () => {
       content: '  ',
     });
 
-    await expect(inTenant(() => service.ingest('src-1'))).rejects.toThrow(
-      IngestError,
-    );
+    await expect(
+      inTenant(() => service.ingest('source', 'src-1')),
+    ).rejects.toThrow(IngestError);
   });
 });
 
@@ -160,7 +160,7 @@ describe('KnowledgeIngestProcessor', () => {
 
   const job = (attemptsMade: number) =>
     ({
-      data: { workspaceId: 'ws-1', sourceId: 'src-1' },
+      data: { workspaceId: 'ws-1', kind: 'source', id: 'src-1' },
       attemptsMade,
       opts: { attempts: 3 },
     }) as unknown as Job<IngestJobData>;
@@ -196,6 +196,7 @@ describe('KnowledgeIngestProcessor', () => {
 
     await expect(processor.process(job(0))).resolves.toBeUndefined();
     expect(ingest.fail).toHaveBeenCalledWith(
+      'source',
       'src-1',
       'No readable text found.',
     );
@@ -208,6 +209,138 @@ describe('KnowledgeIngestProcessor', () => {
     expect(ingest.fail).not.toHaveBeenCalled();
 
     await expect(processor.process(job(2))).rejects.toThrow('storage down');
-    expect(ingest.fail).toHaveBeenCalledWith('src-1', INGEST_FAILED_MESSAGE);
+    expect(ingest.fail).toHaveBeenCalledWith(
+      'source',
+      'src-1',
+      INGEST_FAILED_MESSAGE,
+    );
+  });
+});
+
+describe('KnowledgeIngestService (FAQs, custom answers, products)', () => {
+  let service: KnowledgeIngestService;
+  let embed: jest.Mock;
+  let knowledge: {
+    replaceFaqChunks: jest.Mock;
+    setCustomAnswerEmbedding: jest.Mock;
+    setProductEmbedding: jest.Mock;
+  };
+  const model = () => ({ findFirst: jest.fn() });
+  let faq: ReturnType<typeof model>;
+  let customAnswer: ReturnType<typeof model>;
+  let product: ReturnType<typeof model>;
+
+  beforeEach(async () => {
+    faq = model();
+    customAnswer = model();
+    product = model();
+    embed = jest.fn().mockResolvedValue([0.3]);
+    knowledge = {
+      replaceFaqChunks: jest.fn(),
+      setCustomAnswerEmbedding: jest.fn(),
+      setProductEmbedding: jest.fn(),
+    };
+    const db = {
+      faq,
+      customAnswer,
+      product,
+      $transaction: jest.fn((fn: (tx: unknown) => unknown) =>
+        fn({ faq, customAnswer, product }),
+      ),
+    };
+    const module = await Test.createTestingModule({
+      providers: [
+        KnowledgeIngestService,
+        { provide: TENANT_PRISMA, useValue: db },
+        { provide: StorageService, useValue: {} },
+        { provide: EmbeddingService, useValue: { embed } },
+        { provide: KnowledgeService, useValue: knowledge },
+      ],
+    }).compile();
+    service = module.get(KnowledgeIngestService);
+  });
+
+  it('indexes an FAQ as its question and answer together', async () => {
+    const row = {
+      chatbotId: 'bot-1',
+      question: 'Do you ship?',
+      answer: 'Yes.',
+    };
+    faq.findFirst.mockResolvedValue(row);
+
+    await inTenant(() => service.ingest('faq', 'faq-1'));
+
+    expect(knowledge.replaceFaqChunks).toHaveBeenCalledWith(
+      expect.anything(),
+      'bot-1',
+      'faq-1',
+      [
+        {
+          content: 'Do you ship?\n\nYes.',
+          metadata: { title: 'Do you ship?', headingPath: [] },
+          embedding: [0.3],
+        },
+      ],
+    );
+  });
+
+  it("embeds a custom answer's trigger question", async () => {
+    customAnswer.findFirst.mockResolvedValue({
+      triggerQuestion: 'Who owns it?',
+    });
+
+    await inTenant(() => service.ingest('customAnswer', 'ca-1'));
+
+    expect(embed).toHaveBeenCalledWith('Who owns it?');
+    expect(knowledge.setCustomAnswerEmbedding).toHaveBeenCalledWith(
+      expect.anything(),
+      'ca-1',
+      [0.3],
+    );
+  });
+
+  it("embeds a product's name, category and description", async () => {
+    product.findFirst.mockResolvedValue({
+      name: 'Trail shoe',
+      category: 'Footwear',
+      description: null,
+    });
+
+    await inTenant(() => service.ingest('product', 'p-1'));
+
+    expect(embed).toHaveBeenCalledWith('Trail shoe\nFootwear');
+    expect(knowledge.setProductEmbedding).toHaveBeenCalledWith(
+      expect.anything(),
+      'p-1',
+      [0.3],
+    );
+  });
+
+  it('writes nothing when the text changed while it was embedded', async () => {
+    product.findFirst
+      .mockResolvedValueOnce({ name: 'Old', category: null, description: null })
+      .mockResolvedValueOnce({
+        name: 'New',
+        category: null,
+        description: null,
+      });
+
+    await inTenant(() => service.ingest('product', 'p-1'));
+
+    expect(knowledge.setProductEmbedding).not.toHaveBeenCalled();
+  });
+
+  it('does nothing for an item deleted since it was queued', async () => {
+    faq.findFirst.mockResolvedValue(null);
+
+    await inTenant(() => service.ingest('faq', 'faq-1'));
+
+    expect(embed).not.toHaveBeenCalled();
+  });
+
+  it('only sources have a FAILED status to set', async () => {
+    await expect(
+      inTenant(() => service.fail('product', 'p-1', 'x')),
+    ).resolves.toBeUndefined();
   });
 });

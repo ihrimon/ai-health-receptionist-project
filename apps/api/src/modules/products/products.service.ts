@@ -11,6 +11,7 @@ import { Prisma } from '../../generated/prisma/client';
 import { requireTenant } from '../../tenancy/tenant-context';
 import { TENANT_PRISMA, type TenantPrisma } from '../../tenancy/tenant-prisma';
 import { ChatbotService } from '../chatbot/chatbot.service';
+import { KnowledgeIngestQueue } from '../knowledge/knowledge-ingest.queue';
 import { limitReached, orNotFound } from '../knowledge-base/knowledge-errors';
 import { decodeCursor, encodeCursor } from './product-cursor';
 import { csvRowToProduct, parseProductCsv } from './product-csv';
@@ -67,6 +68,7 @@ export class ProductsService {
   constructor(
     @Inject(TENANT_PRISMA) private readonly db: TenantPrisma,
     private readonly chatbot: ChatbotService,
+    private readonly ingestQueue: KnowledgeIngestQueue,
   ) {}
 
   /** Newest first, `limit` per page; `nextCursor` is null on the last page. */
@@ -132,6 +134,7 @@ export class ProductsService {
         },
         select: PRODUCT_FIELDS,
       });
+      await this.ingestQueue.enqueue('product', row.id);
       return toView(row);
     } catch (err) {
       if (isDuplicateSku(err)) throw duplicateSku();
@@ -149,6 +152,14 @@ export class ProductsService {
           select: PRODUCT_FIELDS,
         }),
       );
+      // Only name, category and description are embedded.
+      if (
+        input.name !== undefined ||
+        input.category !== undefined ||
+        input.description !== undefined
+      ) {
+        await this.ingestQueue.enqueue('product', id);
+      }
       return toView(row);
     } catch (err) {
       if (isDuplicateSku(err)) throw duplicateSku();
@@ -198,6 +209,7 @@ export class ProductsService {
       result.errors.push({ row, message });
     };
     const seenSkus = new Set<string>();
+    const savedIds: string[] = [];
     let total = count;
 
     // One row at a time, so a failing row doesn't undo the others.
@@ -228,6 +240,7 @@ export class ProductsService {
             data: fields,
             select: { id: true },
           });
+          savedIds.push(existingId);
           result.updated++;
         } else if (total >= KNOWLEDGE_LIMITS.products) {
           fail(
@@ -235,7 +248,7 @@ export class ProductsService {
             `A chatbot can have at most ${KNOWLEDGE_LIMITS.products} products`,
           );
         } else {
-          await this.db.product.create({
+          const created = await this.db.product.create({
             data: {
               workspaceId,
               chatbotId,
@@ -244,6 +257,7 @@ export class ProductsService {
             },
             select: { id: true },
           });
+          savedIds.push(created.id);
           result.created++;
           total++;
         }
@@ -256,6 +270,7 @@ export class ProductsService {
         throw err;
       }
     }
+    await this.ingestQueue.enqueueMany('product', savedIds);
     return result;
   }
 }

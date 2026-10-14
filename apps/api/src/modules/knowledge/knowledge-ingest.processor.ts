@@ -25,7 +25,7 @@ export class KnowledgeIngestProcessor extends WorkerHost {
   }
 
   async process(job: Job<IngestJobData>): Promise<void> {
-    const { workspaceId, sourceId } = job.data;
+    const { workspaceId, kind, id } = job.data;
     // No request here, so the job sets the workspace context itself; the
     // tenant client and raw SQL then only touch that workspace's rows.
     await runWithTenant(
@@ -36,18 +36,18 @@ export class KnowledgeIngestProcessor extends WorkerHost {
       },
       async () => {
         try {
-          await this.ingest.ingest(sourceId);
+          await this.ingest.ingest(kind, id);
         } catch (err) {
           if (err instanceof IngestError) {
-            await this.ingest.fail(sourceId, err.message);
+            await this.ingest.fail(kind, id, err.message);
             return; // The same file would fail again; no retry.
           }
           const attempts = job.opts.attempts ?? INGEST_ATTEMPTS;
           if (job.attemptsMade + 1 >= attempts) {
-            await this.ingest.fail(sourceId, INGEST_FAILED_MESSAGE);
+            await this.ingest.fail(kind, id, INGEST_FAILED_MESSAGE);
           }
           this.logger.error(
-            `Indexing source ${sourceId} failed (attempt ${job.attemptsMade + 1}/${attempts}): ${err instanceof Error ? err.message : String(err)}`,
+            `Indexing ${kind} ${id} failed (attempt ${job.attemptsMade + 1}/${attempts}): ${err instanceof Error ? err.message : String(err)}`,
           );
           throw err; // Lets BullMQ retry with backoff.
         }

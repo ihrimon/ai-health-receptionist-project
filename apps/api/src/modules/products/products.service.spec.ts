@@ -9,6 +9,7 @@ import { Prisma } from '../../generated/prisma/client';
 import { runWithTenant } from '../../tenancy/tenant-context';
 import { TENANT_PRISMA } from '../../tenancy/tenant-prisma';
 import { ChatbotService } from '../chatbot/chatbot.service';
+import { KnowledgeIngestQueue } from '../knowledge/knowledge-ingest.queue';
 import { decodeCursor, encodeCursor } from './product-cursor';
 import { ProductsService } from './products.service';
 
@@ -46,6 +47,7 @@ describe('ProductsService', () => {
     delete: jest.Mock;
   };
   let chatbot: { currentId: jest.Mock; defaultCurrency: jest.Mock };
+  let ingestQueue: { enqueue: jest.Mock; enqueueMany: jest.Mock };
 
   beforeEach(async () => {
     product = {
@@ -57,6 +59,10 @@ describe('ProductsService', () => {
       update: jest.fn().mockResolvedValue(row(1)),
       delete: jest.fn().mockResolvedValue({}),
     };
+    ingestQueue = {
+      enqueue: jest.fn().mockResolvedValue(undefined),
+      enqueueMany: jest.fn().mockResolvedValue(undefined),
+    };
     chatbot = {
       currentId: jest.fn().mockResolvedValue('bot-1'),
       defaultCurrency: jest.fn().mockResolvedValue('BDT'),
@@ -66,6 +72,7 @@ describe('ProductsService', () => {
         ProductsService,
         { provide: TENANT_PRISMA, useValue: { product } },
         { provide: ChatbotService, useValue: chatbot },
+        { provide: KnowledgeIngestQueue, useValue: ingestQueue },
       ],
     }).compile();
     service = module.get(ProductsService);
@@ -257,6 +264,42 @@ describe('ProductsService', () => {
       expect(result).toMatchObject({ created: 1, failed: 1 });
       expect(result.errors).toEqual([
         { row: 2, message: 'SKU A already exists' },
+      ]);
+    });
+  });
+
+  describe('re-indexing (M2-13)', () => {
+    it('queues a new product', async () => {
+      product.create.mockResolvedValue({ ...row(1), price: null });
+
+      await inTenant(() => service.create(newProduct));
+
+      expect(ingestQueue.enqueue).toHaveBeenCalledWith('product', row(1).id);
+    });
+
+    it('queues a product whose name, category or description changed', async () => {
+      await service.update('p-1', { description: 'Waterproof' });
+      expect(ingestQueue.enqueue).toHaveBeenCalledWith('product', 'p-1');
+    });
+
+    it("doesn't re-index a price or stock change", async () => {
+      await service.update('p-1', { price: '9.99', stockQuantity: 3 });
+      expect(ingestQueue.enqueue).not.toHaveBeenCalled();
+    });
+
+    it('queues every product a CSV import saved, in one go', async () => {
+      product.findMany.mockResolvedValue([{ id: 'p-old', sku: 'OLD' }]);
+      product.create.mockResolvedValue({ id: 'p-new' });
+
+      await inTenant(() =>
+        service.importCsv(
+          Buffer.from('sku,name\nOLD,Old shoe\nNEW,New shoe\nBAD,'),
+        ),
+      );
+
+      expect(ingestQueue.enqueueMany).toHaveBeenCalledWith('product', [
+        'p-old',
+        'p-new',
       ]);
     });
   });
