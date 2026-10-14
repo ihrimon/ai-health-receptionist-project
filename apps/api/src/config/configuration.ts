@@ -76,7 +76,8 @@ function buildDatabaseUrl(): string {
     process.env.POSTGRES_PASSWORD ?? 'brainstack',
   );
   const host = process.env.POSTGRES_HOST ?? 'localhost';
-  const port = process.env.POSTGRES_PORT ?? '5432';
+  // The compose file's host port (see .env.example for why not 5432).
+  const port = process.env.POSTGRES_PORT ?? '55432';
   const name = process.env.POSTGRES_DB ?? 'brainstack_booking';
   return `postgresql://${user}:${password}@${host}:${port}/${name}`;
 }
