@@ -16,7 +16,16 @@ export const KNOWLEDGE_LIMITS = {
   /** POLICY and TEXT pages together. */
   textSources: 50,
   products: 200,
+  /** Uploaded documents (lead's call, 2026-10-14). */
+  documents: 20,
 } as const;
+
+/** Largest document upload, 10 MB (D-2 §2.3, beta). */
+export const DOCUMENT_MAX_BYTES = 10 * 1024 * 1024;
+
+/** Document types the upload accepts (D-2 §2.3), by file extension. */
+export const DOCUMENT_EXTENSIONS = ['pdf', 'docx', 'txt', 'md'] as const;
+export type DocumentExtension = (typeof DOCUMENT_EXTENSIONS)[number];
 
 /** At least one field: an empty PATCH is a mistake, not a no-op. */
 function hasAnyField(value: object): boolean {
@@ -79,6 +88,15 @@ export const updateTextSourceSchema = z
   .partial()
   .refine(hasAnyField, NOTHING_TO_UPDATE);
 
+/**
+ * The text fields of a document upload (multipart, next to `file`). The
+ * title defaults to the file name.
+ */
+export const uploadDocumentSchema = z.strictObject({
+  title: text(1, 200).optional(),
+});
+
+export type UploadDocument = z.output<typeof uploadDocumentSchema>;
 export type CreateFaq = z.output<typeof createFaqSchema>;
 export type UpdateFaq = z.output<typeof updateFaqSchema>;
 export type FaqOrder = z.output<typeof faqOrderSchema>;
