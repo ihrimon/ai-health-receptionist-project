@@ -3,6 +3,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Toaster } from "@/components/ui/toast";
 import { SiteHeader } from "@/components/site-header";
 import { WorkspaceSidebar } from "@/components/workspace-sidebar";
+import { ChatbotProvider } from "@/lib/chatbot";
 import { SessionProvider } from "@/lib/session";
 
 function LoadingShell() {
@@ -21,16 +22,18 @@ function LoadingShell() {
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   return (
     <SessionProvider fallback={<LoadingShell />}>
-      <SidebarProvider>
-        <WorkspaceSidebar />
-        <SidebarInset className="min-h-0">
-          <SiteHeader />
-          <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
-            {children}
-          </div>
-        </SidebarInset>
-        <Toaster />
-      </SidebarProvider>
+      <ChatbotProvider>
+        <SidebarProvider>
+          <WorkspaceSidebar />
+          <SidebarInset className="min-h-0">
+            <SiteHeader withPublishBanner />
+            <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
+              {children}
+            </div>
+          </SidebarInset>
+          <Toaster />
+        </SidebarProvider>
+      </ChatbotProvider>
     </SessionProvider>
   );
 }
