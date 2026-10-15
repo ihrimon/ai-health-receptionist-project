@@ -1012,7 +1012,7 @@ describe('Tenant isolation (M1-25)', () => {
     it("answers from the caller's knowledge only, never another workspace's", async () => {
       const res = await as(cookies.ownerA)
         .post('/v1/chatbot/preview/messages')
-        .send({ message: 'What is the warehouse code?' })
+        .send({ message: 'When do you open? What is the warehouse code?' })
         .expect(200);
       const out = chatEvents(res);
       expect(out.reply).toBe('stub answer');
@@ -1029,7 +1029,7 @@ describe('Tenant isolation (M1-25)', () => {
     it("B's preview finds B's knowledge, not A's", async () => {
       const res = await as(cookies.ownerB)
         .post('/v1/chatbot/preview/messages')
-        .send({ message: 'When do you open?' })
+        .send({ message: 'What is the warehouse code? When do you open?' })
         .expect(200);
       const titles = chatEvents(res).sources.map((s) => s.title);
       expect(titles).toContain('Preview B secret');
@@ -1048,7 +1048,7 @@ describe('Tenant isolation (M1-25)', () => {
 
       const second = await as(cookies.ownerA)
         .post('/v1/chatbot/preview/messages')
-        .send({ message: 'And on Sunday?', conversationId })
+        .send({ message: 'When do you open on Sunday?', conversationId })
         .expect(200);
       expect(chatEvents(second).conversationId).toBe(conversationId);
       // The second turn was answered from the stored first one.
@@ -1081,6 +1081,34 @@ describe('Tenant isolation (M1-25)', () => {
         tokensIn: 100,
         tokensOut: 7,
       });
+    });
+
+    it('answers with the configured fallback, without the model, when nothing relevant is found (M3-10)', async () => {
+      const calls = fakeLlm.streamWith.mock.calls.length;
+      const res = await as(cookies.ownerA)
+        .post('/v1/chatbot/preview/messages')
+        .send({ message: 'Who painted the Mona Lisa?' })
+        .expect(200);
+      const out = chatEvents(res);
+
+      expect(out.done).toMatchObject({ answeredBy: 'fallback' });
+      expect(out.reply).not.toBe('stub answer');
+      expect(out.sources).toEqual([]);
+      expect(fakeLlm.streamWith.mock.calls.length).toBe(calls);
+
+      const stored = await prisma.message.findFirstOrThrow({
+        where: {
+          conversationId: out.conversationId as string,
+          role: 'ASSISTANT',
+        },
+      });
+      expect(stored).toMatchObject({
+        workspaceId: ids.a,
+        answeredBy: 'fallback',
+        model: null,
+        tokensIn: null,
+      });
+      expect(stored.content).toBe(out.reply);
     });
 
     it("another workspace can't see or continue the conversation", async () => {
@@ -1216,7 +1244,9 @@ describe('Tenant isolation (M1-25)', () => {
     it("answers without a login, from the chatbot's own workspace and key", async () => {
       const a = visitor(await publicIdOf(ids.botA));
       await a.config().expect(200);
-      const res = await a.send('What is the warehouse code?').expect(200);
+      const res = await a
+        .send('When do you open? What is the warehouse code?')
+        .expect(200);
       const out = chatEvents(res);
       expect(out.reply).toBe('stub answer');
       expect(out.conversationId).toEqual(expect.any(String));

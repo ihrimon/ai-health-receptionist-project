@@ -6,6 +6,9 @@ import { type FormEvent, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import {
+  handoffHref,
+  handoffLabel,
+  type Handoff,
   type PreviewMessage,
   sendPreviewMessage,
   uniqueSources,
@@ -48,10 +51,16 @@ export function PreviewChat({
     // The answer's bubble appears with its first piece and grows from there.
     let started = false;
     let sources: PreviewChatSource[] = [];
+    let handoff: Handoff | undefined;
     const showAnswer = (text: string) => {
       const replace = started;
       setMessages((current) => {
-        const answer: PreviewMessage = { role: "assistant", text, sources };
+        const answer: PreviewMessage = {
+          role: "assistant",
+          text,
+          sources,
+          handoff,
+        };
         return replace ? [...current.slice(0, -1), answer] : [...current, answer];
       });
     };
@@ -64,6 +73,9 @@ export function PreviewChat({
           text += event.text;
           showAnswer(text);
           started = true;
+        } else if (event.type === "handoff") {
+          handoff = event;
+          showAnswer(text);
         } else if (event.type === "done") {
           setConversationId(event.conversationId);
         } else if (event.type === "error") {
@@ -113,6 +125,16 @@ export function PreviewChat({
           return (
             <div key={i} className="space-y-1">
               <Bubble role={m.role}>{m.text}</Bubble>
+              {m.handoff && (
+                <a
+                  href={handoffHref(m.handoff)}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="ml-1 inline-block rounded-full border px-3 py-1 text-xs hover:bg-muted"
+                >
+                  {handoffLabel(m.handoff)}
+                </a>
+              )}
               {m.role === "assistant" && (
                 <div className="pl-1 text-xs text-muted-foreground">
                   <button

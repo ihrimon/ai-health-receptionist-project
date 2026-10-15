@@ -66,6 +66,7 @@ describe('PreviewChatService', () => {
         content: '30 days.',
         metadata: { title: 'Returns', headingPath: [], page: 2 },
         similarity: 0.8123,
+        keywordHit: true,
       },
     ]);
     llm.streamWith.mockImplementation(() => llmStream(['30 ', 'days.']));
@@ -198,6 +199,103 @@ describe('PreviewChatService', () => {
       type: 'done',
       conversationId: null,
       answeredBy: 'llm',
+    });
+  });
+
+  describe('grounding (M3-10)', () => {
+    const withHandoff = {
+      ...config,
+      behavior: {
+        ...config.behavior,
+        handoff: {
+          type: 'whatsapp' as const,
+          value: '+8801700000000',
+          label: 'Chat on WhatsApp',
+        },
+      },
+    };
+
+    it('sends the fallback itself, without calling the model, when nothing relevant was found', async () => {
+      knowledge.search.mockResolvedValue([]);
+      await service.send(
+        'user-1',
+        { message: 'What is the capital of France?', history: [] },
+        emit,
+      );
+
+      expect(events).toEqual([
+        { type: 'sources', sources: [] },
+        { type: 'delta', text: config.behavior.fallbackMessage },
+        {
+          type: 'done',
+          conversationId: 'conv-1',
+          answeredBy: 'fallback',
+        },
+      ]);
+      expect(llm.streamWith).not.toHaveBeenCalled();
+      expect(conversations.recordTurn).toHaveBeenCalledWith(
+        expect.objectContaining({
+          answer: expect.objectContaining({
+            answeredBy: 'fallback',
+            content: config.behavior.fallbackMessage,
+            model: null,
+          }) as object,
+        }),
+      );
+    });
+
+    it('adds the handoff after a fallback when the company set one', async () => {
+      knowledge.search.mockResolvedValue([]);
+      chatbot.draft.mockResolvedValue({ id: 'bot-1', config: withHandoff });
+      await send();
+
+      expect(events.map((e) => e.type)).toEqual([
+        'sources',
+        'delta',
+        'handoff',
+        'done',
+      ]);
+      expect(events[2]).toEqual({
+        type: 'handoff',
+        kind: 'whatsapp',
+        value: '+8801700000000',
+        label: 'Chat on WhatsApp',
+      });
+    });
+
+    it('sends no handoff when none is set, or when the answer was grounded', async () => {
+      await send();
+      expect(events.some((e) => e.type === 'handoff')).toBe(false);
+
+      events = [];
+      chatbot.draft.mockResolvedValue({ id: 'bot-1', config: withHandoff });
+      await send();
+      expect(events.some((e) => e.type === 'handoff')).toBe(false);
+    });
+
+    it('still lets the model answer a greeting that matched no knowledge', async () => {
+      knowledge.search.mockResolvedValue([]);
+      llm.streamWith.mockImplementation(() => llmStream(['Hello! ']));
+      await service.send('user-1', { message: 'Hi!', history: [] }, emit);
+
+      expect(llm.streamWith).toHaveBeenCalledTimes(1);
+      expect(events.at(-1)).toMatchObject({ type: 'done', answeredBy: 'llm' });
+    });
+
+    it('treats the model repeating the fallback message as a fallback, with the handoff', async () => {
+      chatbot.draft.mockResolvedValue({ id: 'bot-1', config: withHandoff });
+      llm.streamWith.mockImplementation(() =>
+        llmStream([withHandoff.behavior.fallbackMessage]),
+      );
+      await send();
+
+      expect(events.map((e) => e.type)).toEqual([
+        'sources',
+        'delta',
+        'handoff',
+        'done',
+      ]);
+      expect(events.at(-1)).toMatchObject({ answeredBy: 'fallback' });
     });
   });
 

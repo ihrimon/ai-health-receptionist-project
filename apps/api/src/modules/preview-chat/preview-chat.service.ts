@@ -24,6 +24,7 @@ import {
 } from '../knowledge/knowledge.service';
 import { LlmKeysService } from '../llm-keys/llm-keys.service';
 import { buildPreviewMessages } from './preview-prompt';
+import { isSmallTalk } from './small-talk';
 
 /** D-2 §5: preview messages per user per minute. */
 export const PREVIEW_RATE_LIMIT = { limit: 30, windowSeconds: 60 };
@@ -131,6 +132,14 @@ export class PreviewChatService {
     const sources = matches.map(toSource);
     if (context.includeSources) emit({ type: 'sources', sources });
 
+    // Grounding (M3-10): nothing relevant was found, so the server says so
+    // itself instead of letting the model guess. Greetings and thanks still
+    // go to the model: they need no knowledge.
+    if (matches.length === 0 && !isSmallTalk(request.message)) {
+      await this.sendFallback(botId, config, request, emit, context, startedAt);
+      return;
+    }
+
     const messages = buildPreviewMessages(
       config,
       matches,
@@ -179,7 +188,11 @@ export class PreviewChatService {
       reply = config.behavior.fallbackMessage;
       answeredBy = 'fallback';
       emit({ type: 'delta', text: reply });
+    } else if (reply === config.behavior.fallbackMessage) {
+      // The model followed the rule and gave the fallback itself.
+      answeredBy = 'fallback';
     }
+    if (answeredBy === 'fallback') emitHandoff(config, emit);
 
     const conversationId = await this.store(botId, request, context, {
       content: reply,
@@ -191,6 +204,30 @@ export class PreviewChatService {
       latencyMs: Date.now() - startedAt,
     });
     emit({ type: 'done', conversationId, answeredBy });
+  }
+
+  /** The configured fallback, with the handoff, without calling the model. */
+  private async sendFallback(
+    botId: string,
+    config: ChatbotConfig,
+    request: PreviewChatRequest,
+    emit: EmitChatEvent,
+    context: AnswerContext,
+    startedAt: number,
+  ): Promise<void> {
+    const reply = config.behavior.fallbackMessage;
+    if (!emit({ type: 'delta', text: reply })) return;
+    emitHandoff(config, emit);
+    const conversationId = await this.store(botId, request, context, {
+      content: reply,
+      sources: [],
+      answeredBy: 'fallback',
+      model: null,
+      tokensIn: null,
+      tokensOut: null,
+      latencyMs: Date.now() - startedAt,
+    });
+    emit({ type: 'done', conversationId, answeredBy: 'fallback' });
   }
 
   /** A storing failure must not lose the visitor's answer. */
@@ -215,6 +252,13 @@ export class PreviewChatService {
       return null;
     }
   }
+}
+
+/** The "contact us" button after a fallback, if the company set one. */
+function emitHandoff(config: ChatbotConfig, emit: EmitChatEvent): void {
+  const { type, value, label } = config.behavior.handoff;
+  if (type === 'none' || !value) return;
+  emit({ type: 'handoff', kind: type, value, label });
 }
 
 function toSource(match: KnowledgeMatch): PreviewChatSource {

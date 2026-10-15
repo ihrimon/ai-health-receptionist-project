@@ -65,6 +65,9 @@ export default () => ({
     embeddingModel:
       process.env.KNOWLEDGE_EMBEDDING_MODEL ?? 'Xenova/all-MiniLM-L6-v2',
     topK: parseInt(process.env.KNOWLEDGE_TOP_K ?? '3', 10),
+    // A chunk counts as relevant to a question when it matches one of its
+    // words or its cosine similarity is at least this (M3-10).
+    minSimilarity: parseFloat(process.env.KNOWLEDGE_MIN_SIMILARITY ?? '0.3'),
   },
 
   // Transactional email, sent via a plain Gmail account (SMTP through
