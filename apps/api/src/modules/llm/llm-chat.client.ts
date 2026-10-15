@@ -23,6 +23,7 @@ export type LlmStreamEvent =
       message: ChatCompletionMessage;
       usage?: LlmUsage;
       credentialId: string;
+      model: string;
     };
 
 export interface ChatTurn {
@@ -229,7 +230,11 @@ export class LlmChatClient {
             started = true;
             yield event;
           } else {
-            yield { ...event, credentialId: credential.id };
+            yield {
+              ...event,
+              credentialId: credential.id,
+              model: credential.model,
+            };
           }
         }
         return;

@@ -1,5 +1,6 @@
 "use client";
 
+import type { PreviewChatSource } from "@brainstack/shared";
 import { Info, RotateCcw, Send } from "lucide-react";
 import { type FormEvent, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
@@ -15,7 +16,7 @@ import { cn } from "@/lib/utils";
 /**
  * "Test chat" (M3-13): talks to the saved draft over the workspace's
  * knowledge. Each bot reply can show the sources it was built from
- * (M3-14). The conversation lives only in this component.
+ * (M3-14). The answer streams in; the server keeps the conversation.
  */
 export function PreviewChat({
   welcomeMessage,
@@ -44,16 +45,34 @@ export function PreviewChat({
     setMessages([...earlier, { role: "user", text: message }]);
     setInput("");
     setSending(true);
+    // The answer's bubble appears with its first piece and grows from there.
+    let started = false;
+    let sources: PreviewChatSource[] = [];
+    const showAnswer = (text: string) => {
+      const replace = started;
+      setMessages((current) => {
+        const answer: PreviewMessage = { role: "assistant", text, sources };
+        return replace ? [...current.slice(0, -1), answer] : [...current, answer];
+      });
+    };
     try {
-      const { reply, sources, conversationId: stored } =
-        await sendPreviewMessage(message, earlier, conversationId);
-      setConversationId(stored);
-      setMessages((current) => [
-        ...current,
-        { role: "assistant", text: reply, sources },
-      ]);
+      let text = "";
+      await sendPreviewMessage(message, conversationId, (event) => {
+        if (event.type === "sources") {
+          sources = event.sources;
+        } else if (event.type === "delta") {
+          text += event.text;
+          showAnswer(text);
+          started = true;
+        } else if (event.type === "done") {
+          setConversationId(event.conversationId);
+        } else if (event.type === "error") {
+          throw new Error(event.message);
+        }
+      });
     } catch (err) {
       toastError((err as Error).message);
+      // Nothing of a broken answer is stored, so none of it stays on screen.
       setMessages(earlier);
       setInput(message);
     } finally {
@@ -118,7 +137,7 @@ export function PreviewChat({
             </div>
           );
         })}
-        {sending && (
+        {sending && messages.at(-1)?.role === "user" && (
           <Bubble role="assistant">
             <span className="text-muted-foreground">Thinking…</span>
           </Bubble>

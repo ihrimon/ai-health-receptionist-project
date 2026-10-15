@@ -38,15 +38,47 @@ export interface RecordTurn {
 export class ConversationsService {
   constructor(@Inject(TENANT_PRISMA) private readonly db: TenantPrisma) {}
 
+  /**
+   * The latest turns of a conversation, oldest first, for the prompt. A
+   * conversation that isn't this chatbot's, this visitor's or this kind
+   * (preview or live) is empty, exactly as recordTurn() treats it.
+   */
+  async recentTurns(
+    scope: Pick<RecordTurn, 'chatbotId' | 'visitorId' | 'isPreview'> & {
+      conversationId: string;
+    },
+    limit: number,
+  ): Promise<{ role: 'user' | 'assistant'; text: string }[]> {
+    const rows = await this.db.message.findMany({
+      where: {
+        conversationId: scope.conversationId,
+        conversation: {
+          chatbotId: scope.chatbotId,
+          visitorId: scope.visitorId,
+          isPreview: scope.isPreview,
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+      take: limit,
+      select: { role: true, content: true },
+    });
+    return rows.reverse().map((row) => ({
+      role: row.role === MessageRole.USER ? 'user' : 'assistant',
+      text: row.content,
+    }));
+  }
+
   /** Returns the conversation's ID. */
   async recordTurn(turn: RecordTurn): Promise<string> {
     const { workspaceId } = requireTenant();
     const now = new Date();
     const messages = [
-      { role: MessageRole.USER, content: turn.userText },
+      // Explicit, ordered times: a single insert gives both rows the same default.
+      { role: MessageRole.USER, content: turn.userText, createdAt: now },
       {
         role: MessageRole.ASSISTANT,
         content: turn.answer.content,
+        createdAt: new Date(now.getTime() + 1),
         sources: turn.answer.sources as unknown as object,
         answeredBy: turn.answer.answeredBy,
         model: turn.answer.model,
@@ -74,7 +106,6 @@ export class ConversationsService {
             ...m,
             workspaceId,
             conversationId: turn.conversationId!,
-            createdAt: m.role === MessageRole.USER ? now : undefined,
           })),
         });
         return turn.conversationId;

@@ -11,15 +11,17 @@ import {
   Param,
   Post,
   Req,
+  Res,
 } from '@nestjs/common';
-import type { Request } from 'express';
+import type { Request, Response } from 'express';
+import { streamChat } from '../../common/sse';
 import { ZodBodyPipe } from '../../common/zod-body.pipe';
 import { Public } from '../auth/auth-context';
 import { PublicChatService } from './public-chat.service';
 
 /**
  * The embeddable widget (early MVP): no login. A missing, unpublished or
- * switched-off chatbot is a 404. JSON for now; SSE comes with M3-3.
+ * switched-off chatbot is a 404. The answer streams as SSE (M3-3).
  */
 @Controller('public/chatbots/:publicId')
 @Public()
@@ -31,13 +33,17 @@ export class PublicChatController {
     return this.chat.config(publicId);
   }
 
+  /** Streams the answer as Server-Sent Events (D-2 §3.2). */
   @Post('messages')
   @HttpCode(HttpStatus.OK)
-  send(
+  async send(
     @Param('publicId') publicId: string,
     @Req() req: Request,
+    @Res() res: Response,
     @Body(new ZodBodyPipe(previewChatRequestSchema)) body: PreviewChatRequest,
-  ) {
-    return this.chat.send(publicId, req.ip ?? 'unknown', body);
+  ): Promise<void> {
+    await streamChat(res, (emit) =>
+      this.chat.send(publicId, req.ip ?? 'unknown', body, emit),
+    );
   }
 }

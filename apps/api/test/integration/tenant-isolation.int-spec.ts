@@ -21,6 +21,37 @@ import { runWithTenant } from '../../src/tenancy/tenant-context';
 import { TENANT_PRISMA, TenantPrisma } from '../../src/tenancy/tenant-prisma';
 import { FAKE_EMBEDDING_MODEL, fakeEmbeddingService } from './fake-embedding';
 
+interface ChatEventRow {
+  type: string;
+  text?: string;
+  sources?: { title: string }[];
+  conversationId?: string | null;
+  answeredBy?: string;
+}
+
+/** The events of a chat response (text/event-stream), in order. */
+function chatEvents(res: { text: string; headers: Record<string, unknown> }) {
+  expect(String(res.headers['content-type'])).toContain('text/event-stream');
+  const events: ChatEventRow[] = res.text
+    .split('\n\n')
+    .filter((block) => block.trim())
+    .map((block): ChatEventRow => {
+      const type = /^event: (.+)$/m.exec(block)?.[1] ?? '';
+      const data = /^data: (.+)$/m.exec(block)?.[1] ?? '{}';
+      return { ...(JSON.parse(data) as Partial<ChatEventRow>), type };
+    });
+  return {
+    events,
+    reply: events
+      .map((e) => (e.type === 'delta' ? (e.text ?? '') : ''))
+      .join(''),
+    sources: events.find((e) => e.type === 'sources')?.sources ?? [],
+    done: events.find((e) => e.type === 'done'),
+    conversationId:
+      events.find((e) => e.type === 'done')?.conversationId ?? null,
+  };
+}
+
 /**
  * M1-25, M2-21 (W4): two workspaces, proving A's users can't read or change
  * B's data — through the HTTP API and through the tenant Prisma client.
@@ -38,18 +69,24 @@ describe('Tenant isolation (M1-25)', () => {
   // No real LLM calls: the preview test checks what would be sent, and
   // every key "verifies".
   const fakeLlm = {
-    completeWith: jest.fn(
-      (credentials: { id: string }[], messages: unknown[]) =>
-        Promise.resolve({
-          message: {
-            role: 'assistant',
-            content: messages.length ? 'stub answer' : '',
-          },
-          credentialId: credentials[0].id,
-          model: 'stub-model',
-          usage: { inputTokens: 100, outputTokens: 7 },
-        }),
-    ),
+    streamWith: jest.fn(async function* (
+      credentials: { id: string }[],
+      messages: unknown[],
+    ) {
+      await Promise.resolve();
+      yield { type: 'text', text: 'stub ' };
+      yield { type: 'text', text: 'answer' };
+      yield {
+        type: 'done',
+        message: {
+          role: 'assistant',
+          content: messages.length ? 'stub answer' : '',
+        },
+        credentialId: credentials[0].id,
+        model: 'stub-model',
+        usage: { inputTokens: 100, outputTokens: 7 },
+      };
+    }),
     verify: jest.fn(() => Promise.resolve()),
   };
 
@@ -926,14 +963,10 @@ describe('Tenant isolation (M1-25)', () => {
   });
 
   describe('Preview chat (M3-13, M3-14)', () => {
-    interface PreviewBody {
-      reply: string;
-      sources: { title: string; page: number | null; similarity: number }[];
-    }
     const sentToLlm = () =>
-      JSON.stringify(fakeLlm.completeWith.mock.calls.at(-1)?.[1] ?? []);
+      JSON.stringify(fakeLlm.streamWith.mock.calls.at(-1)?.[1] ?? []);
     const keysSent = () =>
-      (fakeLlm.completeWith.mock.calls.at(-1)?.[0] ?? []) as {
+      (fakeLlm.streamWith.mock.calls.at(-1)?.[0] ?? []) as {
         apiKey: string;
       }[];
 
@@ -981,11 +1014,12 @@ describe('Tenant isolation (M1-25)', () => {
         .post('/v1/chatbot/preview/messages')
         .send({ message: 'What is the warehouse code?' })
         .expect(200);
-      const body = res.body as PreviewBody;
-      expect(body.reply).toBe('stub answer');
+      const out = chatEvents(res);
+      expect(out.reply).toBe('stub answer');
+      expect(out.done).toMatchObject({ answeredBy: 'llm' });
       // A has other items from earlier tests, so which of A's chunks rank
       // first depends on the fake embedding; B's must never appear.
-      const titles = body.sources.map((s) => s.title);
+      const titles = out.sources.map((s) => s.title);
       expect(titles.length).toBeGreaterThan(0);
       expect(titles).not.toContain('Preview B secret');
       expect(sentToLlm()).not.toContain('B-7781');
@@ -997,7 +1031,7 @@ describe('Tenant isolation (M1-25)', () => {
         .post('/v1/chatbot/preview/messages')
         .send({ message: 'When do you open?' })
         .expect(200);
-      const titles = (res.body as PreviewBody).sources.map((s) => s.title);
+      const titles = chatEvents(res).sources.map((s) => s.title);
       expect(titles).toContain('Preview B secret');
       expect(titles).not.toContain('Preview A hours');
       expect(sentToLlm()).not.toContain('We open at 9am.');
@@ -1009,16 +1043,18 @@ describe('Tenant isolation (M1-25)', () => {
         .post('/v1/chatbot/preview/messages')
         .send({ message: 'What time do you open?' })
         .expect(200);
-      const { conversationId } = first.body as { conversationId: string };
+      const conversationId = chatEvents(first).conversationId as string;
       expect(conversationId).toEqual(expect.any(String));
 
       const second = await as(cookies.ownerA)
         .post('/v1/chatbot/preview/messages')
         .send({ message: 'And on Sunday?', conversationId })
         .expect(200);
-      expect((second.body as { conversationId: string }).conversationId).toBe(
-        conversationId,
-      );
+      expect(chatEvents(second).conversationId).toBe(conversationId);
+      // The second turn was answered from the stored first one.
+      const sent = JSON.stringify(fakeLlm.streamWith.mock.calls.at(-1)?.[1]);
+      expect(sent).toContain('What time do you open?');
+      expect(sent).toContain('stub answer');
 
       const conversation = await prisma.conversation.findUniqueOrThrow({
         where: { id: conversationId },
@@ -1052,7 +1088,7 @@ describe('Tenant isolation (M1-25)', () => {
         .post('/v1/chatbot/preview/messages')
         .send({ message: 'Private question' })
         .expect(200);
-      const { conversationId } = first.body as { conversationId: string };
+      const conversationId = chatEvents(first).conversationId as string;
 
       await expect(
         inWorkspace(ids.b, () =>
@@ -1070,7 +1106,7 @@ describe('Tenant isolation (M1-25)', () => {
         .post('/v1/chatbot/preview/messages')
         .send({ message: 'Hello', conversationId })
         .expect(200);
-      const bId = (res.body as { conversationId: string }).conversationId;
+      const bId = chatEvents(res).conversationId as string;
       expect(bId).not.toBe(conversationId);
       const untouched = await prisma.conversation.findUniqueOrThrow({
         where: { id: conversationId },
@@ -1084,16 +1120,14 @@ describe('Tenant isolation (M1-25)', () => {
     });
 
     it('is off in a workspace without its own key, with no LLM call', async () => {
-      const calls = fakeLlm.completeWith.mock.calls.length;
+      const calls = fakeLlm.streamWith.mock.calls.length;
       const a2 = await login(users.ownerA, ids.a2);
       const res = await as(a2)
         .post('/v1/chatbot/preview/messages')
         .send({ message: 'Hi' })
         .expect(200);
-      expect((res.body as PreviewBody).reply).toMatch(
-        /add your own LLM API key/,
-      );
-      expect(fakeLlm.completeWith.mock.calls.length).toBe(calls);
+      expect(chatEvents(res).reply).toMatch(/add your own LLM API key/);
+      expect(fakeLlm.streamWith.mock.calls.length).toBe(calls);
     });
 
     it('a viewer can use the preview', async () => {
@@ -1132,7 +1166,7 @@ describe('Tenant isolation (M1-25)', () => {
           .set('X-Requested-With', 'fetch')
           .send({ message }),
     });
-    const lastCall = () => fakeLlm.completeWith.mock.calls.at(-1) ?? [];
+    const lastCall = () => fakeLlm.streamWith.mock.calls.at(-1) ?? [];
 
     // A was published by the Chatbot API tests and has a key and a policy
     // from the preview tests; B has never been published.
@@ -1140,10 +1174,11 @@ describe('Tenant isolation (M1-25)', () => {
       const a = visitor(await publicIdOf(ids.botA));
       await a.config().expect(200);
       const res = await a.send('What is the warehouse code?').expect(200);
-      expect(res.body).toEqual({
-        reply: 'stub answer',
-        conversationId: expect.any(String) as string,
-      });
+      const out = chatEvents(res);
+      expect(out.reply).toBe('stub answer');
+      expect(out.conversationId).toEqual(expect.any(String));
+      // Visitors never get the knowledge sources (dashboard only).
+      expect(out.events.map((e) => e.type)).not.toContain('sources');
       const [keys, messages] = lastCall() as [{ apiKey: string }[], unknown];
       expect(keys.map((k) => k.apiKey)).toEqual(['sk-preview-a']);
       expect(JSON.stringify(messages)).not.toContain('B-7781');
@@ -1161,15 +1196,13 @@ describe('Tenant isolation (M1-25)', () => {
         message: 'Hi there',
         visitorId: 'visitor_abc12345',
       }).expect(200);
-      const { conversationId } = first.body as { conversationId: string };
+      const conversationId = chatEvents(first).conversationId as string;
       const again = await send({
         message: 'One more thing',
         visitorId: 'visitor_abc12345',
         conversationId,
       }).expect(200);
-      expect((again.body as { conversationId: string }).conversationId).toBe(
-        conversationId,
-      );
+      expect(chatEvents(again).conversationId).toBe(conversationId);
       const stored = await prisma.conversation.findUniqueOrThrow({
         where: { id: conversationId },
       });
@@ -1188,9 +1221,7 @@ describe('Tenant isolation (M1-25)', () => {
         visitorId: 'visitor_other999',
         conversationId,
       }).expect(200);
-      expect(
-        (other.body as { conversationId: string }).conversationId,
-      ).not.toBe(conversationId);
+      expect(chatEvents(other).conversationId).not.toBe(conversationId);
     });
 
     it('is a 404 for an unpublished, switched-off or unknown chatbot', async () => {
