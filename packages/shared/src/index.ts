@@ -3,6 +3,7 @@ export * from './knowledge';
 export * from './products';
 export * from './preview-chat';
 export * from './llm-keys';
+export * from './public-chat';
 export * from './types/booking';
 export * from './types/conversation';
 export * from './types/call-session';

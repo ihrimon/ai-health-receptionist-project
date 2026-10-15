@@ -1,4 +1,5 @@
 import type {
+  ChatbotConfig,
   PreviewChatReply,
   PreviewChatRequest,
   PreviewChatSource,
@@ -53,16 +54,29 @@ export class PreviewChatService {
       ...PREVIEW_RATE_LIMIT,
     });
 
+    const bot = await this.chatbot.draft();
+    return this.answer(bot.id, bot.config, request);
+  }
+
+  /**
+   * One answer from the current workspace's knowledge, with `config`, on
+   * its own keys. Must run in that workspace's tenant context; the public
+   * widget (PublicChatService) calls it with the published config.
+   */
+  async answer(
+    botId: string,
+    config: ChatbotConfig,
+    request: PreviewChatRequest,
+  ): Promise<PreviewChatReply> {
     const credentials = await this.keys.activeCredentials();
     if (credentials.length === 0) {
       // No key, no LLM call: skip the search too.
       return { reply: NO_CREDENTIALS_REPLY, sources: [] };
     }
 
-    const bot = await this.chatbot.draft();
-    const matches = await this.knowledge.search(bot.id, request.message);
+    const matches = await this.knowledge.search(botId, request.message);
     const messages = buildPreviewMessages(
-      bot.config,
+      config,
       matches,
       request.history,
       request.message,
@@ -72,8 +86,7 @@ export class PreviewChatService {
     try {
       const answer = await this.llm.completeWith(credentials, messages);
       void this.keys.markUsed(answer.credentialId);
-      reply =
-        answer.message.content?.trim() || bot.config.behavior.fallbackMessage;
+      reply = answer.message.content?.trim() || config.behavior.fallbackMessage;
     } catch (err) {
       if (err instanceof NoLlmCredentialsConfiguredError) {
         reply = NO_CREDENTIALS_REPLY;
