@@ -1035,6 +1035,65 @@ describe('Tenant isolation (M1-25)', () => {
     });
   });
 
+  describe('Public widget chat (early MVP)', () => {
+    const publicIdOf = async (id: string) =>
+      (
+        await prisma.chatbot.findUniqueOrThrow({
+          where: { id },
+          select: { publicId: true },
+        })
+      ).publicId;
+    const visitor = (publicId: string) => ({
+      config: () => request(http).get(`/v1/public/chatbots/${publicId}/config`),
+      send: (message: string) =>
+        request(http)
+          .post(`/v1/public/chatbots/${publicId}/messages`)
+          .set('X-Requested-With', 'fetch')
+          .send({ message }),
+    });
+    const lastCall = () => fakeLlm.completeWith.mock.calls.at(-1) ?? [];
+
+    // A was published by the Chatbot API tests and has a key and a policy
+    // from the preview tests; B has never been published.
+    it("answers without a login, from the chatbot's own workspace and key", async () => {
+      const a = visitor(await publicIdOf(ids.botA));
+      await a.config().expect(200);
+      const res = await a.send('What is the warehouse code?').expect(200);
+      expect(res.body).toEqual({ reply: 'stub answer' });
+      const [keys, messages] = lastCall() as [{ apiKey: string }[], unknown];
+      expect(keys.map((k) => k.apiKey)).toEqual(['sk-preview-a']);
+      expect(JSON.stringify(messages)).not.toContain('B-7781');
+    });
+
+    it('is a 404 for an unpublished, switched-off or unknown chatbot', async () => {
+      const b = visitor(await publicIdOf(ids.botB));
+      await b.config().expect(404);
+      await b.send('Hi').expect(404);
+      await visitor('cb_doesnotexist').send('Hi').expect(404);
+
+      await as(cookies.ownerA)
+        .patch('/v1/chatbot/status')
+        .send({ status: 'DISABLED' })
+        .expect(200);
+      try {
+        await visitor(await publicIdOf(ids.botA))
+          .send('Hi')
+          .expect(404);
+      } finally {
+        await as(cookies.ownerA)
+          .patch('/v1/chatbot/status')
+          .send({ status: 'ENABLED' })
+          .expect(200);
+      }
+    });
+
+    it('rejects an empty message (400)', async () => {
+      await visitor(await publicIdOf(ids.botA))
+        .send('  ')
+        .expect(400);
+    });
+  });
+
   describe('Products API (M2-21)', () => {
     interface ProductBody {
       id: string;

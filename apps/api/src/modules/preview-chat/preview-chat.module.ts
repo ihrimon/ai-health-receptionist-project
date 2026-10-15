@@ -11,5 +11,6 @@ import { PreviewChatService } from './preview-chat.service';
   imports: [ChatModule, ChatbotModule, KnowledgeModule, LlmKeysModule],
   controllers: [PreviewChatController],
   providers: [PreviewChatService],
+  exports: [PreviewChatService],
 })
 export class PreviewChatModule {}

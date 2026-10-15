@@ -48,11 +48,20 @@ describe("onboardingSteps", () => {
     expect(doneIds({ ...fresh, businessDescription: "   " })).toEqual(["account"]);
   });
 
-  it("marks preview and install as not available yet", () => {
+  it("marks preview as not available yet", () => {
     const unavailable = onboardingSteps(fresh)
       .filter((s) => !s.available)
       .map((s) => s.id);
-    expect(unavailable).toEqual(["preview", "install"]);
+    expect(unavailable).toEqual(["preview"]);
+  });
+
+  it("offers the install code without holding the checklist open", () => {
+    const install = onboardingSteps(fresh).find((s) => s.id === "install");
+    expect(install).toMatchObject({
+      available: true,
+      optional: true,
+      href: "/app/settings/install",
+    });
   });
 });
 
