@@ -35,14 +35,20 @@ describe('Tenant isolation (M1-25)', () => {
   let http: App;
   let prisma: PrismaService;
   let db: TenantPrisma;
-  // No real LLM calls: the preview test checks what would be sent.
+  // No real LLM calls: the preview test checks what would be sent, and
+  // every key "verifies".
   const fakeLlm = {
-    complete: jest.fn((messages: unknown[]) =>
-      Promise.resolve({
-        role: 'assistant',
-        content: messages.length ? 'stub answer' : '',
-      }),
+    completeWith: jest.fn(
+      (credentials: { id: string }[], messages: unknown[]) =>
+        Promise.resolve({
+          message: {
+            role: 'assistant',
+            content: messages.length ? 'stub answer' : '',
+          },
+          credentialId: credentials[0].id,
+        }),
     ),
+    verify: jest.fn(() => Promise.resolve()),
   };
 
   // Workspace A: owner + viewer. Workspace B: owner. A2: second workspace
@@ -844,15 +850,102 @@ describe('Tenant isolation (M1-25)', () => {
     });
   });
 
+  describe('LLM keys (M3-21)', () => {
+    interface KeyBody {
+      id: string;
+      provider: string;
+      keyLast4: string;
+      isActive: boolean;
+    }
+    let keyA = '';
+
+    beforeAll(async () => {
+      const res = await as(cookies.ownerA)
+        .post('/v1/llm-keys')
+        .send({ provider: 'gemini', model: 'g-x', apiKey: 'AIza-secret-A111' })
+        .expect(201);
+      keyA = (res.body as KeyBody).id;
+    });
+
+    it('never returns the key, only its last 4 characters', async () => {
+      const res = await as(cookies.ownerA).get('/v1/llm-keys').expect(200);
+      const mine = (res.body as KeyBody[]).find((k) => k.id === keyA);
+      expect(mine).toMatchObject({ provider: 'gemini', keyLast4: 'A111' });
+      expect(JSON.stringify(res.body)).not.toContain('AIza-secret');
+    });
+
+    it('stores the key encrypted in its own workspace', async () => {
+      const row = await prisma.workspaceLlmKey.findUniqueOrThrow({
+        where: { id: keyA },
+      });
+      expect(row.workspaceId).toBe(ids.a);
+      expect(row.apiKeyEncrypted).not.toContain('AIza-secret');
+    });
+
+    it("another workspace can't see, change or delete it (404)", async () => {
+      const list = await as(cookies.ownerB).get('/v1/llm-keys').expect(200);
+      expect((list.body as KeyBody[]).map((k) => k.id)).not.toContain(keyA);
+      await as(cookies.ownerB)
+        .patch(`/v1/llm-keys/${keyA}`)
+        .send({ isActive: false })
+        .expect(404);
+      await as(cookies.ownerB).delete(`/v1/llm-keys/${keyA}`).expect(404);
+      expect(
+        await inWorkspace(ids.b, () =>
+          db.workspaceLlmKey.findUnique({ where: { id: keyA } }),
+        ),
+      ).toBeNull();
+    });
+
+    it('only the owner can manage keys (403 for a viewer)', async () => {
+      await as(cookies.viewerA).get('/v1/llm-keys').expect(403);
+      await as(cookies.viewerA)
+        .post('/v1/llm-keys')
+        .send({ provider: 'openai', model: 'm', apiKey: 'sk-viewer-key' })
+        .expect(403);
+    });
+
+    it('rejects a provider outside OpenAI, Gemini and Groq (400)', async () => {
+      await as(cookies.ownerA)
+        .post('/v1/llm-keys')
+        .send({ provider: 'anthropic', model: 'm', apiKey: 'sk-ant-12345' })
+        .expect(400);
+    });
+
+    it('the owner can switch the key off and delete it', async () => {
+      const res = await as(cookies.ownerA)
+        .patch(`/v1/llm-keys/${keyA}`)
+        .send({ isActive: false })
+        .expect(200);
+      expect((res.body as KeyBody).isActive).toBe(false);
+      await as(cookies.ownerA).delete(`/v1/llm-keys/${keyA}`).expect(204);
+      await as(cookies.ownerA).delete(`/v1/llm-keys/${keyA}`).expect(404);
+    });
+  });
+
   describe('Preview chat (M3-13, M3-14)', () => {
     interface PreviewBody {
       reply: string;
       sources: { title: string; page: number | null; similarity: number }[];
     }
     const sentToLlm = () =>
-      JSON.stringify(fakeLlm.complete.mock.calls.at(-1)?.[0] ?? []);
+      JSON.stringify(fakeLlm.completeWith.mock.calls.at(-1)?.[1] ?? []);
+    const keysSent = () =>
+      (fakeLlm.completeWith.mock.calls.at(-1)?.[0] ?? []) as {
+        apiKey: string;
+      }[];
 
     beforeAll(async () => {
+      // Chat runs on each workspace's own key (M3-21).
+      await as(cookies.ownerA)
+        .post('/v1/llm-keys')
+        .send({ provider: 'openai', model: 'gpt-x', apiKey: 'sk-preview-a' })
+        .expect(201);
+      await as(cookies.ownerB)
+        .post('/v1/llm-keys')
+        .send({ provider: 'groq', model: 'llama-x', apiKey: 'gsk-preview-b' })
+        .expect(201);
+
       const a = await as(cookies.ownerA)
         .post('/v1/knowledge-sources')
         .send({
@@ -894,6 +987,7 @@ describe('Tenant isolation (M1-25)', () => {
       expect(titles.length).toBeGreaterThan(0);
       expect(titles).not.toContain('Preview B secret');
       expect(sentToLlm()).not.toContain('B-7781');
+      expect(keysSent().map((k) => k.apiKey)).toEqual(['sk-preview-a']);
     });
 
     it("B's preview finds B's knowledge, not A's", async () => {
@@ -905,6 +999,20 @@ describe('Tenant isolation (M1-25)', () => {
       expect(titles).toContain('Preview B secret');
       expect(titles).not.toContain('Preview A hours');
       expect(sentToLlm()).not.toContain('We open at 9am.');
+      expect(keysSent().map((k) => k.apiKey)).toEqual(['gsk-preview-b']);
+    });
+
+    it('is off in a workspace without its own key, with no LLM call', async () => {
+      const calls = fakeLlm.completeWith.mock.calls.length;
+      const a2 = await login(users.ownerA, ids.a2);
+      const res = await as(a2)
+        .post('/v1/chatbot/preview/messages')
+        .send({ message: 'Hi' })
+        .expect(200);
+      expect((res.body as PreviewBody).reply).toMatch(
+        /add your own LLM API key/,
+      );
+      expect(fakeLlm.completeWith.mock.calls.length).toBe(calls);
     });
 
     it('a viewer can use the preview', async () => {

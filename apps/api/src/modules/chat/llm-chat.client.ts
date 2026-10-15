@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import type {
   ChatCompletionMessage,
   ChatCompletionMessageParam,
@@ -8,6 +8,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import {
   AllLlmKeysExhaustedError,
+  type LlmCredentialSnapshot,
   LlmKeyManager,
   NoLlmCredentialsConfiguredError,
 } from './llm-key-manager';
@@ -140,6 +141,65 @@ export class LlmChatClient {
     }
 
     throw new AllLlmKeysExhaustedError();
+  }
+
+  /**
+   * Like complete(), but over the given credentials (a workspace's own
+   * keys, M3-21) instead of the platform's: tries them in order, moving on
+   * after a rate limit or auth error, and keeps no rotation state between
+   * calls. Says which credential answered, so the caller can mark it used.
+   */
+  async completeWith(
+    credentials: LlmCredentialSnapshot[],
+    messages: ChatCompletionMessageParam[],
+    tools?: ChatCompletionTool[],
+  ): Promise<{ message: ChatCompletionMessage; credentialId: string }> {
+    if (credentials.length === 0) {
+      throw new NoLlmCredentialsConfiguredError();
+    }
+    for (const credential of credentials) {
+      const adapter = this.providerRegistry.get(credential.provider);
+      try {
+        const result = await adapter.complete({
+          apiKey: credential.apiKey,
+          model: credential.model,
+          messages,
+          tools,
+        });
+        return { message: result.message, credentialId: credential.id };
+      } catch (err) {
+        if (!adapter.isRetryableError(err)) {
+          throw err;
+        }
+        this.logger.warn(
+          `Workspace credential ${credential.id} (${credential.provider}, ${credential.model}) failed: ${(err as Error).message}`,
+        );
+      }
+    }
+    throw new AllLlmKeysExhaustedError();
+  }
+
+  /**
+   * One tiny real call, so a wrong key or model name is caught when it's
+   * saved rather than in the middle of a chat. Throws a 400 with the
+   * provider's reason.
+   */
+  async verify(
+    credential: Pick<LlmCredentialSnapshot, 'provider' | 'apiKey' | 'model'>,
+  ): Promise<void> {
+    const adapter = this.providerRegistry.get(credential.provider);
+    try {
+      await adapter.complete({
+        apiKey: credential.apiKey,
+        model: credential.model,
+        messages: [{ role: 'user', content: 'ping' }],
+      });
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err);
+      throw new BadRequestException(
+        `Couldn't verify this ${credential.provider} key — the provider rejected it: ${detail}`,
+      );
+    }
   }
 
   private getSystemInstruction(): string {

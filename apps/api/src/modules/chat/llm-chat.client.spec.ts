@@ -201,4 +201,71 @@ describe('LlmChatClient', () => {
     await expect(client.complete([])).rejects.toThrow(badRequestErr);
     expect(keyManager.rotateToNext).not.toHaveBeenCalled();
   });
+
+  describe('completeWith (workspace keys, M3-21)', () => {
+    const keys = [
+      { id: 'k1', provider: LlmProvider.openai, apiKey: 'sk-1', model: 'm1' },
+      { id: 'k2', provider: LlmProvider.groq, apiKey: 'gsk-2', model: 'm2' },
+    ];
+
+    it('throws NoLlmCredentialsConfiguredError with no keys, never touching the platform keys', async () => {
+      await expect(client.completeWith([], [])).rejects.toThrow(
+        NoLlmCredentialsConfiguredError,
+      );
+      expect(keyManager.getCurrentCredential).not.toHaveBeenCalled();
+      expect(adapter.complete).not.toHaveBeenCalled();
+    });
+
+    it('moves to the next key after a retryable error and says which answered', async () => {
+      const rateLimited = new Error('429');
+      adapter.isRetryableError.mockImplementation((e) => e === rateLimited);
+      adapter.complete
+        .mockRejectedValueOnce(rateLimited)
+        .mockResolvedValueOnce({ message: assistantMessage('ok') });
+
+      const result = await client.completeWith(keys, []);
+
+      expect(result).toEqual({
+        message: assistantMessage('ok'),
+        credentialId: 'k2',
+      });
+      expect(adapter.complete).toHaveBeenLastCalledWith(
+        expect.objectContaining({ apiKey: 'gsk-2', model: 'm2' }),
+      );
+    });
+
+    it('throws AllLlmKeysExhaustedError when every key fails retryably', async () => {
+      adapter.isRetryableError.mockReturnValue(true);
+      adapter.complete.mockRejectedValue(new Error('401'));
+
+      await expect(client.completeWith(keys, [])).rejects.toThrow(
+        AllLlmKeysExhaustedError,
+      );
+      expect(adapter.complete).toHaveBeenCalledTimes(2);
+    });
+
+    it('does not try other keys after a non-retryable error', async () => {
+      const bad = new Error('400 bad request');
+      adapter.complete.mockRejectedValue(bad);
+
+      await expect(client.completeWith(keys, [])).rejects.toThrow(bad);
+      expect(adapter.complete).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('verify', () => {
+    const key = { provider: LlmProvider.gemini, apiKey: 'AIza', model: 'g' };
+
+    it('passes when the provider answers', async () => {
+      adapter.complete.mockResolvedValue({ message: assistantMessage('') });
+      await expect(client.verify(key)).resolves.toBeUndefined();
+    });
+
+    it("is a 400 with the provider's reason when it refuses", async () => {
+      adapter.complete.mockRejectedValue(new Error('API key not valid'));
+      await expect(client.verify(key)).rejects.toThrow(
+        /gemini key .*API key not valid/,
+      );
+    });
+  });
 });

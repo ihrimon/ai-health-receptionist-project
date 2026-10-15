@@ -6,6 +6,7 @@ const fresh = {
   knowledgeCount: 0,
   productCount: 0,
   published: false,
+  aiKeyReady: false,
 };
 
 const doneIds = (input: typeof fresh) =>
@@ -18,6 +19,19 @@ describe("onboardingSteps", () => {
     expect(doneIds(fresh)).toEqual(["account"]);
   });
 
+  it("asks for an AI key, but not of someone who can't add one", () => {
+    const step = (aiKeyReady: boolean | null) =>
+      onboardingSteps({ ...fresh, aiKeyReady }).find((s) => s.id === "aiKey");
+    expect(step(false)).toMatchObject({ done: false, available: true, href: "/app/settings/ai" });
+    expect(step(true)?.done).toBe(true);
+    expect(step(null)?.available).toBe(false);
+  });
+
+  it("sends the business step to the chatbot settings, not the test chat", () => {
+    const business = onboardingSteps(fresh).find((s) => s.id === "business");
+    expect(business?.href).toBe("/app/settings/chatbot");
+  });
+
   it("ticks steps from real data", () => {
     expect(
       doneIds({
@@ -25,8 +39,9 @@ describe("onboardingSteps", () => {
         knowledgeCount: 2,
         productCount: 1,
         published: true,
+        aiKeyReady: true,
       }),
-    ).toEqual(["account", "business", "knowledge", "products", "publish"]);
+    ).toEqual(["account", "aiKey", "business", "knowledge", "products", "publish"]);
   });
 
   it("doesn't count a blank description", () => {
@@ -42,10 +57,10 @@ describe("onboardingSteps", () => {
 });
 
 describe("onboardingProgress", () => {
-  it("counts done steps out of seven", () => {
+  it("counts done steps out of eight", () => {
     expect(onboardingProgress(onboardingSteps(fresh))).toEqual({
       done: 1,
-      total: 7,
+      total: 8,
       readyForNow: false,
     });
   });
@@ -56,10 +71,15 @@ describe("onboardingProgress", () => {
       knowledgeCount: 1,
       productCount: 0, // optional
       published: true,
+      aiKeyReady: true,
     };
     expect(onboardingProgress(onboardingSteps(live)).readyForNow).toBe(true);
     expect(
       onboardingProgress(onboardingSteps({ ...live, published: false }))
+        .readyForNow,
+    ).toBe(false);
+    expect(
+      onboardingProgress(onboardingSteps({ ...live, aiKeyReady: false }))
         .readyForNow,
     ).toBe(false);
   });

@@ -51,6 +51,13 @@ export default () => ({
         String(process.env.NODE_ENV !== 'production')) === 'true',
   },
 
+  // Encrypts workspaces' own LLM API keys at rest (M3-21). Generate with
+  // `openssl rand -base64 32`; required in production. Development and
+  // tests fall back to a fixed key, so local data isn't protected by it.
+  security: {
+    llmKeyEncryptionKey: process.env.LLM_KEY_ENCRYPTION_KEY ?? '',
+  },
+
   knowledge: {
     embeddingModel:
       process.env.KNOWLEDGE_EMBEDDING_MODEL ?? 'Xenova/all-MiniLM-L6-v2',

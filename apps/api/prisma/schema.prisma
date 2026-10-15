@@ -131,6 +131,7 @@ model Workspace {
   sources         KnowledgeSource[]
   products        Product[]
   knowledgeChunks KnowledgeChunk[]
+  llmKeys         WorkspaceLlmKey[]
   /// Sessions currently switched to this workspace.
   activeSessions  Session[]
 
@@ -363,6 +364,28 @@ model Product {
   @@index([workspaceId, chatbotId, isActive])
   @@index([workspaceId, chatbotId, category])
   @@map("products")
+}
+
+/// A workspace's own LLM API key + model (M3-21; replaces decision B3 for
+/// chat). The key is encrypted with AES-256-GCM (common/secret-box.ts) and
+/// never leaves the API; the dashboard sees only its last 4 characters.
+/// Chat tries the active keys oldest first and is off when there are none.
+model WorkspaceLlmKey {
+  id              String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId     String      @map("workspace_id") @db.Uuid
+  provider        LlmProvider
+  model           String      @db.VarChar(100)
+  apiKeyEncrypted String      @map("api_key_encrypted")
+  keyLast4        String      @map("key_last4") @db.VarChar(4)
+  isActive        Boolean     @default(true) @map("is_active")
+  lastUsedAt      DateTime?   @map("last_used_at") @db.Timestamptz
+  createdAt       DateTime    @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt       DateTime    @updatedAt @map("updated_at") @db.Timestamptz
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId, createdAt])
+  @@map("workspace_llm_keys")
 }
 
 // ─────────────────────────── Platform ───────────────────────────
