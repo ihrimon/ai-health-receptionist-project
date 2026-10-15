@@ -7,6 +7,7 @@ import { cn } from "@/lib/utils";
 const SECTIONS = [
   { title: "Chatbot", href: "/app/settings/chatbot" },
   { title: "AI", href: "/app/settings/ai" },
+  { title: "Install", href: "/app/settings/install" },
   { title: "Workspace", href: "/app/settings/workspace" },
 ];
 

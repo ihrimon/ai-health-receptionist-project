@@ -96,8 +96,11 @@ export function OnboardingChecklist() {
           <div className="text-sm">
             <p className="font-medium">Your chatbot is published.</p>
             <p className="text-muted-foreground">
-              Keep your FAQs and products up to date. Installing it on your
-              website and conversation stats are coming soon.
+              Keep your FAQs and products up to date.{" "}
+              <Link href="/app/settings/install" className="underline underline-offset-4">
+                Add it to your website
+              </Link>
+              . Conversation stats are coming soon.
             </p>
           </div>
         </CardContent>

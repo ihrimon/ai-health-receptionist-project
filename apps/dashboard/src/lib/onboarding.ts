@@ -77,7 +77,17 @@ export function onboardingSteps(input: OnboardingInput): OnboardingStep[] {
     },
     { id: "preview", title: "Test it in the preview", done: false, available: false, optional: false },
     { id: "publish", title: "Publish", done: input.published, available: true, optional: false },
-    { id: "install", title: "Install on your website", done: false, available: false, optional: false },
+    {
+      id: "install",
+      title: "Install on your website",
+      // Nothing tells us yet that the snippet is on a site (M4-14), so it
+      // can't tick itself; optional so it doesn't hold the checklist open.
+      done: false,
+      available: true,
+      optional: true,
+      href: "/app/settings/install",
+      action: "Get the code",
+    },
   ];
 }
 
