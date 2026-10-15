@@ -8,6 +8,7 @@ import {
   NoLlmCredentialsConfiguredError,
 } from '../chat/llm-key-manager';
 import { KnowledgeService } from '../knowledge/knowledge.service';
+import { LlmKeysService } from '../llm-keys/llm-keys.service';
 import {
   KEYS_EXHAUSTED_REPLY,
   NO_CREDENTIALS_REPLY,
@@ -19,7 +20,14 @@ describe('PreviewChatService', () => {
   const config = defaultChatbotConfig('Rina Shop');
   const chatbot = { draft: jest.fn() };
   const knowledge = { search: jest.fn() };
-  const llm = { complete: jest.fn() };
+  const llm = { completeWith: jest.fn() };
+  const keys = { activeCredentials: jest.fn(), markUsed: jest.fn() };
+  const ownKey = {
+    id: 'key-1',
+    provider: 'openai',
+    apiKey: 'sk-own',
+    model: 'gpt',
+  };
   const rateLimit = { consume: jest.fn() };
   let service: PreviewChatService;
 
@@ -33,10 +41,12 @@ describe('PreviewChatService', () => {
         similarity: 0.8123,
       },
     ]);
-    llm.complete.mockResolvedValue({
-      role: 'assistant',
-      content: ' 30 days. ',
+    llm.completeWith.mockResolvedValue({
+      message: { role: 'assistant', content: ' 30 days. ' },
+      credentialId: 'key-1',
     });
+    keys.activeCredentials.mockResolvedValue([ownKey]);
+    keys.markUsed.mockResolvedValue(undefined);
     rateLimit.consume.mockResolvedValue(undefined);
     const moduleRef = await Test.createTestingModule({
       providers: [
@@ -45,6 +55,7 @@ describe('PreviewChatService', () => {
         { provide: KnowledgeService, useValue: knowledge },
         { provide: LlmChatClient, useValue: llm },
         { provide: RateLimitService, useValue: rateLimit },
+        { provide: LlmKeysService, useValue: keys },
       ],
     }).compile();
     service = moduleRef.get(PreviewChatService);
@@ -59,8 +70,21 @@ describe('PreviewChatService', () => {
       sources: [{ title: 'Returns', page: 2, similarity: 0.81 }],
     });
     expect(knowledge.search).toHaveBeenCalledWith('bot-1', 'Can I return it?');
-    const [[messages]] = llm.complete.mock.calls as unknown[][];
+    const [[credentials, messages]] = llm.completeWith.mock
+      .calls as unknown[][];
+    expect(credentials).toEqual([ownKey]);
     expect(JSON.stringify(messages)).toContain('30 days.');
+    expect(keys.markUsed).toHaveBeenCalledWith('key-1');
+  });
+
+  it('is off without a key of its own: no search, no LLM call', async () => {
+    keys.activeCredentials.mockResolvedValue([]);
+    await expect(send()).resolves.toEqual({
+      reply: NO_CREDENTIALS_REPLY,
+      sources: [],
+    });
+    expect(knowledge.search).not.toHaveBeenCalled();
+    expect(llm.completeWith).not.toHaveBeenCalled();
   });
 
   it('counts each message against the per-user limit first', async () => {
@@ -70,26 +94,29 @@ describe('PreviewChatService', () => {
       key: 'preview:user:user-1',
       ...PREVIEW_RATE_LIMIT,
     });
-    expect(llm.complete).not.toHaveBeenCalled();
+    expect(llm.completeWith).not.toHaveBeenCalled();
   });
 
   it('falls back to the configured message on an empty reply', async () => {
-    llm.complete.mockResolvedValue({ role: 'assistant', content: '  ' });
+    llm.completeWith.mockResolvedValue({
+      message: { role: 'assistant', content: '  ' },
+      credentialId: 'key-1',
+    });
     expect((await send()).reply).toBe(config.behavior.fallbackMessage);
   });
 
   it('explains a missing LLM key instead of failing', async () => {
-    llm.complete.mockRejectedValue(new NoLlmCredentialsConfiguredError());
+    llm.completeWith.mockRejectedValue(new NoLlmCredentialsConfiguredError());
     expect((await send()).reply).toBe(NO_CREDENTIALS_REPLY);
   });
 
   it('asks to retry when every key is exhausted', async () => {
-    llm.complete.mockRejectedValue(new AllLlmKeysExhaustedError());
+    llm.completeWith.mockRejectedValue(new AllLlmKeysExhaustedError());
     expect((await send()).reply).toBe(KEYS_EXHAUSTED_REPLY);
   });
 
   it('lets other errors through', async () => {
-    llm.complete.mockRejectedValue(new Error('boom'));
+    llm.completeWith.mockRejectedValue(new Error('boom'));
     await expect(send()).rejects.toThrow('boom');
   });
 });

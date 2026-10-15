@@ -5,6 +5,7 @@
 
 export type StepId =
   | "account"
+  | "aiKey"
   | "business"
   | "knowledge"
   | "products"
@@ -30,11 +31,23 @@ export interface OnboardingInput {
   knowledgeCount: number;
   productCount: number;
   published: boolean;
+  /** A key is switched on; null when the viewer can't see keys (not the owner). */
+  aiKeyReady: boolean | null;
 }
 
 export function onboardingSteps(input: OnboardingInput): OnboardingStep[] {
   return [
     { id: "account", title: "Create your account", done: true, available: true, optional: false },
+    {
+      id: "aiKey",
+      title: "Add your AI API key",
+      done: input.aiKeyReady === true,
+      // Only the owner can add one, so others don't get stuck on it.
+      available: input.aiKeyReady !== null,
+      optional: false,
+      href: "/app/settings/ai",
+      action: "Go to AI settings",
+    },
     {
       id: "business",
       title: "Describe your business",

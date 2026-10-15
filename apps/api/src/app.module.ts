@@ -18,6 +18,7 @@ import { ChatbotModule } from './modules/chatbot/chatbot.module';
 import { KnowledgeBaseModule } from './modules/knowledge-base/knowledge-base.module';
 import { ProductsModule } from './modules/products/products.module';
 import { PreviewChatModule } from './modules/preview-chat/preview-chat.module';
+import { LlmKeysModule } from './modules/llm-keys/llm-keys.module';
 
 @Module({
   imports: [
@@ -41,6 +42,7 @@ import { PreviewChatModule } from './modules/preview-chat/preview-chat.module';
     KnowledgeBaseModule,
     ProductsModule,
     PreviewChatModule,
+    LlmKeysModule,
   ],
   controllers: [AppController],
   providers: [AppService],
