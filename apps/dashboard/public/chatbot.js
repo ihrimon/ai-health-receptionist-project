@@ -2,6 +2,8 @@
  * BrainStack chat widget loader (early MVP). A company adds one tag to its
  * site:
  *   <script src="https://<dashboard>/chatbot.js" data-chatbot-id="cb_…" async></script>
+ * Optional `data-bottom="96"` lifts the button (in px, default 20) above
+ * the site's own bottom bars or buttons.
  * It draws a launcher button and opens the chat (/w/<id> on this same
  * origin) in an iframe. Plain ES5, no dependencies, styles set inline so
  * the host page's CSS can't break it (and it can't break the host page).
@@ -15,6 +17,9 @@
   window.__brainstackWidgetLoaded = true;
 
   var origin = new URL(script.src).origin;
+  // 0–400 px; anything else falls back to the default.
+  var bottom = parseInt(script.getAttribute("data-bottom"), 10);
+  if (!(bottom >= 0 && bottom <= 400)) bottom = 20;
   var side = "right";
   var open = false;
 
@@ -33,7 +38,7 @@
   button.innerHTML = CHAT_ICON;
   css(button, {
     position: "fixed",
-    bottom: "20px",
+    bottom: bottom + "px",
     right: "20px",
     width: "56px",
     height: "56px",
@@ -54,12 +59,13 @@
   var panel = document.createElement("div");
   css(panel, {
     position: "fixed",
-    bottom: "88px",
+    // Just above the button.
+    bottom: bottom + 68 + "px",
     right: "20px",
     width: "370px",
     height: "560px",
     "max-width": "calc(100vw - 40px)",
-    "max-height": "calc(100vh - 110px)",
+    "max-height": "calc(100vh - " + (bottom + 90) + "px)",
     "border-radius": "16px",
     overflow: "hidden",
     "box-shadow": "0 8px 32px rgba(0,0,0,.25)",
