@@ -8,10 +8,12 @@ import type {
   ChatCompletionMessageParam as OpenAiMessageParam,
   ChatCompletionTool as OpenAiTool,
 } from 'openai/resources/chat/completions';
+import { readOpenAiStream } from './openai-stream';
 import {
   LLM_REQUEST_TIMEOUT_MS,
   type AdapterCompleteParams,
   type AdapterCompleteResult,
+  type AdapterStreamEvent,
   type LlmProviderAdapter,
 } from './provider-adapter.types';
 
@@ -81,6 +83,34 @@ export class OpenAiSdkAdapter implements LlmProviderAdapter {
       },
       rateLimitHeaders: response.headers,
     };
+  }
+
+  async *stream({
+    apiKey,
+    model,
+    messages,
+    tools,
+  }: AdapterCompleteParams): AsyncGenerator<AdapterStreamEvent> {
+    const client = new OpenAI({
+      apiKey,
+      baseURL: this.baseURL,
+      timeout: LLM_REQUEST_TIMEOUT_MS,
+      maxRetries: 0,
+    });
+    const completion = await client.chat.completions.create({
+      model,
+      messages: messages as unknown as OpenAiMessageParam[],
+      ...(tools?.length
+        ? {
+            tools: tools as unknown as OpenAiTool[],
+            tool_choice: 'auto' as const,
+          }
+        : {}),
+      max_tokens: 1024,
+      stream: true,
+      stream_options: { include_usage: true },
+    });
+    yield* readOpenAiStream(completion);
   }
 
   isRetryableError(err: unknown): boolean {

@@ -13,6 +13,7 @@ import {
   LLM_REQUEST_TIMEOUT_MS,
   type AdapterCompleteParams,
   type AdapterCompleteResult,
+  type AdapterStreamEvent,
   type ChatCompletionMessage,
   type ChatCompletionMessageParam,
   type ChatCompletionTool,
@@ -71,6 +72,41 @@ export class GeminiAdapter implements LlmProviderAdapter {
     );
 
     return { message: fromGeminiResponse(result.response) };
+  }
+
+  async *stream({
+    apiKey,
+    model,
+    messages,
+    tools,
+  }: AdapterCompleteParams): AsyncGenerator<AdapterStreamEvent> {
+    const client = new GoogleGenerativeAI(apiKey);
+    const { systemInstruction, contents } = toGeminiContents(messages);
+    const generativeModel = client.getGenerativeModel({
+      model,
+      ...(tools?.length ? { tools: toGeminiTools(tools) } : {}),
+      systemInstruction,
+    });
+
+    const result = await generativeModel.generateContentStream(
+      { contents },
+      { timeout: LLM_REQUEST_TIMEOUT_MS },
+    );
+    for await (const chunk of result.stream) {
+      const text = chunk.text();
+      if (text) yield { type: 'text', text };
+    }
+    const response = await result.response;
+    yield {
+      type: 'done',
+      message: fromGeminiResponse(response),
+      usage: response.usageMetadata
+        ? {
+            inputTokens: response.usageMetadata.promptTokenCount ?? 0,
+            outputTokens: response.usageMetadata.candidatesTokenCount ?? 0,
+          }
+        : undefined,
+    };
   }
 
   isRetryableError(err: unknown): boolean {

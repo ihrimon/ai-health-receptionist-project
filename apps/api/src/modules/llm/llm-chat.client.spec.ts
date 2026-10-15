@@ -22,6 +22,7 @@ describe('LlmChatClient', () => {
   };
   let adapter: {
     complete: jest.Mock;
+    stream: jest.Mock;
     isRetryableError: jest.Mock;
     getRateLimitHeaders: jest.Mock;
   };
@@ -36,6 +37,7 @@ describe('LlmChatClient', () => {
     };
     adapter = {
       complete: jest.fn(),
+      stream: jest.fn(),
       isRetryableError: jest.fn().mockReturnValue(false),
       getRateLimitHeaders: jest.fn(),
     };
@@ -265,6 +267,86 @@ describe('LlmChatClient', () => {
       adapter.complete.mockRejectedValue(new Error('API key not valid'));
       await expect(client.verify(key)).rejects.toThrow(
         /gemini key .*API key not valid/,
+      );
+    });
+  });
+
+  describe('streamWith', () => {
+    const credentials = [
+      { id: 'k1', provider: LlmProvider.openai, apiKey: 'a', model: 'm' },
+      { id: 'k2', provider: LlmProvider.groq, apiKey: 'b', model: 'm' },
+    ];
+
+    // eslint-disable-next-line @typescript-eslint/require-await
+    async function* events(
+      items: unknown[],
+      failWith?: Error,
+    ): AsyncGenerator<unknown> {
+      for (const item of items) yield item;
+      if (failWith) throw failWith;
+    }
+
+    async function collect(stream: AsyncIterable<unknown>) {
+      const out: unknown[] = [];
+      for await (const event of stream) out.push(event);
+      return out;
+    }
+
+    it('yields text then done with the answering credential', async () => {
+      adapter.stream.mockReturnValue(
+        events([
+          { type: 'text', text: 'Hi' },
+          { type: 'done', message: assistantMessage('Hi') },
+        ]),
+      );
+
+      const out = await collect(client.streamWith(credentials, []));
+
+      expect(out).toEqual([
+        { type: 'text', text: 'Hi' },
+        { type: 'done', message: assistantMessage('Hi'), credentialId: 'k1' },
+      ]);
+    });
+
+    it('moves to the next credential when the first fails before any text', async () => {
+      adapter.isRetryableError.mockReturnValue(true);
+      adapter.stream
+        .mockReturnValueOnce(events([], new Error('429')))
+        .mockReturnValueOnce(
+          events([{ type: 'done', message: assistantMessage('ok') }]),
+        );
+
+      const out = await collect(client.streamWith(credentials, []));
+
+      expect(out).toEqual([
+        { type: 'done', message: assistantMessage('ok'), credentialId: 'k2' },
+      ]);
+    });
+
+    it('does not switch credential once text has been yielded', async () => {
+      adapter.isRetryableError.mockReturnValue(true);
+      adapter.stream.mockReturnValueOnce(
+        events([{ type: 'text', text: 'Par' }], new Error('dropped')),
+      );
+
+      await expect(collect(client.streamWith(credentials, []))).rejects.toThrow(
+        'dropped',
+      );
+      expect(adapter.stream).toHaveBeenCalledTimes(1);
+    });
+
+    it('throws AllLlmKeysExhaustedError when every credential fails', async () => {
+      adapter.isRetryableError.mockReturnValue(true);
+      adapter.stream.mockImplementation(() => events([], new Error('429')));
+
+      await expect(collect(client.streamWith(credentials, []))).rejects.toThrow(
+        AllLlmKeysExhaustedError,
+      );
+    });
+
+    it('throws NoLlmCredentialsConfiguredError with no credentials', async () => {
+      await expect(collect(client.streamWith([], []))).rejects.toThrow(
+        NoLlmCredentialsConfiguredError,
       );
     });
   });

@@ -5,8 +5,8 @@ import { ChatService } from './chat.service';
 import {
   AllLlmKeysExhaustedError,
   NoLlmCredentialsConfiguredError,
-} from './llm-key-manager';
-import { LlmChatClient } from './llm-chat.client';
+} from '../llm/llm-key-manager';
+import { LlmChatClient } from '../llm/llm-chat.client';
 
 function assistantMessage(content: string) {
   return { role: 'assistant' as const, content };

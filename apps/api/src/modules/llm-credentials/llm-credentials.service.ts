@@ -5,7 +5,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../../database/prisma.service';
 import { LlmCredential, LlmProvider } from '../../generated/prisma/client';
-import { ProviderRegistry } from '../chat/providers/provider-registry';
+import { ProviderRegistry } from '../llm/providers/provider-registry';
 import { CreateLlmCredentialDto } from './dto/create-llm-credential.dto';
 import { UpdateLlmCredentialDto } from './dto/update-llm-credential.dto';
 

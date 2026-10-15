@@ -55,8 +55,31 @@ export interface AdapterCompleteResult {
   rateLimitHeaders?: HeaderReader;
 }
 
+/** Token counts for one call, when the provider reports them. */
+export interface LlmUsage {
+  inputTokens: number;
+  outputTokens: number;
+}
+
+/**
+ * What a streaming call yields: any number of `text` pieces as they
+ * arrive, then exactly one `done` carrying the whole assistant message
+ * (text plus any tool calls, in the same shape complete() returns) and
+ * the token usage if the provider reported it. Tool calls only show up in
+ * `done`, never as partial pieces.
+ */
+export type AdapterStreamEvent =
+  | { type: 'text'; text: string }
+  | { type: 'done'; message: ChatCompletionMessage; usage?: LlmUsage };
+
 export interface LlmProviderAdapter {
   complete(params: AdapterCompleteParams): Promise<AdapterCompleteResult>;
+  /**
+   * Same call as complete(), but yields the answer as it is generated. A
+   * provider error is thrown from the iterator (before or between
+   * pieces); isRetryableError() applies to it the same way.
+   */
+  stream(params: AdapterCompleteParams): AsyncIterable<AdapterStreamEvent>;
   /**
    * Whether a thrown error is worth rotating to the next configured
    * credential for, rather than failing the turn outright — a rate limit

@@ -7,11 +7,11 @@ import type {
 import { Injectable, Logger } from '@nestjs/common';
 import { RateLimitService } from '../../rate-limit/rate-limit.service';
 import { ChatbotService } from '../chatbot/chatbot.service';
-import { LlmChatClient } from '../chat/llm-chat.client';
+import { LlmChatClient } from '../llm/llm-chat.client';
 import {
   AllLlmKeysExhaustedError,
   NoLlmCredentialsConfiguredError,
-} from '../chat/llm-key-manager';
+} from '../llm/llm-key-manager';
 import {
   type KnowledgeMatch,
   KnowledgeService,

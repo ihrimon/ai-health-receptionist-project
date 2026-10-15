@@ -12,7 +12,7 @@ import { PrismaService } from '../../src/database/prisma.service';
 import { WorkspaceRole } from '../../src/generated/prisma/client';
 import { SESSION_COOKIE } from '../../src/modules/auth/auth.constants';
 import { SessionsService } from '../../src/modules/auth/sessions.service';
-import { LlmChatClient } from '../../src/modules/chat/llm-chat.client';
+import { LlmChatClient } from '../../src/modules/llm/llm-chat.client';
 import { EmbeddingService } from '../../src/modules/knowledge/embedding.service';
 import { KnowledgeService } from '../../src/modules/knowledge/knowledge.service';
 import { WorkspacesService } from '../../src/modules/workspaces/workspaces.service';
