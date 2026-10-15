@@ -81,6 +81,11 @@ export default function InstallPage() {
             {copied ? <Check /> : <Copy />}
             {copied ? "Copied" : "Copy code"}
           </Button>
+          <p className="text-xs text-muted-foreground">
+            Does the chat button cover something at the bottom of your site?
+            Add <code>data-bottom=&quot;96&quot;</code> to the tag to lift it
+            96 pixels from the bottom.
+          </p>
         </CardContent>
       </Card>
 
