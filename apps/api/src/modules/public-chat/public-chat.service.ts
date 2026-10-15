@@ -6,6 +6,7 @@ import {
   type PublicChatReply,
 } from '@brainstack/shared';
 import { Injectable, NotFoundException } from '@nestjs/common';
+import { randomUUID } from 'crypto';
 import { PrismaService } from '../../database/prisma.service';
 import {
   ChatbotStatus,
@@ -38,6 +39,7 @@ export const VISITOR_BUSY_REPLY =
 
 interface LiveBot {
   id: string;
+  versionId: string;
   workspaceId: string;
   config: ChatbotConfig;
 }
@@ -83,19 +85,28 @@ export class PublicChatService {
       { key: `public:bot:${bot.id}`, ...PUBLIC_CHAT_LIMITS.perBotMinute },
     );
 
-    const { reply } = await runWithTenant(
+    const { reply, conversationId } = await runWithTenant(
       {
         workspaceId: bot.workspaceId,
         userId: 'public-visitor',
         role: WorkspaceRole.VIEWER,
       },
-      () => this.preview.answer(bot.id, bot.config, request),
+      () =>
+        this.preview.answer(bot.id, bot.config, request, {
+          isPreview: false,
+          // Until the conversation token (M3-3), a visitor without an ID
+          // gets a new conversation each message.
+          visitorId: request.visitorId ?? randomUUID(),
+          versionId: bot.versionId,
+        }),
     );
     if (reply === NO_CREDENTIALS_REPLY) {
-      return { reply: VISITOR_UNAVAILABLE_REPLY };
+      return { reply: VISITOR_UNAVAILABLE_REPLY, conversationId };
     }
-    if (reply === KEYS_EXHAUSTED_REPLY) return { reply: VISITOR_BUSY_REPLY };
-    return { reply };
+    if (reply === KEYS_EXHAUSTED_REPLY) {
+      return { reply: VISITOR_BUSY_REPLY, conversationId };
+    }
+    return { reply, conversationId };
   }
 
   /** Published, switched on, in an active workspace; anything else is a 404. */
@@ -107,7 +118,7 @@ export class PublicChatService {
         workspaceId: true,
         status: true,
         workspace: { select: { status: true } },
-        publishedVersion: { select: { config: true } },
+        publishedVersion: { select: { id: true, config: true } },
       },
     });
     if (
@@ -120,6 +131,7 @@ export class PublicChatService {
     }
     return {
       id: bot.id,
+      versionId: bot.publishedVersion.id,
       workspaceId: bot.workspaceId,
       config: chatbotConfigSchema.parse(bot.publishedVersion.config),
     };

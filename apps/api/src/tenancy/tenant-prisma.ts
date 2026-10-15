@@ -16,6 +16,8 @@ export const TENANT_MODELS = new Set<string>([
   'Product',
   'KnowledgeChunk',
   'WorkspaceLlmKey',
+  'Conversation',
+  'Message',
 ]);
 
 const READ_MANY_OPS = new Set([

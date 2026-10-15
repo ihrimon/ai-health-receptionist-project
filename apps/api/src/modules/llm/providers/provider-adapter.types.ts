@@ -51,6 +51,8 @@ export interface AdapterCompleteParams {
 
 export interface AdapterCompleteResult {
   message: ChatCompletionMessage;
+  /** Token counts, when the provider reports them. */
+  usage?: LlmUsage;
   /** Rate-limit response headers, if this provider's SDK exposes them — used for the Settings usage display. Not every provider does. */
   rateLimitHeaders?: HeaderReader;
 }

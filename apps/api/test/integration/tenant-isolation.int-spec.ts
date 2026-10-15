@@ -46,6 +46,8 @@ describe('Tenant isolation (M1-25)', () => {
             content: messages.length ? 'stub answer' : '',
           },
           credentialId: credentials[0].id,
+          model: 'stub-model',
+          usage: { inputTokens: 100, outputTokens: 7 },
         }),
     ),
     verify: jest.fn(() => Promise.resolve()),
@@ -1002,6 +1004,85 @@ describe('Tenant isolation (M1-25)', () => {
       expect(keysSent().map((k) => k.apiKey)).toEqual(['gsk-preview-b']);
     });
 
+    it("stores each turn in the caller's own workspace, with how it was answered (M3-5, M3-11)", async () => {
+      const first = await as(cookies.ownerA)
+        .post('/v1/chatbot/preview/messages')
+        .send({ message: 'What time do you open?' })
+        .expect(200);
+      const { conversationId } = first.body as { conversationId: string };
+      expect(conversationId).toEqual(expect.any(String));
+
+      const second = await as(cookies.ownerA)
+        .post('/v1/chatbot/preview/messages')
+        .send({ message: 'And on Sunday?', conversationId })
+        .expect(200);
+      expect((second.body as { conversationId: string }).conversationId).toBe(
+        conversationId,
+      );
+
+      const conversation = await prisma.conversation.findUniqueOrThrow({
+        where: { id: conversationId },
+        include: { messages: { orderBy: { createdAt: 'asc' } } },
+      });
+      expect(conversation).toMatchObject({
+        workspaceId: ids.a,
+        chatbotId: ids.botA,
+        isPreview: true,
+        messageCount: 4,
+      });
+      expect(conversation.messages.map((m) => m.role)).toEqual([
+        'USER',
+        'ASSISTANT',
+        'USER',
+        'ASSISTANT',
+      ]);
+      expect(new Set(conversation.messages.map((m) => m.workspaceId))).toEqual(
+        new Set([ids.a]),
+      );
+      expect(conversation.messages[1]).toMatchObject({
+        answeredBy: 'llm',
+        model: 'stub-model',
+        tokensIn: 100,
+        tokensOut: 7,
+      });
+    });
+
+    it("another workspace can't see or continue the conversation", async () => {
+      const first = await as(cookies.ownerA)
+        .post('/v1/chatbot/preview/messages')
+        .send({ message: 'Private question' })
+        .expect(200);
+      const { conversationId } = first.body as { conversationId: string };
+
+      await expect(
+        inWorkspace(ids.b, () =>
+          db.conversation.findUnique({ where: { id: conversationId } }),
+        ),
+      ).resolves.toBeNull();
+      await expect(
+        inWorkspace(ids.b, () =>
+          db.message.findMany({ where: { conversationId } }),
+        ),
+      ).resolves.toEqual([]);
+
+      // B naming A's conversation ID starts B's own conversation instead.
+      const res = await as(cookies.ownerB)
+        .post('/v1/chatbot/preview/messages')
+        .send({ message: 'Hello', conversationId })
+        .expect(200);
+      const bId = (res.body as { conversationId: string }).conversationId;
+      expect(bId).not.toBe(conversationId);
+      const untouched = await prisma.conversation.findUniqueOrThrow({
+        where: { id: conversationId },
+      });
+      expect(untouched.workspaceId).toBe(ids.a);
+      expect(untouched.messageCount).toBe(2);
+      const mine = await prisma.conversation.findUniqueOrThrow({
+        where: { id: bId },
+      });
+      expect(mine.workspaceId).toBe(ids.b);
+    });
+
     it('is off in a workspace without its own key, with no LLM call', async () => {
       const calls = fakeLlm.completeWith.mock.calls.length;
       const a2 = await login(users.ownerA, ids.a2);
@@ -1059,10 +1140,57 @@ describe('Tenant isolation (M1-25)', () => {
       const a = visitor(await publicIdOf(ids.botA));
       await a.config().expect(200);
       const res = await a.send('What is the warehouse code?').expect(200);
-      expect(res.body).toEqual({ reply: 'stub answer' });
+      expect(res.body).toEqual({
+        reply: 'stub answer',
+        conversationId: expect.any(String) as string,
+      });
       const [keys, messages] = lastCall() as [{ apiKey: string }[], unknown];
       expect(keys.map((k) => k.apiKey)).toEqual(['sk-preview-a']);
       expect(JSON.stringify(messages)).not.toContain('B-7781');
+    });
+
+    it("stores a visitor's chat in the chatbot's workspace and continues it for the same visitor only", async () => {
+      const publicId = await publicIdOf(ids.botA);
+      const send = (body: object) =>
+        request(http)
+          .post(`/v1/public/chatbots/${publicId}/messages`)
+          .set('X-Requested-With', 'fetch')
+          .send(body);
+
+      const first = await send({
+        message: 'Hi there',
+        visitorId: 'visitor_abc12345',
+      }).expect(200);
+      const { conversationId } = first.body as { conversationId: string };
+      const again = await send({
+        message: 'One more thing',
+        visitorId: 'visitor_abc12345',
+        conversationId,
+      }).expect(200);
+      expect((again.body as { conversationId: string }).conversationId).toBe(
+        conversationId,
+      );
+      const stored = await prisma.conversation.findUniqueOrThrow({
+        where: { id: conversationId },
+      });
+      expect(stored).toMatchObject({
+        workspaceId: ids.a,
+        chatbotId: ids.botA,
+        isPreview: false,
+        visitorId: 'visitor_abc12345',
+        messageCount: 4,
+      });
+      expect(stored.versionId).toEqual(expect.any(String));
+
+      // Another visitor naming the same ID gets a conversation of their own.
+      const other = await send({
+        message: 'Hello',
+        visitorId: 'visitor_other999',
+        conversationId,
+      }).expect(200);
+      expect(
+        (other.body as { conversationId: string }).conversationId,
+      ).not.toBe(conversationId);
     });
 
     it('is a 404 for an unpublished, switched-off or unknown chatbot', async () => {

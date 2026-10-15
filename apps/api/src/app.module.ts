@@ -9,8 +9,6 @@ import { StorageModule } from './storage/storage.module';
 import { RateLimitModule } from './rate-limit/rate-limit.module';
 import { TenancyModule } from './tenancy/tenancy.module';
 import { HealthModule } from './health/health.module';
-import { ConversationsModule } from './modules/conversations/conversations.module';
-import { ChatModule } from './modules/chat/chat.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { LlmCredentialsModule } from './modules/llm-credentials/llm-credentials.module';
 import { WorkspacesModule } from './modules/workspaces/workspaces.module';
@@ -34,8 +32,6 @@ import { PublicChatModule } from './modules/public-chat/public-chat.module';
     RateLimitModule,
     TenancyModule,
     HealthModule,
-    ConversationsModule,
-    ChatModule,
     AuthModule,
     LlmCredentialsModule,
     WorkspacesModule,

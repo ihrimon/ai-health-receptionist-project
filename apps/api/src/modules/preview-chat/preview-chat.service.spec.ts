@@ -7,6 +7,7 @@ import {
   AllLlmKeysExhaustedError,
   NoLlmCredentialsConfiguredError,
 } from '../llm/llm-key-manager';
+import { ConversationsService } from '../conversations/conversations.service';
 import { KnowledgeService } from '../knowledge/knowledge.service';
 import { LlmKeysService } from '../llm-keys/llm-keys.service';
 import {
@@ -29,6 +30,7 @@ describe('PreviewChatService', () => {
     model: 'gpt',
   };
   const rateLimit = { consume: jest.fn() };
+  const conversations = { recordTurn: jest.fn() };
   let service: PreviewChatService;
 
   beforeEach(async () => {
@@ -44,7 +46,10 @@ describe('PreviewChatService', () => {
     llm.completeWith.mockResolvedValue({
       message: { role: 'assistant', content: ' 30 days. ' },
       credentialId: 'key-1',
+      model: 'gpt',
+      usage: { inputTokens: 120, outputTokens: 8 },
     });
+    conversations.recordTurn.mockResolvedValue('conv-1');
     keys.activeCredentials.mockResolvedValue([ownKey]);
     keys.markUsed.mockResolvedValue(undefined);
     rateLimit.consume.mockResolvedValue(undefined);
@@ -56,6 +61,7 @@ describe('PreviewChatService', () => {
         { provide: LlmChatClient, useValue: llm },
         { provide: RateLimitService, useValue: rateLimit },
         { provide: LlmKeysService, useValue: keys },
+        { provide: ConversationsService, useValue: conversations },
       ],
     }).compile();
     service = moduleRef.get(PreviewChatService);
@@ -68,6 +74,7 @@ describe('PreviewChatService', () => {
     await expect(send()).resolves.toEqual({
       reply: '30 days.',
       sources: [{ title: 'Returns', page: 2, similarity: 0.81 }],
+      conversationId: 'conv-1',
     });
     expect(knowledge.search).toHaveBeenCalledWith('bot-1', 'Can I return it?');
     const [[credentials, messages]] = llm.completeWith.mock
@@ -82,9 +89,45 @@ describe('PreviewChatService', () => {
     await expect(send()).resolves.toEqual({
       reply: NO_CREDENTIALS_REPLY,
       sources: [],
+      conversationId: null,
     });
     expect(knowledge.search).not.toHaveBeenCalled();
     expect(llm.completeWith).not.toHaveBeenCalled();
+    expect(conversations.recordTurn).not.toHaveBeenCalled();
+  });
+
+  it('stores the turn as a preview conversation with how the answer was made', async () => {
+    await service.send('user-1', {
+      message: 'Can I return it?',
+      history: [],
+      conversationId: 'conv-0',
+    });
+
+    expect(conversations.recordTurn).toHaveBeenCalledWith({
+      chatbotId: 'bot-1',
+      conversationId: 'conv-0',
+      visitorId: 'user-1',
+      isPreview: true,
+      versionId: null,
+      userText: 'Can I return it?',
+      answer: {
+        content: '30 days.',
+        sources: [{ title: 'Returns', page: 2, similarity: 0.81 }],
+        answeredBy: 'llm',
+        model: 'gpt',
+        tokensIn: 120,
+        tokensOut: 8,
+        latencyMs: expect.any(Number) as number,
+      },
+    });
+  });
+
+  it('still answers when storing fails', async () => {
+    conversations.recordTurn.mockRejectedValue(new Error('db down'));
+    await expect(send()).resolves.toMatchObject({
+      reply: '30 days.',
+      conversationId: null,
+    });
   });
 
   it('counts each message against the per-user limit first', async () => {
@@ -103,6 +146,11 @@ describe('PreviewChatService', () => {
       credentialId: 'key-1',
     });
     expect((await send()).reply).toBe(config.behavior.fallbackMessage);
+    expect(conversations.recordTurn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        answer: expect.objectContaining({ answeredBy: 'fallback' }) as object,
+      }),
+    );
   });
 
   it('explains a missing LLM key instead of failing', async () => {
@@ -113,6 +161,7 @@ describe('PreviewChatService', () => {
   it('asks to retry when every key is exhausted', async () => {
     llm.completeWith.mockRejectedValue(new AllLlmKeysExhaustedError());
     expect((await send()).reply).toBe(KEYS_EXHAUSTED_REPLY);
+    expect(conversations.recordTurn).not.toHaveBeenCalled();
   });
 
   it('lets other errors through', async () => {
