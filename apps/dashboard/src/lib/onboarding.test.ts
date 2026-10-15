@@ -18,6 +18,11 @@ describe("onboardingSteps", () => {
     expect(doneIds(fresh)).toEqual(["account"]);
   });
 
+  it("sends the business step to the chatbot settings, not the test chat", () => {
+    const business = onboardingSteps(fresh).find((s) => s.id === "business");
+    expect(business?.href).toBe("/app/settings/chatbot");
+  });
+
   it("ticks steps from real data", () => {
     expect(
       doneIds({

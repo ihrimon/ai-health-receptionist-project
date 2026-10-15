@@ -5,7 +5,6 @@ import { useEffect, useState } from "react";
 import { AppearanceTab } from "@/components/chatbot-editor/appearance-tab";
 import { BehaviorTab } from "@/components/chatbot-editor/behavior-tab";
 import { GeneralTab } from "@/components/chatbot-editor/general-tab";
-import { PreviewChat } from "@/components/chatbot-editor/preview-chat";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
@@ -22,12 +21,12 @@ import { useSession } from "@/lib/session";
 import { toastError, toastSuccess } from "@/lib/toast";
 
 /**
- * Chatbot editor (D-3 §3.2, M2-18). Edits a local copy of the draft and
- * saves it with PUT /v1/chatbot/draft; nothing reaches visitors until it's
- * published from the header banner (M2-20). The Test chat panel beside it
- * answers with the saved draft (M3-13).
+ * Chatbot settings (D-3 §3.2, M2-18), under Settings since /app/chatbot
+ * became the test chat. Edits a local copy of the draft and saves it with
+ * PUT /v1/chatbot/draft; nothing reaches visitors until it's published from
+ * the header banner (M2-20).
  */
-export default function ChatbotPage() {
+export default function ChatbotSettingsPage() {
   const { chatbot, error, refresh } = useChatbot();
   const [tab, setTab] = useState<EditorTab>("general");
   // Bumped after a save or revert, so the editor restarts from the server's draft.
@@ -35,7 +34,7 @@ export default function ChatbotPage() {
 
   if (!chatbot) {
     return error ? (
-      <div className="flex flex-1 flex-col items-center justify-center gap-3 p-4 text-center">
+      <div className="flex flex-col items-center justify-center gap-3 py-12 text-center">
         <p className="text-sm text-muted-foreground">
           Couldn&apos;t load your chatbot: {error}
         </p>
@@ -44,7 +43,7 @@ export default function ChatbotPage() {
         </Button>
       </div>
     ) : (
-      <div className="mx-auto grid w-full max-w-3xl gap-4 p-4 sm:p-6">
+      <div className="grid gap-4">
         <Skeleton className="h-10 w-1/2" />
         <Skeleton className="h-64 w-full" />
       </div>
@@ -148,7 +147,6 @@ function Editor({
   const tabProps = { draft, edit, errors };
 
   return (
-    <div className="mx-auto grid w-full max-w-6xl items-start gap-6 p-4 sm:p-6 lg:grid-cols-[minmax(0,1fr)_22rem]">
     <div className="grid min-w-0 gap-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
@@ -221,8 +219,6 @@ function Editor({
           You have view-only access. Ask an admin to change these settings.
         </p>
       )}
-    </div>
-    <PreviewChat welcomeMessage={chatbot.draftConfig.identity.welcomeMessage} />
     </div>
   );
 }
