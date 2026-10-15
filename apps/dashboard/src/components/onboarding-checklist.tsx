@@ -19,6 +19,7 @@ import { onboardingProgress, onboardingSteps } from "@/lib/onboarding";
 import { productsApi } from "@/lib/products";
 import { useSession } from "@/lib/session";
 import { toastError, toastSuccess } from "@/lib/toast";
+import { useAiKeyReady } from "@/lib/use-ai-key-ready";
 
 interface Counts {
   knowledge: number;
@@ -36,6 +37,7 @@ export function OnboardingChecklist() {
   const canEdit = me.role === "OWNER" || me.role === "ADMIN";
   const [counts, setCounts] = useState<Counts | null>(null);
   const [publishing, setPublishing] = useState(false);
+  const aiKeyReady = useAiKeyReady();
 
   useEffect(() => {
     let cancelled = false;
@@ -60,13 +62,16 @@ export function OnboardingChecklist() {
     };
   }, [me.activeWorkspace?.id]);
 
-  if (!chatbot || !counts) return <Skeleton className="h-80 w-full" />;
+  if (!chatbot || !counts || aiKeyReady === undefined) {
+    return <Skeleton className="h-80 w-full" />;
+  }
 
   const steps = onboardingSteps({
     businessDescription: chatbot.draftConfig.business.description,
     knowledgeCount: counts.knowledge,
     productCount: counts.products,
     published: chatbot.publishedVersion !== null,
+    aiKeyReady,
   });
   const progress = onboardingProgress(steps);
   const reasons = chatbot.publishProblems.map((p) => p.message);
