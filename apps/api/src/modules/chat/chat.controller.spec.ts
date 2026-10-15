@@ -1,7 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { ChatController } from './chat.controller';
 import { ChatService } from './chat.service';
-import { LlmKeyManager } from './llm-key-manager';
+import { LlmKeyManager } from '../llm/llm-key-manager';
 
 describe('ChatController', () => {
   let controller: ChatController;

@@ -12,7 +12,18 @@ import {
   LlmKeyManager,
   NoLlmCredentialsConfiguredError,
 } from './llm-key-manager';
+import type { LlmUsage } from './providers/provider-adapter.types';
 import { ProviderRegistry } from './providers/provider-registry';
+
+/** What streamWith() yields: text pieces, then one `done` naming the credential that answered. */
+export type LlmStreamEvent =
+  | { type: 'text'; text: string }
+  | {
+      type: 'done';
+      message: ChatCompletionMessage;
+      usage?: LlmUsage;
+      credentialId: string;
+    };
 
 export interface ChatTurn {
   role: 'user' | 'model';
@@ -169,6 +180,51 @@ export class LlmChatClient {
         return { message: result.message, credentialId: credential.id };
       } catch (err) {
         if (!adapter.isRetryableError(err)) {
+          throw err;
+        }
+        this.logger.warn(
+          `Workspace credential ${credential.id} (${credential.provider}, ${credential.model}) failed: ${(err as Error).message}`,
+        );
+      }
+    }
+    throw new AllLlmKeysExhaustedError();
+  }
+
+  /**
+   * Streaming twin of completeWith(): yields the text as it is generated,
+   * then a final `done` event. Moves to the next credential after a rate
+   * limit or auth error only while nothing has been yielded yet — once
+   * text has gone out, switching key would restart the answer, so the
+   * error is thrown to the caller instead.
+   */
+  async *streamWith(
+    credentials: LlmCredentialSnapshot[],
+    messages: ChatCompletionMessageParam[],
+    tools?: ChatCompletionTool[],
+  ): AsyncGenerator<LlmStreamEvent> {
+    if (credentials.length === 0) {
+      throw new NoLlmCredentialsConfiguredError();
+    }
+    for (const credential of credentials) {
+      const adapter = this.providerRegistry.get(credential.provider);
+      let started = false;
+      try {
+        for await (const event of adapter.stream({
+          apiKey: credential.apiKey,
+          model: credential.model,
+          messages,
+          tools,
+        })) {
+          if (event.type === 'text') {
+            started = true;
+            yield event;
+          } else {
+            yield { ...event, credentialId: credential.id };
+          }
+        }
+        return;
+      } catch (err) {
+        if (started || !adapter.isRetryableError(err)) {
           throw err;
         }
         this.logger.warn(

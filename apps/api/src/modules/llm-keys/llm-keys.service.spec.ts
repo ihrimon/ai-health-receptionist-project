@@ -10,7 +10,7 @@ import { SecretBox } from '../../common/secret-box';
 import { WorkspaceRole } from '../../generated/prisma/client';
 import { runWithTenant } from '../../tenancy/tenant-context';
 import { TENANT_PRISMA } from '../../tenancy/tenant-prisma';
-import { LlmChatClient } from '../chat/llm-chat.client';
+import { LlmChatClient } from '../llm/llm-chat.client';
 import { LlmKeysService } from './llm-keys.service';
 
 describe('LlmKeysService', () => {

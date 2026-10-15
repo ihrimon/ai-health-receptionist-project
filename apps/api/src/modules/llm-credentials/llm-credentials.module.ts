@@ -1,6 +1,6 @@
 import { Module } from '@nestjs/common';
 import { AuthModule } from '../auth/auth.module';
-import { ProviderRegistryModule } from '../chat/providers/provider-registry.module';
+import { ProviderRegistryModule } from '../llm/providers/provider-registry.module';
 import { LlmCredentialsController } from './llm-credentials.controller';
 import { LlmCredentialsService } from './llm-credentials.service';
 

@@ -4,7 +4,7 @@ import { PlatformAdminOnly } from '../auth/platform-admin.guard';
 import { ChatService } from './chat.service';
 import { RateConversationDto } from './dto/rate-conversation.dto';
 import { SendChatMessageDto } from './dto/send-chat-message.dto';
-import { LlmKeyManager } from './llm-key-manager';
+import { LlmKeyManager } from '../llm/llm-key-manager';
 
 @Controller('chat')
 export class ChatController {

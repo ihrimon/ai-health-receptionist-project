@@ -2,11 +2,11 @@ import { defaultChatbotConfig } from '@brainstack/shared';
 import { Test } from '@nestjs/testing';
 import { RateLimitService } from '../../rate-limit/rate-limit.service';
 import { ChatbotService } from '../chatbot/chatbot.service';
-import { LlmChatClient } from '../chat/llm-chat.client';
+import { LlmChatClient } from '../llm/llm-chat.client';
 import {
   AllLlmKeysExhaustedError,
   NoLlmCredentialsConfiguredError,
-} from '../chat/llm-key-manager';
+} from '../llm/llm-key-manager';
 import { KnowledgeService } from '../knowledge/knowledge.service';
 import { LlmKeysService } from '../llm-keys/llm-keys.service';
 import {

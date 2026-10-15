@@ -2,7 +2,7 @@ import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { PrismaService } from '../../database/prisma.service';
 import { LlmProvider } from '../../generated/prisma/client';
-import { ProviderRegistry } from '../chat/providers/provider-registry';
+import { ProviderRegistry } from '../llm/providers/provider-registry';
 import { LlmCredentialsService } from './llm-credentials.service';
 
 describe('LlmCredentialsService', () => {

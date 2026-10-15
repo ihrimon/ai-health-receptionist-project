@@ -5,8 +5,8 @@ import { SendChatMessageDto } from './dto/send-chat-message.dto';
 import {
   AllLlmKeysExhaustedError,
   NoLlmCredentialsConfiguredError,
-} from './llm-key-manager';
-import { ChatTurn, LlmChatClient } from './llm-chat.client';
+} from '../llm/llm-key-manager';
+import { ChatTurn, LlmChatClient } from '../llm/llm-chat.client';
 
 const CHAT_SESSION_PREFIX = 'chat-';
 const LLM_UNAVAILABLE_REPLY =

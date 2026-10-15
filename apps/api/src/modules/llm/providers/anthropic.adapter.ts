@@ -9,6 +9,7 @@ import {
   LLM_REQUEST_TIMEOUT_MS,
   type AdapterCompleteParams,
   type AdapterCompleteResult,
+  type AdapterStreamEvent,
   type ChatCompletionMessage,
   type ChatCompletionMessageParam,
   type ChatCompletionTool,
@@ -67,6 +68,46 @@ export class AnthropicAdapter implements LlmProviderAdapter {
     return {
       message: fromAnthropicMessage(message),
       rateLimitHeaders: response.headers,
+    };
+  }
+
+  async *stream({
+    apiKey,
+    model,
+    messages,
+    tools,
+  }: AdapterCompleteParams): AsyncGenerator<AdapterStreamEvent> {
+    const client = new Anthropic({
+      apiKey,
+      timeout: LLM_REQUEST_TIMEOUT_MS,
+      maxRetries: 0,
+    });
+    const { system, messages: anthropicMessages } =
+      toAnthropicMessages(messages);
+
+    const stream = client.messages.stream({
+      model,
+      system,
+      messages: anthropicMessages,
+      ...(tools?.length ? { tools: toAnthropicTools(tools) } : {}),
+      max_tokens: 1024,
+    });
+    for await (const event of stream) {
+      if (
+        event.type === 'content_block_delta' &&
+        event.delta.type === 'text_delta'
+      ) {
+        yield { type: 'text', text: event.delta.text };
+      }
+    }
+    const final = await stream.finalMessage();
+    yield {
+      type: 'done',
+      message: fromAnthropicMessage(final),
+      usage: {
+        inputTokens: final.usage.input_tokens,
+        outputTokens: final.usage.output_tokens,
+      },
     };
   }
 

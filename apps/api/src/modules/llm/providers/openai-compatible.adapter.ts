@@ -4,10 +4,12 @@ import Groq, {
   AuthenticationError,
   RateLimitError,
 } from 'groq-sdk';
+import { readOpenAiStream } from './openai-stream';
 import {
   LLM_REQUEST_TIMEOUT_MS,
   type AdapterCompleteParams,
   type AdapterCompleteResult,
+  type AdapterStreamEvent,
   type LlmProviderAdapter,
 } from './provider-adapter.types';
 
@@ -56,6 +58,27 @@ export class OpenAiCompatibleAdapter implements LlmProviderAdapter {
       },
       rateLimitHeaders: response.headers,
     };
+  }
+
+  async *stream({
+    apiKey,
+    model,
+    messages,
+    tools,
+  }: AdapterCompleteParams): AsyncGenerator<AdapterStreamEvent> {
+    const client = new Groq({
+      apiKey,
+      timeout: LLM_REQUEST_TIMEOUT_MS,
+      maxRetries: 0,
+    });
+    const completion = await client.chat.completions.create({
+      model,
+      messages,
+      ...(tools?.length ? { tools, tool_choice: 'auto' as const } : {}),
+      max_tokens: 1024,
+      stream: true,
+    });
+    yield* readOpenAiStream(completion);
   }
 
   isRetryableError(err: unknown): boolean {
