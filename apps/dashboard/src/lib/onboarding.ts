@@ -41,8 +41,8 @@ export function onboardingSteps(input: OnboardingInput): OnboardingStep[] {
       done: input.businessDescription.trim() !== "",
       available: true,
       optional: false,
-      href: "/app/chatbot",
-      action: "Go to Chatbot",
+      href: "/app/settings/chatbot",
+      action: "Go to chatbot settings",
     },
     {
       id: "knowledge",
