@@ -29,6 +29,7 @@ export function PreviewChat({
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [openSources, setOpenSources] = useState<number | null>(null);
+  const [conversationId, setConversationId] = useState<string | null>(null);
   const endRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -44,7 +45,9 @@ export function PreviewChat({
     setInput("");
     setSending(true);
     try {
-      const { reply, sources } = await sendPreviewMessage(message, earlier);
+      const { reply, sources, conversationId: stored } =
+        await sendPreviewMessage(message, earlier, conversationId);
+      setConversationId(stored);
       setMessages((current) => [
         ...current,
         { role: "assistant", text: reply, sources },
@@ -77,6 +80,7 @@ export function PreviewChat({
           onClick={() => {
             setMessages([]);
             setOpenSources(null);
+            setConversationId(null);
           }}
         >
           <RotateCcw />

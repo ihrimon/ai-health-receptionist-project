@@ -24,6 +24,13 @@ export const previewChatRequestSchema = z.strictObject({
     .array(previewChatTurnSchema)
     .max(PREVIEW_CHAT_LIMITS.historyTurns)
     .default([]),
+  /** Continue a stored conversation (the one a reply returned). */
+  conversationId: z.uuid().optional(),
+  /** Public widget only: the random ID the widget made for this visitor. */
+  visitorId: z
+    .string()
+    .regex(/^[A-Za-z0-9_-]{8,64}$/)
+    .optional(),
 });
 
 export type PreviewChatTurn = z.output<typeof previewChatTurnSchema>;
@@ -39,4 +46,6 @@ export interface PreviewChatSource {
 export interface PreviewChatReply {
   reply: string;
   sources: PreviewChatSource[];
+  /** The stored conversation; null when nothing was stored (no key, keys exhausted). */
+  conversationId: string | null;
 }

@@ -164,7 +164,12 @@ export class LlmChatClient {
     credentials: LlmCredentialSnapshot[],
     messages: ChatCompletionMessageParam[],
     tools?: ChatCompletionTool[],
-  ): Promise<{ message: ChatCompletionMessage; credentialId: string }> {
+  ): Promise<{
+    message: ChatCompletionMessage;
+    credentialId: string;
+    model: string;
+    usage?: LlmUsage;
+  }> {
     if (credentials.length === 0) {
       throw new NoLlmCredentialsConfiguredError();
     }
@@ -177,7 +182,12 @@ export class LlmChatClient {
           messages,
           tools,
         });
-        return { message: result.message, credentialId: credential.id };
+        return {
+          message: result.message,
+          credentialId: credential.id,
+          model: credential.model,
+          usage: result.usage,
+        };
       } catch (err) {
         if (!adapter.isRetryableError(err)) {
           throw err;

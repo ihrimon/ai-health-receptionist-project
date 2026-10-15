@@ -23,7 +23,7 @@ describe('PublicChatService', () => {
     workspaceId: 'ws-1',
     status: 'ENABLED',
     workspace: { status: 'ACTIVE' },
-    publishedVersion: { config },
+    publishedVersion: { id: 'ver-1', config },
   };
   const prisma = { chatbot: { findUnique: jest.fn() } };
   const rateLimit = { consume: jest.fn() };
@@ -34,7 +34,11 @@ describe('PublicChatService', () => {
     jest.resetAllMocks();
     prisma.chatbot.findUnique.mockResolvedValue(liveRow);
     rateLimit.consume.mockResolvedValue(undefined);
-    preview.answer.mockResolvedValue({ reply: 'Hello!', sources: [] });
+    preview.answer.mockResolvedValue({
+      reply: 'Hello!',
+      sources: [],
+      conversationId: 'conv-1',
+    });
     const moduleRef = await Test.createTestingModule({
       providers: [
         PublicChatService,
@@ -76,15 +80,46 @@ describe('PublicChatService', () => {
     let tenant: unknown;
     preview.answer.mockImplementation(() => {
       tenant = currentTenant();
-      return Promise.resolve({ reply: 'Hello!', sources: [{ title: 'x' }] });
+      return Promise.resolve({
+        reply: 'Hello!',
+        sources: [{ title: 'x' }],
+        conversationId: 'conv-1',
+      });
     });
 
-    await expect(send()).resolves.toEqual({ reply: 'Hello!' });
+    await expect(send()).resolves.toEqual({
+      reply: 'Hello!',
+      conversationId: 'conv-1',
+    });
     expect(tenant).toMatchObject({ workspaceId: 'ws-1' });
-    expect(preview.answer).toHaveBeenCalledWith('bot-1', config, {
+    expect(preview.answer).toHaveBeenCalledWith(
+      'bot-1',
+      config,
+      { message: 'Hi', history: [] },
+      {
+        isPreview: false,
+        visitorId: expect.any(String) as string,
+        versionId: 'ver-1',
+      },
+    );
+  });
+
+  it("keeps the widget's visitor ID so a conversation can continue", async () => {
+    await service.send('cb_abc', '1.2.3.4', {
       message: 'Hi',
       history: [],
+      visitorId: 'visitor_1234',
+      conversationId: '5b0d3c1e-7a5c-4b88-9f0a-0a6f2f7d9a11',
     });
+
+    expect(preview.answer).toHaveBeenCalledWith(
+      'bot-1',
+      config,
+      expect.objectContaining({
+        conversationId: '5b0d3c1e-7a5c-4b88-9f0a-0a6f2f7d9a11',
+      }),
+      expect.objectContaining({ visitorId: 'visitor_1234', isPreview: false }),
+    );
   });
 
   it('limits by IP and by chatbot before calling the LLM', async () => {
@@ -102,11 +137,13 @@ describe('PublicChatService', () => {
     preview.answer.mockResolvedValue({
       reply: NO_CREDENTIALS_REPLY,
       sources: [],
+      conversationId: null,
     });
     expect((await send()).reply).toBe(VISITOR_UNAVAILABLE_REPLY);
     preview.answer.mockResolvedValue({
       reply: KEYS_EXHAUSTED_REPLY,
       sources: [],
+      conversationId: null,
     });
     expect((await send()).reply).toBe(VISITOR_BUSY_REPLY);
   });

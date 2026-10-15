@@ -81,6 +81,12 @@ export class OpenAiSdkAdapter implements LlmProviderAdapter {
         role: 'assistant',
         content: '',
       },
+      usage: completion.usage
+        ? {
+            inputTokens: completion.usage.prompt_tokens,
+            outputTokens: completion.usage.completion_tokens,
+          }
+        : undefined,
       rateLimitHeaders: response.headers,
     };
   }

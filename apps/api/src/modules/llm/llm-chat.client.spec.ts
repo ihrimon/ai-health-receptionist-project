@@ -223,13 +223,18 @@ describe('LlmChatClient', () => {
       adapter.isRetryableError.mockImplementation((e) => e === rateLimited);
       adapter.complete
         .mockRejectedValueOnce(rateLimited)
-        .mockResolvedValueOnce({ message: assistantMessage('ok') });
+        .mockResolvedValueOnce({
+          message: assistantMessage('ok'),
+          usage: { inputTokens: 10, outputTokens: 2 },
+        });
 
       const result = await client.completeWith(keys, []);
 
       expect(result).toEqual({
         message: assistantMessage('ok'),
         credentialId: 'k2',
+        model: 'm2',
+        usage: { inputTokens: 10, outputTokens: 2 },
       });
       expect(adapter.complete).toHaveBeenLastCalledWith(
         expect.objectContaining({ apiKey: 'gsk-2', model: 'm2' }),

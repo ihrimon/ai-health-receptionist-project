@@ -67,6 +67,10 @@ export class AnthropicAdapter implements LlmProviderAdapter {
 
     return {
       message: fromAnthropicMessage(message),
+      usage: {
+        inputTokens: message.usage.input_tokens,
+        outputTokens: message.usage.output_tokens,
+      },
       rateLimitHeaders: response.headers,
     };
   }

@@ -71,7 +71,16 @@ export class GeminiAdapter implements LlmProviderAdapter {
       { timeout: LLM_REQUEST_TIMEOUT_MS },
     );
 
-    return { message: fromGeminiResponse(result.response) };
+    const meta = result.response.usageMetadata;
+    return {
+      message: fromGeminiResponse(result.response),
+      usage: meta
+        ? {
+            inputTokens: meta.promptTokenCount ?? 0,
+            outputTokens: meta.candidatesTokenCount ?? 0,
+          }
+        : undefined,
+    };
   }
 
   async *stream({

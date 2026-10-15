@@ -108,21 +108,6 @@ export interface Me {
   }[];
 }
 
-export interface ChatTurn {
-  role: "user" | "model";
-  text: string;
-}
-
-export interface Conversation {
-  id: string;
-  callSid: string;
-  transcript?: ChatTurn[];
-  summary?: string;
-  duration?: number;
-  rating?: number;
-  createdAt: string;
-}
-
 export type LlmProvider =
   | "groq"
   | "openai"

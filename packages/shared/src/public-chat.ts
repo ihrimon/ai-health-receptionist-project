@@ -20,4 +20,6 @@ export interface PublicChatConfig {
 /** Visitors get the answer only; sources are for the dashboard. */
 export interface PublicChatReply {
   reply: string;
+  /** Send it back with the next message (and the same visitorId) to continue. */
+  conversationId: string | null;
 }

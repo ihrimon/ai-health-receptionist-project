@@ -263,9 +263,6 @@ function LlmCredentialsSettings() {
   const [revealed, setRevealed] = useState<Set<string>>(new Set());
   const [busyId, setBusyId] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<LlmCredential | null>(null);
-  const [activeCredentialId, setActiveCredentialId] = useState<string | null>(
-    null,
-  );
   const [now, setNow] = useState(() => Date.now());
 
   const [createOpen, setCreateOpen] = useState(false);
@@ -304,27 +301,17 @@ function LlmCredentialsSettings() {
       .catch((err) => setError(err.message));
   }
 
-  function loadActiveCredential() {
-    apiFetch<{ id: string | null }>("/chat/active-credential")
-      .then((r) => setActiveCredentialId(r.id))
-      .catch(() => {});
-  }
-
   useEffect(() => {
     load();
-    loadActiveCredential();
   }, []);
 
   // Usage numbers (remaining requests/tokens) change the moment the chat
   // assistant actually uses a key, not on any schedule of ours — poll
   // periodically so an admin watching this page sees it move without
-  // having to manually reload. Same for which credential is currently
-  // in rotation — it only changes server-side (a rate limit, an admin
-  // edit), never from anything this page itself does.
+  // having to manually reload.
   useEffect(() => {
     const interval = setInterval(() => {
       load();
-      loadActiveCredential();
     }, 10_000);
     return () => clearInterval(interval);
   }, []);
@@ -407,7 +394,6 @@ function LlmCredentialsSettings() {
       });
       toastSuccess(`Key is now ${c.isActive ? "paused" : "active"}.`);
       load();
-      loadActiveCredential();
     } catch (err) {
       toastError((err as Error).message);
     } finally {
@@ -433,7 +419,6 @@ function LlmCredentialsSettings() {
       // No success toast here on purpose — the row visibly moving up/down
       // is already the feedback, and every click would otherwise pop one.
       load();
-      loadActiveCredential();
     } catch (err) {
       toastError((err as Error).message);
     } finally {
@@ -451,7 +436,6 @@ function LlmCredentialsSettings() {
       toastSuccess("API key deleted.");
       setDeleteTarget(null);
       load();
-      loadActiveCredential();
     } catch (err) {
       toastError((err as Error).message);
     } finally {
@@ -479,7 +463,6 @@ function LlmCredentialsSettings() {
                 aria-label="Refresh usage"
                 onClick={() => {
                   load();
-                  loadActiveCredential();
                 }}
               >
                 <RefreshCw />
@@ -636,12 +619,6 @@ function LlmCredentialsSettings() {
                         {PROVIDERS.find((p) => p.value === c.provider)
                           ?.label ?? c.provider}
                       </span>
-                      {activeCredentialId === c.id && (
-                        <span className="inline-flex items-center gap-1 text-xs font-medium text-green-600 dark:text-green-400">
-                          <span className="size-1.5 animate-pulse rounded-full bg-green-500" />
-                          Currently active
-                        </span>
-                      )}
                     </div>
                     <div className="mt-1 flex min-w-0 items-center gap-1.5 font-mono text-xs text-muted-foreground">
                       <span className="truncate">
