@@ -83,6 +83,16 @@ export class ChatbotService {
     return bot.id;
   }
 
+  /** The chatbot's ID and draft config, for the dashboard preview (M3-13). */
+  async draft(): Promise<{ id: string; config: ChatbotConfig }> {
+    const bot = await this.db.chatbot.findFirst({
+      select: { id: true, draftConfig: true },
+      orderBy: { createdAt: 'asc' },
+    });
+    if (!bot) throw new NotFoundException('Chatbot not found');
+    return { id: bot.id, config: chatbotConfigSchema.parse(bot.draftConfig) };
+  }
+
   /**
    * The currency new products get when none is given: the draft config's
    * business.currency, or USD (the D-4 default) if the draft is unreadable.
