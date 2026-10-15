@@ -17,7 +17,14 @@ import { cn } from "@/lib/utils";
  * knowledge. Each bot reply can show the sources it was built from
  * (M3-14). The conversation lives only in this component.
  */
-export function PreviewChat({ welcomeMessage }: { welcomeMessage: string }) {
+export function PreviewChat({
+  welcomeMessage,
+  className,
+}: {
+  welcomeMessage: string;
+  /** Sizing from the page, e.g. filling the Chatbot page. */
+  className?: string;
+}) {
   const [messages, setMessages] = useState<PreviewMessage[]>([]);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
@@ -52,7 +59,9 @@ export function PreviewChat({ welcomeMessage }: { welcomeMessage: string }) {
   }
 
   return (
-    <section className="flex h-[32rem] flex-col rounded-xl border bg-card lg:sticky lg:top-4 lg:h-[calc(100svh-8rem)]">
+    <section
+      className={cn("flex h-[32rem] flex-col rounded-xl border bg-card", className)}
+    >
       <header className="flex items-center justify-between border-b px-4 py-3">
         <div>
           <h3 className="text-sm font-semibold">Test chat</h3>
