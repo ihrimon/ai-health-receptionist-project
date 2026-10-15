@@ -114,20 +114,28 @@ describe('KnowledgeService', () => {
     },
   );
 
-  it("searches only the current workspace's chatbot", async () => {
+  it("searches only the current workspace's chatbot, in both the meaning and the keyword search", async () => {
     await inTenant(() => service.search('bot-1', 'return policy', 5));
 
     const [call] = db.$queryRaw.mock.calls as unknown[][];
-    expect(sqlOf(call)).toContain(
-      'WHERE workspace_id = ?::uuid AND chatbot_id = ?::uuid',
-    );
-    expect(call.slice(1)).toEqual([
-      '[0.1,0.2]',
-      'ws-1',
-      'bot-1',
-      '[0.1,0.2]',
-      5,
-    ]);
+    const sql = sqlOf(call);
+    // meaning search, keyword search and the final join each add the workspace.
+    expect(sql.split('workspace_id = ?::uuid')).toHaveLength(4);
+    expect(sql.split('chatbot_id = ?::uuid')).toHaveLength(4);
+    const params = call.slice(1);
+    expect(params.filter((p) => p === 'ws-1')).toHaveLength(3);
+    expect(params.filter((p) => p === 'bot-1')).toHaveLength(3);
+    // The words are passed as a bound parameter, never as SQL text.
+    expect(params).toContain('return | policy');
+    expect(sql).not.toContain('return | policy');
+    expect(params).toContain(5);
+  });
+
+  it('searches by meaning only when the question has no words', async () => {
+    await inTenant(() => service.search('bot-1', '??', 3));
+
+    const [call] = db.$queryRaw.mock.calls as unknown[][];
+    expect(call.slice(1)).toContain('');
   });
 
   it('refuses to search outside a workspace', async () => {

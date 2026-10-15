@@ -4,6 +4,12 @@ import { requireTenant } from '../../tenancy/tenant-context';
 import { TENANT_PRISMA, type TenantPrisma } from '../../tenancy/tenant-prisma';
 import type { ChunkMetadata } from './chunk-text';
 import { EmbeddingService } from './embedding.service';
+import { keywordQuery } from './keyword-query';
+
+/** Reciprocal Rank Fusion constant: how fast a lower rank stops counting (M3-7). */
+const RRF_K = 60;
+/** Candidates taken from each of the two searches before they are merged. */
+const MIN_CANDIDATES = 20;
 
 /** A transaction on the tenant client, as `$transaction(async (tx) => …)` gives it. */
 export type TenantTx = Parameters<
@@ -125,8 +131,12 @@ export class KnowledgeService {
   }
 
   /**
-   * The chunks of one chatbot closest in meaning to `query` (M3 adds
-   * keyword search on top). Only the current workspace's chunks.
+   * The chunks of one chatbot that best answer `query` (M3-7): a meaning
+   * search (pgvector) and a keyword search (Postgres full-text) run
+   * side by side and are merged by rank (RRF), so an exact model number or
+   * name is found even when the meaning search misses it. `similarity` is
+   * always the cosine similarity, for display. Only the current
+   * workspace's chunks: raw SQL, so the workspace is added by hand.
    */
   async search(
     chatbotId: string,
@@ -135,11 +145,39 @@ export class KnowledgeService {
   ): Promise<KnowledgeMatch[]> {
     const { workspaceId } = requireTenant();
     const vector = toVectorLiteral(await this.embedding.embed(query));
+    const keywords = keywordQuery(query);
+    const candidates = Math.max(topK * 4, MIN_CANDIDATES);
+
     return this.db.$queryRaw<KnowledgeMatch[]>`
-      SELECT content, metadata, 1 - (embedding <=> ${vector}::vector) AS similarity
-      FROM knowledge_chunks
-      WHERE workspace_id = ${workspaceId}::uuid AND chatbot_id = ${chatbotId}::uuid
-      ORDER BY embedding <=> ${vector}::vector
+      WITH meaning AS (
+        SELECT id, ROW_NUMBER() OVER (ORDER BY embedding <=> ${vector}::vector) AS rank
+        FROM knowledge_chunks
+        WHERE workspace_id = ${workspaceId}::uuid AND chatbot_id = ${chatbotId}::uuid
+        ORDER BY embedding <=> ${vector}::vector
+        LIMIT ${candidates}
+      ),
+      keyword AS (
+        SELECT c.id, ROW_NUMBER() OVER (
+          ORDER BY ts_rank_cd(to_tsvector('english', c.content), q.query) DESC
+        ) AS rank
+        FROM knowledge_chunks c,
+             to_tsquery('english', ${keywords ?? ''}::text) AS q(query)
+        WHERE ${keywords !== null}
+          AND c.workspace_id = ${workspaceId}::uuid AND c.chatbot_id = ${chatbotId}::uuid
+          AND to_tsvector('english', c.content) @@ q.query
+        ORDER BY ts_rank_cd(to_tsvector('english', c.content), q.query) DESC
+        LIMIT ${candidates}
+      ),
+      fused AS (
+        SELECT id, SUM(1.0 / (${RRF_K}::int + rank)) AS score
+        FROM (SELECT id, rank FROM meaning UNION ALL SELECT id, rank FROM keyword) ranked
+        GROUP BY id
+      )
+      SELECT c.content, c.metadata, 1 - (c.embedding <=> ${vector}::vector) AS similarity
+      FROM fused f
+      JOIN knowledge_chunks c ON c.id = f.id
+      WHERE c.workspace_id = ${workspaceId}::uuid AND c.chatbot_id = ${chatbotId}::uuid
+      ORDER BY f.score DESC, c.id
       LIMIT ${topK}`;
   }
 }
