@@ -4,7 +4,7 @@ import type { PublicChatConfig } from "@brainstack/shared";
 import { Send, X } from "lucide-react";
 import { useParams } from "next/navigation";
 import { type FormEvent, useEffect, useRef, useState } from "react";
-import { historyFor, type PreviewMessage } from "@/lib/preview-chat";
+import type { PreviewMessage } from "@/lib/preview-chat";
 import { cn } from "@/lib/utils";
 import {
   newVisitorId,
@@ -89,19 +89,37 @@ function ChatWindow({
     setMessages([...earlier, { role: "user", text: message }]);
     setInput("");
     setSending(true);
+    let started = false;
+    const showAnswer = (text: string) => {
+      const replace = started;
+      setMessages((current) => {
+        const answer: PreviewMessage = { role: "assistant", text };
+        return replace ? [...current.slice(0, -1), answer] : [...current, answer];
+      });
+    };
     try {
-      const { reply, conversationId: stored } = await widgetApi.send(
+      let text = "";
+      await widgetApi.send(
         publicId,
         message,
-        historyFor(earlier),
         { visitorId, conversationId },
+        (event) => {
+          if (event.type === "delta") {
+            text += event.text;
+            showAnswer(text);
+            started = true;
+          } else if (event.type === "done") {
+            setConversationId(event.conversationId);
+          } else if (event.type === "error") {
+            throw new Error(event.message);
+          }
+        },
       );
-      setConversationId(stored);
-      setMessages((current) => [...current, { role: "assistant", text: reply }]);
     } catch (err) {
       const status = (err as { status?: number }).status;
+      // A broken answer is not stored, so none of it stays on screen.
       setMessages((current) => [
-        ...current,
+        ...(started ? current.slice(0, -1) : current),
         {
           role: "assistant",
           text:
@@ -160,7 +178,7 @@ function ChatWindow({
             {m.text}
           </Bubble>
         ))}
-        {sending && (
+        {sending && messages.at(-1)?.role === "user" && (
           <Bubble mine={false}>
             <span className="text-zinc-500">Typing…</span>
           </Bubble>

@@ -11,7 +11,7 @@ import {
 describe('ConversationsService', () => {
   const db = {
     conversation: { create: jest.fn(), updateMany: jest.fn() },
-    message: { createMany: jest.fn() },
+    message: { createMany: jest.fn(), findMany: jest.fn() },
   };
   let service: ConversationsService;
 
@@ -123,5 +123,43 @@ describe('ConversationsService', () => {
 
     expect(db.message.createMany).not.toHaveBeenCalled();
     expect(db.conversation.create).toHaveBeenCalledTimes(1);
+  });
+
+  describe('recentTurns', () => {
+    it('returns the latest turns oldest first, only for the same chatbot, visitor and kind', async () => {
+      db.message.findMany.mockResolvedValue([
+        { role: 'ASSISTANT', content: 'Yes, 30 days.' },
+        { role: 'USER', content: 'Can I return it?' },
+      ]);
+
+      const turns = await service.recentTurns(
+        {
+          conversationId: 'conv-1',
+          chatbotId: 'bot-1',
+          visitorId: 'visitor-1',
+          isPreview: false,
+        },
+        20,
+      );
+
+      expect(turns).toEqual([
+        { role: 'user', text: 'Can I return it?' },
+        { role: 'assistant', text: 'Yes, 30 days.' },
+      ]);
+      expect(db.message.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: {
+            conversationId: 'conv-1',
+            conversation: {
+              chatbotId: 'bot-1',
+              visitorId: 'visitor-1',
+              isPreview: false,
+            },
+          },
+          orderBy: { createdAt: 'desc' },
+          take: 20,
+        }),
+      );
+    });
   });
 });

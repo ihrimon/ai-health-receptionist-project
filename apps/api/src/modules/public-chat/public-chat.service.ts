@@ -3,10 +3,10 @@ import {
   chatbotConfigSchema,
   type PreviewChatRequest,
   type PublicChatConfig,
-  type PublicChatReply,
 } from '@brainstack/shared';
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { randomUUID } from 'crypto';
+import type { EmitChatEvent } from '../../common/sse';
 import { PrismaService } from '../../database/prisma.service';
 import {
   ChatbotStatus,
@@ -15,11 +15,7 @@ import {
 } from '../../generated/prisma/client';
 import { RateLimitService } from '../../rate-limit/rate-limit.service';
 import { runWithTenant } from '../../tenancy/tenant-context';
-import {
-  KEYS_EXHAUSTED_REPLY,
-  NO_CREDENTIALS_REPLY,
-  PreviewChatService,
-} from '../preview-chat/preview-chat.service';
+import { PreviewChatService } from '../preview-chat/preview-chat.service';
 
 /**
  * Per IP and per chatbot (D-2 §5). The endpoint is open to anyone and each
@@ -77,7 +73,8 @@ export class PublicChatService {
     publicId: string,
     ip: string,
     request: PreviewChatRequest,
-  ): Promise<PublicChatReply> {
+    emit: EmitChatEvent,
+  ): Promise<void> {
     const bot = await this.liveBot(publicId);
     await this.rateLimit.consume(
       { key: `public:ip:${ip}`, ...PUBLIC_CHAT_LIMITS.perIpMinute },
@@ -85,28 +82,24 @@ export class PublicChatService {
       { key: `public:bot:${bot.id}`, ...PUBLIC_CHAT_LIMITS.perBotMinute },
     );
 
-    const { reply, conversationId } = await runWithTenant(
+    await runWithTenant(
       {
         workspaceId: bot.workspaceId,
         userId: 'public-visitor',
         role: WorkspaceRole.VIEWER,
       },
       () =>
-        this.preview.answer(bot.id, bot.config, request, {
+        this.preview.answer(bot.id, bot.config, request, emit, {
           isPreview: false,
-          // Until the conversation token (M3-3), a visitor without an ID
+          // Until the conversation token (M3-4), a visitor without an ID
           // gets a new conversation each message.
           visitorId: request.visitorId ?? randomUUID(),
           versionId: bot.versionId,
+          includeSources: false,
+          noCredentialsReply: VISITOR_UNAVAILABLE_REPLY,
+          keysExhaustedReply: VISITOR_BUSY_REPLY,
         }),
     );
-    if (reply === NO_CREDENTIALS_REPLY) {
-      return { reply: VISITOR_UNAVAILABLE_REPLY, conversationId };
-    }
-    if (reply === KEYS_EXHAUSTED_REPLY) {
-      return { reply: VISITOR_BUSY_REPLY, conversationId };
-    }
-    return { reply, conversationId };
   }
 
   /** Published, switched on, in an active workspace; anything else is a 404. */

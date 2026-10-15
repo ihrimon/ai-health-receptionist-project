@@ -1,9 +1,6 @@
-import type {
-  PreviewChatTurn,
-  PublicChatConfig,
-  PublicChatReply,
-} from "@brainstack/shared";
+import type { ChatStreamEvent, PublicChatConfig } from "@brainstack/shared";
 import { apiFetch } from "@/lib/api";
+import { postChatStream } from "@/lib/chat-stream";
 
 /* The embeddable widget (early MVP): the /w/[publicId] page that
    public/chatbot.js opens in an iframe on the company's site. */
@@ -21,26 +18,23 @@ export const widgetApi = {
     apiFetch<PublicChatConfig>(
       `/public/chatbots/${encodeURIComponent(publicId)}/config`,
     ),
+  /** Streams the answer; `visitor` is the widget's random ID and, after the first answer, the stored conversation. */
   send: (
     publicId: string,
     message: string,
-    history: PreviewChatTurn[],
-    /** The visitor's random ID and, after the first reply, the stored conversation. */
     visitor: { visitorId: string; conversationId?: string | null },
+    onEvent: (event: ChatStreamEvent) => void,
   ) =>
-    apiFetch<PublicChatReply>(
+    postChatStream(
       `/public/chatbots/${encodeURIComponent(publicId)}/messages`,
       {
-        method: "POST",
-        body: JSON.stringify({
-          message,
-          history,
-          visitorId: visitor.visitorId,
-          ...(visitor.conversationId
-            ? { conversationId: visitor.conversationId }
-            : {}),
-        }),
+        message,
+        visitorId: visitor.visitorId,
+        ...(visitor.conversationId
+          ? { conversationId: visitor.conversationId }
+          : {}),
       },
+      onEvent,
     ),
 };
 

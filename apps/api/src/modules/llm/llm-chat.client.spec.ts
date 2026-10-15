@@ -309,7 +309,12 @@ describe('LlmChatClient', () => {
 
       expect(out).toEqual([
         { type: 'text', text: 'Hi' },
-        { type: 'done', message: assistantMessage('Hi'), credentialId: 'k1' },
+        {
+          type: 'done',
+          message: assistantMessage('Hi'),
+          credentialId: 'k1',
+          model: 'm',
+        },
       ]);
     });
 
@@ -324,7 +329,12 @@ describe('LlmChatClient', () => {
       const out = await collect(client.streamWith(credentials, []));
 
       expect(out).toEqual([
-        { type: 'done', message: assistantMessage('ok'), credentialId: 'k2' },
+        {
+          type: 'done',
+          message: assistantMessage('ok'),
+          credentialId: 'k2',
+          model: 'm',
+        },
       ]);
     });
 
