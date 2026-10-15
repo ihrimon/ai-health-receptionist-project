@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { AppearanceTab } from "@/components/chatbot-editor/appearance-tab";
 import { BehaviorTab } from "@/components/chatbot-editor/behavior-tab";
 import { GeneralTab } from "@/components/chatbot-editor/general-tab";
+import { PreviewChat } from "@/components/chatbot-editor/preview-chat";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
@@ -23,8 +24,8 @@ import { toastError, toastSuccess } from "@/lib/toast";
 /**
  * Chatbot editor (D-3 §3.2, M2-18). Edits a local copy of the draft and
  * saves it with PUT /v1/chatbot/draft; nothing reaches visitors until it's
- * published from the header banner (M2-20). The live preview comes with
- * the chat pipeline (M3).
+ * published from the header banner (M2-20). The Test chat panel beside it
+ * answers with the saved draft (M3-13).
  */
 export default function ChatbotPage() {
   const { chatbot, error, refresh } = useChatbot();
@@ -147,7 +148,8 @@ function Editor({
   const tabProps = { draft, edit, errors };
 
   return (
-    <div className="mx-auto grid w-full max-w-3xl gap-4 p-4 sm:p-6">
+    <div className="mx-auto grid w-full max-w-6xl items-start gap-6 p-4 sm:p-6 lg:grid-cols-[minmax(0,1fr)_22rem]">
+    <div className="grid min-w-0 gap-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 className="text-lg font-semibold">Chatbot settings</h2>
@@ -219,6 +221,8 @@ function Editor({
           You have view-only access. Ask an admin to change these settings.
         </p>
       )}
+    </div>
+    <PreviewChat welcomeMessage={chatbot.draftConfig.identity.welcomeMessage} />
     </div>
   );
 }
