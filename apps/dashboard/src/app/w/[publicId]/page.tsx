@@ -6,7 +6,12 @@ import { useParams } from "next/navigation";
 import { type FormEvent, useEffect, useRef, useState } from "react";
 import { historyFor, type PreviewMessage } from "@/lib/preview-chat";
 import { cn } from "@/lib/utils";
-import { textOn, WIDGET_MESSAGES, widgetApi } from "@/lib/widget";
+import {
+  newVisitorId,
+  textOn,
+  WIDGET_MESSAGES,
+  widgetApi,
+} from "@/lib/widget";
 
 type State =
   | { kind: "loading" }
@@ -68,6 +73,8 @@ function ChatWindow({
   const [messages, setMessages] = useState<PreviewMessage[]>([]);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
+  const [visitorId] = useState(newVisitorId);
+  const [conversationId, setConversationId] = useState<string | null>(null);
   const endRef = useRef<HTMLDivElement>(null);
   const brand = { background: config.primaryColor, color: textOn(config.primaryColor) };
 
@@ -83,7 +90,13 @@ function ChatWindow({
     setInput("");
     setSending(true);
     try {
-      const { reply } = await widgetApi.send(publicId, message, historyFor(earlier));
+      const { reply, conversationId: stored } = await widgetApi.send(
+        publicId,
+        message,
+        historyFor(earlier),
+        { visitorId, conversationId },
+      );
+      setConversationId(stored);
       setMessages((current) => [...current, { role: "assistant", text: reply }]);
     } catch (err) {
       const status = (err as { status?: number }).status;

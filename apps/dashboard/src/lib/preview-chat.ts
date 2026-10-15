@@ -28,12 +28,18 @@ export function uniqueSources(sources: PreviewChatSource[]): string[] {
   return [...new Set(sources.map(sourceLabel))];
 }
 
+/** `conversationId` continues the stored conversation the last reply returned. */
 export function sendPreviewMessage(
   message: string,
   earlier: PreviewMessage[],
+  conversationId?: string | null,
 ): Promise<PreviewChatReply> {
   return apiFetch<PreviewChatReply>("/chatbot/preview/messages", {
     method: "POST",
-    body: JSON.stringify({ message, history: historyFor(earlier) }),
+    body: JSON.stringify({
+      message,
+      history: historyFor(earlier),
+      ...(conversationId ? { conversationId } : {}),
+    }),
   });
 }

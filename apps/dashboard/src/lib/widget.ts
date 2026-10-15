@@ -21,12 +21,33 @@ export const widgetApi = {
     apiFetch<PublicChatConfig>(
       `/public/chatbots/${encodeURIComponent(publicId)}/config`,
     ),
-  send: (publicId: string, message: string, history: PreviewChatTurn[]) =>
+  send: (
+    publicId: string,
+    message: string,
+    history: PreviewChatTurn[],
+    /** The visitor's random ID and, after the first reply, the stored conversation. */
+    visitor: { visitorId: string; conversationId?: string | null },
+  ) =>
     apiFetch<PublicChatReply>(
       `/public/chatbots/${encodeURIComponent(publicId)}/messages`,
-      { method: "POST", body: JSON.stringify({ message, history }) },
+      {
+        method: "POST",
+        body: JSON.stringify({
+          message,
+          history,
+          visitorId: visitor.visitorId,
+          ...(visitor.conversationId
+            ? { conversationId: visitor.conversationId }
+            : {}),
+        }),
+      },
     ),
 };
+
+/** A random ID for one visitor of the chat window; no personal data. */
+export function newVisitorId(): string {
+  return crypto.randomUUID().replace(/-/g, "");
+}
 
 /** Black or white text, whichever reads better on the brand color. */
 export function textOn(hex: string): "#000000" | "#ffffff" {

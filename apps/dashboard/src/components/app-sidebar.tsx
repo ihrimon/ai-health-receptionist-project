@@ -4,12 +4,10 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   ChevronsUpDown,
-  Gauge,
   Headset,
   House,
   LogOut,
-  MessageCircle,
-  MessagesSquare,
+  KeyRound,
   Settings,
 } from "lucide-react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -38,9 +36,7 @@ import {
 import { useSession } from "@/lib/session";
 
 const NAV_ITEMS = [
-  { title: "Overview", href: "/admin", icon: Gauge },
-  { title: "Chat", href: "/chat", icon: MessageCircle },
-  { title: "Conversations", href: "/admin/conversations", icon: MessagesSquare },
+  { title: "LLM keys", href: "/admin/settings", icon: KeyRound },
 ];
 
 export function AppSidebar() {
