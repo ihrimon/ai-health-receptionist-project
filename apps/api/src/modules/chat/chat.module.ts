@@ -17,5 +17,6 @@ import { ProviderRegistryModule } from './providers/provider-registry.module';
   ],
   controllers: [ChatController],
   providers: [ChatService, LlmChatClient, LlmKeyManager],
+  exports: [LlmChatClient],
 })
 export class ChatModule {}

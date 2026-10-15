@@ -12,6 +12,7 @@ import { PrismaService } from '../../src/database/prisma.service';
 import { WorkspaceRole } from '../../src/generated/prisma/client';
 import { SESSION_COOKIE } from '../../src/modules/auth/auth.constants';
 import { SessionsService } from '../../src/modules/auth/sessions.service';
+import { LlmChatClient } from '../../src/modules/chat/llm-chat.client';
 import { EmbeddingService } from '../../src/modules/knowledge/embedding.service';
 import { KnowledgeService } from '../../src/modules/knowledge/knowledge.service';
 import { WorkspacesService } from '../../src/modules/workspaces/workspaces.service';
@@ -34,6 +35,15 @@ describe('Tenant isolation (M1-25)', () => {
   let http: App;
   let prisma: PrismaService;
   let db: TenantPrisma;
+  // No real LLM calls: the preview test checks what would be sent.
+  const fakeLlm = {
+    complete: jest.fn((messages: unknown[]) =>
+      Promise.resolve({
+        role: 'assistant',
+        content: messages.length ? 'stub answer' : '',
+      }),
+    ),
+  };
 
   // Workspace A: owner + viewer. Workspace B: owner. A2: second workspace
   // of A's owner, for the switch test.
@@ -121,6 +131,8 @@ describe('Tenant isolation (M1-25)', () => {
     })
       .overrideProvider(EmbeddingService)
       .useValue(fakeEmbeddingService)
+      .overrideProvider(LlmChatClient)
+      .useValue(fakeLlm)
       .compile();
     app = moduleRef.createNestApplication<NestExpressApplication>();
     configureApp(app);
@@ -829,6 +841,89 @@ describe('Tenant isolation (M1-25)', () => {
           .expect(204);
         expect(await fileExists(keyA)).toBe(false);
       });
+    });
+  });
+
+  describe('Preview chat (M3-13, M3-14)', () => {
+    interface PreviewBody {
+      reply: string;
+      sources: { title: string; page: number | null; similarity: number }[];
+    }
+    const sentToLlm = () =>
+      JSON.stringify(fakeLlm.complete.mock.calls.at(-1)?.[0] ?? []);
+
+    beforeAll(async () => {
+      const a = await as(cookies.ownerA)
+        .post('/v1/knowledge-sources')
+        .send({
+          type: 'POLICY',
+          title: 'Preview A hours',
+          content: 'We open at 9am.',
+        })
+        .expect(201);
+      const b = await as(cookies.ownerB)
+        .post('/v1/knowledge-sources')
+        .send({
+          type: 'POLICY',
+          title: 'Preview B secret',
+          content: 'The warehouse code is B-7781.',
+        })
+        .expect(201);
+      await waitForStatus(
+        cookies.ownerA,
+        (a.body as { id: string }).id,
+        'READY',
+      );
+      await waitForStatus(
+        cookies.ownerB,
+        (b.body as { id: string }).id,
+        'READY',
+      );
+    });
+
+    it("answers from the caller's knowledge only, never another workspace's", async () => {
+      const res = await as(cookies.ownerA)
+        .post('/v1/chatbot/preview/messages')
+        .send({ message: 'What is the warehouse code?' })
+        .expect(200);
+      const body = res.body as PreviewBody;
+      expect(body.reply).toBe('stub answer');
+      // A has other items from earlier tests, so which of A's chunks rank
+      // first depends on the fake embedding; B's must never appear.
+      const titles = body.sources.map((s) => s.title);
+      expect(titles.length).toBeGreaterThan(0);
+      expect(titles).not.toContain('Preview B secret');
+      expect(sentToLlm()).not.toContain('B-7781');
+    });
+
+    it("B's preview finds B's knowledge, not A's", async () => {
+      const res = await as(cookies.ownerB)
+        .post('/v1/chatbot/preview/messages')
+        .send({ message: 'When do you open?' })
+        .expect(200);
+      const titles = (res.body as PreviewBody).sources.map((s) => s.title);
+      expect(titles).toContain('Preview B secret');
+      expect(titles).not.toContain('Preview A hours');
+      expect(sentToLlm()).not.toContain('We open at 9am.');
+    });
+
+    it('a viewer can use the preview', async () => {
+      await as(cookies.viewerA)
+        .post('/v1/chatbot/preview/messages')
+        .send({ message: 'Hi' })
+        .expect(200);
+    });
+
+    it('rejects an empty message (400) and no session (401)', async () => {
+      await as(cookies.ownerA)
+        .post('/v1/chatbot/preview/messages')
+        .send({ message: '   ' })
+        .expect(400);
+      await request(http)
+        .post('/v1/chatbot/preview/messages')
+        .set('X-Requested-With', 'fetch')
+        .send({ message: 'Hi' })
+        .expect(401);
     });
   });
 

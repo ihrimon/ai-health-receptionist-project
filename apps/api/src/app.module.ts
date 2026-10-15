@@ -17,6 +17,7 @@ import { WorkspacesModule } from './modules/workspaces/workspaces.module';
 import { ChatbotModule } from './modules/chatbot/chatbot.module';
 import { KnowledgeBaseModule } from './modules/knowledge-base/knowledge-base.module';
 import { ProductsModule } from './modules/products/products.module';
+import { PreviewChatModule } from './modules/preview-chat/preview-chat.module';
 
 @Module({
   imports: [
@@ -39,6 +40,7 @@ import { ProductsModule } from './modules/products/products.module';
     ChatbotModule,
     KnowledgeBaseModule,
     ProductsModule,
+    PreviewChatModule,
   ],
   controllers: [AppController],
   providers: [AppService],
