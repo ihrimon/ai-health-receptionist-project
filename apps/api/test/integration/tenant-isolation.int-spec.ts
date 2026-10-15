@@ -1150,6 +1150,49 @@ describe('Tenant isolation (M1-25)', () => {
     });
   });
 
+  // After the preview tests: B gets chunks of its own here, and the
+  // earlier tests expect B to have none.
+  describe('Hybrid retrieval (M3-7)', () => {
+    it("keyword search finds an exact code, and only in the caller's own workspace (M3-7)", async () => {
+      const knowledge = app.get(KnowledgeService);
+      const make = async (cookie: string, title: string, content: string) => {
+        const res = await as(cookie)
+          .post('/v1/knowledge-sources')
+          .send({ type: 'POLICY', title, content })
+          .expect(201);
+        await waitForStatus(cookie, (res.body as { id: string }).id, 'READY');
+      };
+      await make(
+        cookies.ownerA,
+        'Hybrid A',
+        'Your claim reference is QXZK4410 for all repairs.',
+      );
+      await make(
+        cookies.ownerB,
+        'Hybrid B',
+        'Your claim reference is QXZK9999 for all repairs.',
+      );
+
+      const inA = await inWorkspace(ids.a, () =>
+        knowledge.search(ids.botA, 'QXZK4410', 5),
+      );
+      expect(inA[0].content).toContain('QXZK4410');
+      expect(inA.map((m) => m.content).join(' ')).not.toContain('QXZK9999');
+
+      // The other workspace's code is a keyword A can type, and still isn't found.
+      const stolen = await inWorkspace(ids.a, () =>
+        knowledge.search(ids.botA, 'QXZK9999', 5),
+      );
+      expect(stolen.map((m) => m.content).join(' ')).not.toContain('QXZK9999');
+
+      const inB = await inWorkspace(ids.b, () =>
+        knowledge.search(ids.botB, 'QXZK9999', 5),
+      );
+      expect(inB[0].content).toContain('QXZK9999');
+      expect(inB.map((m) => m.content).join(' ')).not.toContain('QXZK4410');
+    });
+  });
+
   describe('Public widget chat (early MVP)', () => {
     const publicIdOf = async (id: string) =>
       (
