@@ -11,6 +11,16 @@ export type ChatStreamEvent =
   | { type: 'delta'; text: string }
   /** The knowledge the answer is built from (dashboard Test chat only). */
   | { type: 'sources'; sources: PreviewChatSource[] }
+  /**
+   * After a fallback answer, when the company set a way to reach them
+   * (D-4 `behavior.handoff`): what to show as a button or link.
+   */
+  | {
+      type: 'handoff';
+      kind: 'email' | 'phone' | 'whatsapp' | 'url';
+      value: string;
+      label: string | null;
+    }
   /** The answer is complete. `conversationId` is null when nothing was stored. */
   | {
       type: 'done';

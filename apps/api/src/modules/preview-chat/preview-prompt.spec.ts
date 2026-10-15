@@ -10,6 +10,7 @@ const match = (title: string, content: string): KnowledgeMatch => ({
   content,
   metadata: { title, headingPath: [] },
   similarity: 0.8,
+  keywordHit: true,
 });
 
 describe('buildPreviewMessages', () => {

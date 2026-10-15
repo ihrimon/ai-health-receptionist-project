@@ -26,6 +26,19 @@ export interface KnowledgeMatch {
   content: string;
   metadata: ChunkMetadata;
   similarity: number;
+  /** The chunk contains a word of the question (keyword search). */
+  keywordHit: boolean;
+}
+
+/**
+ * A chunk is worth giving to the model when it shares a word with the
+ * question or is close enough in meaning (M3-10). Exported for tests.
+ */
+export function isRelevant(
+  match: Pick<KnowledgeMatch, 'keywordHit' | 'similarity'>,
+  minSimilarity: number,
+): boolean {
+  return match.keywordHit || Number(match.similarity) >= minSimilarity;
 }
 
 /**
@@ -39,6 +52,7 @@ export interface KnowledgeMatch {
 @Injectable()
 export class KnowledgeService {
   private readonly topK: number;
+  private readonly minSimilarity: number;
 
   constructor(
     private readonly embedding: EmbeddingService,
@@ -46,6 +60,7 @@ export class KnowledgeService {
     config: ConfigService,
   ) {
     this.topK = config.get<number>('knowledge.topK') ?? 3;
+    this.minSimilarity = config.get<number>('knowledge.minSimilarity') ?? 0.3;
   }
 
   /**
@@ -135,20 +150,24 @@ export class KnowledgeService {
    * search (pgvector) and a keyword search (Postgres full-text) run
    * side by side and are merged by rank (RRF), so an exact model number or
    * name is found even when the meaning search misses it. `similarity` is
-   * always the cosine similarity, for display. Only the current
-   * workspace's chunks: raw SQL, so the workspace is added by hand.
+   * always the cosine similarity, for display. Chunks that neither share
+   * a word with the question nor are close in meaning are dropped, so an
+   * empty result means "nothing relevant" (M3-10); pass
+   * `onlyRelevant = false` to see them all. Only the current workspace's
+   * chunks: raw SQL, so the workspace is added by hand.
    */
   async search(
     chatbotId: string,
     query: string,
     topK = this.topK,
+    onlyRelevant = true,
   ): Promise<KnowledgeMatch[]> {
     const { workspaceId } = requireTenant();
     const vector = toVectorLiteral(await this.embedding.embed(query));
     const keywords = keywordQuery(query);
     const candidates = Math.max(topK * 4, MIN_CANDIDATES);
 
-    return this.db.$queryRaw<KnowledgeMatch[]>`
+    const rows = await this.db.$queryRaw<KnowledgeMatch[]>`
       WITH meaning AS (
         SELECT id, ROW_NUMBER() OVER (ORDER BY embedding <=> ${vector}::vector) AS rank
         FROM knowledge_chunks
@@ -173,12 +192,16 @@ export class KnowledgeService {
         FROM (SELECT id, rank FROM meaning UNION ALL SELECT id, rank FROM keyword) ranked
         GROUP BY id
       )
-      SELECT c.content, c.metadata, 1 - (c.embedding <=> ${vector}::vector) AS similarity
+      SELECT c.content, c.metadata, 1 - (c.embedding <=> ${vector}::vector) AS similarity,
+             EXISTS (SELECT 1 FROM keyword k WHERE k.id = c.id) AS "keywordHit"
       FROM fused f
       JOIN knowledge_chunks c ON c.id = f.id
       WHERE c.workspace_id = ${workspaceId}::uuid AND c.chatbot_id = ${chatbotId}::uuid
       ORDER BY f.score DESC, c.id
       LIMIT ${topK}`;
+    return onlyRelevant
+      ? rows.filter((row) => isRelevant(row, this.minSimilarity))
+      : rows;
   }
 }
 

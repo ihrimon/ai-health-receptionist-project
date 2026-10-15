@@ -3,7 +3,11 @@ import { Test } from '@nestjs/testing';
 import { runWithTenant } from '../../tenancy/tenant-context';
 import { TENANT_PRISMA } from '../../tenancy/tenant-prisma';
 import { EmbeddingService } from './embedding.service';
-import { KnowledgeService, type TenantTx } from './knowledge.service';
+import {
+  isRelevant,
+  KnowledgeService,
+  type TenantTx,
+} from './knowledge.service';
 
 /** A tagged-template call's SQL text, with "?" where the values go. */
 const sqlOf = (call: unknown[]) =>
@@ -142,5 +146,28 @@ describe('KnowledgeService', () => {
     await expect(service.search('bot-1', 'q')).rejects.toThrow(
       'outside a workspace request',
     );
+  });
+
+  describe('isRelevant (M3-10)', () => {
+    it('keeps a keyword hit even when the meaning is far', () => {
+      expect(isRelevant({ keywordHit: true, similarity: 0.05 }, 0.3)).toBe(
+        true,
+      );
+    });
+
+    it('keeps a chunk that is close enough in meaning', () => {
+      expect(isRelevant({ keywordHit: false, similarity: 0.42 }, 0.3)).toBe(
+        true,
+      );
+      expect(isRelevant({ keywordHit: false, similarity: 0.3 }, 0.3)).toBe(
+        true,
+      );
+    });
+
+    it('drops a chunk that is neither', () => {
+      expect(isRelevant({ keywordHit: false, similarity: 0.12 }, 0.3)).toBe(
+        false,
+      );
+    });
   });
 });

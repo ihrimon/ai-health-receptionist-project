@@ -4,7 +4,12 @@ import type { PublicChatConfig } from "@brainstack/shared";
 import { Send, X } from "lucide-react";
 import { useParams } from "next/navigation";
 import { type FormEvent, useEffect, useRef, useState } from "react";
-import type { PreviewMessage } from "@/lib/preview-chat";
+import {
+  handoffHref,
+  handoffLabel,
+  type Handoff,
+  type PreviewMessage,
+} from "@/lib/preview-chat";
 import { cn } from "@/lib/utils";
 import {
   newVisitorId,
@@ -90,10 +95,11 @@ function ChatWindow({
     setInput("");
     setSending(true);
     let started = false;
+    let handoff: Handoff | undefined;
     const showAnswer = (text: string) => {
       const replace = started;
       setMessages((current) => {
-        const answer: PreviewMessage = { role: "assistant", text };
+        const answer: PreviewMessage = { role: "assistant", text, handoff };
         return replace ? [...current.slice(0, -1), answer] : [...current, answer];
       });
     };
@@ -108,6 +114,9 @@ function ChatWindow({
             text += event.text;
             showAnswer(text);
             started = true;
+          } else if (event.type === "handoff") {
+            handoff = event;
+            showAnswer(text);
           } else if (event.type === "done") {
             setConversationId(event.conversationId);
           } else if (event.type === "error") {
@@ -174,9 +183,25 @@ function ChatWindow({
           </div>
         )}
         {messages.map((m, i) => (
-          <Bubble key={i} mine={m.role === "user"} brand={brand}>
-            {m.text}
-          </Bubble>
+          <div key={i} className="space-y-1">
+            <Bubble mine={m.role === "user"} brand={brand}>
+              {m.text}
+            </Bubble>
+            {m.handoff && (
+              <a
+                href={handoffHref(m.handoff)}
+                target="_blank"
+                rel="noreferrer"
+                className="ml-1 inline-block rounded-full border px-3 py-1 text-xs hover:bg-zinc-50"
+                style={{
+                  borderColor: config.primaryColor,
+                  color: config.primaryColor,
+                }}
+              >
+                {handoffLabel(m.handoff)}
+              </a>
+            )}
+          </div>
         ))}
         {sending && messages.at(-1)?.role === "user" && (
           <Bubble mine={false}>
