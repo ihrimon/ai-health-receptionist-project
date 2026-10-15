@@ -55,10 +55,18 @@ export async function apiFetch<T>(
   path: string,
   init?: RequestInit,
 ): Promise<T> {
+  const headers: Record<string, string> = {
+    ...API_HEADERS,
+    ...(init?.headers as Record<string, string> | undefined),
+  };
+  // A file upload: the browser sets the multipart Content-Type (with its
+  // boundary) itself.
+  if (init?.body instanceof FormData) delete headers["Content-Type"];
+
   const res = await fetch(`${API_BASE}${path}`, {
     credentials: "include",
     ...init,
-    headers: { ...API_HEADERS, ...init?.headers },
+    headers,
   });
 
   if (!res.ok) {

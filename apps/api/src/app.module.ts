@@ -5,7 +5,7 @@ import { AppService } from './app.service';
 import configuration from './config/configuration';
 import { DatabaseModule } from './database/database.module';
 import { QueueModule } from './queue/queue.module';
-import { RedisModule } from './redis/redis.module';
+import { StorageModule } from './storage/storage.module';
 import { RateLimitModule } from './rate-limit/rate-limit.module';
 import { TenancyModule } from './tenancy/tenancy.module';
 import { HealthModule } from './health/health.module';
@@ -14,6 +14,10 @@ import { ChatModule } from './modules/chat/chat.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { LlmCredentialsModule } from './modules/llm-credentials/llm-credentials.module';
 import { WorkspacesModule } from './modules/workspaces/workspaces.module';
+import { ChatbotModule } from './modules/chatbot/chatbot.module';
+import { KnowledgeBaseModule } from './modules/knowledge-base/knowledge-base.module';
+import { ProductsModule } from './modules/products/products.module';
+import { PreviewChatModule } from './modules/preview-chat/preview-chat.module';
 
 @Module({
   imports: [
@@ -24,7 +28,7 @@ import { WorkspacesModule } from './modules/workspaces/workspaces.module';
     }),
     DatabaseModule,
     QueueModule,
-    RedisModule,
+    StorageModule,
     RateLimitModule,
     TenancyModule,
     HealthModule,
@@ -33,6 +37,10 @@ import { WorkspacesModule } from './modules/workspaces/workspaces.module';
     AuthModule,
     LlmCredentialsModule,
     WorkspacesModule,
+    ChatbotModule,
+    KnowledgeBaseModule,
+    ProductsModule,
+    PreviewChatModule,
   ],
   controllers: [AppController],
   providers: [AppService],

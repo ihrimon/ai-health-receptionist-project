@@ -16,7 +16,8 @@ type Embedder = (
 @Injectable()
 export class EmbeddingService {
   private readonly logger = new Logger(EmbeddingService.name);
-  private readonly modelName: string;
+  /** Saved on every chunk (M2-14), so a model change can find old ones. */
+  readonly modelName: string;
   private embedderPromise?: Promise<Embedder>;
 
   constructor(private readonly configService: ConfigService) {

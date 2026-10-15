@@ -13,7 +13,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-brainstack}
       POSTGRES_DB: ${POSTGRES_DB:-brainstack_booking}
     ports:
-      - "${POSTGRES_PORT:-5432}:5432"
+      - "${POSTGRES_PORT:-55432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -22,16 +22,29 @@ services:
       timeout: 5s
       retries: 10
 
-  redis:
-    image: redis:7-alpine
+  # S3-compatible file storage for uploads (M0 decision T9, M2-9).
+  # MinIO stopped publishing free images on Docker Hub and quay.io in 2025;
+  # this is Chainguard's build of the same server. Its free tier only has a
+  # "latest" tag, so the image is pinned by digest (MinIO RELEASE.2026-09-22).
+  # The API creates the bucket on first upload.
+  minio:
+    image: cgr.dev/chainguard/minio@sha256:2136d593beacf4461187035eca949fe49abd589d5079735025c711ca58fee0c8
     restart: unless-stopped
-    command: ["redis-server", "--appendonly", "yes"]
+    environment:
+      MINIO_ROOT_USER: ${S3_ACCESS_KEY_ID:-brainstack}
+      MINIO_ROOT_PASSWORD: ${S3_SECRET_ACCESS_KEY:-brainstack-dev-secret}
+      # Lets `mc ready local` (the health check) reach the server.
+      MC_HOST_local: http://${S3_ACCESS_KEY_ID:-brainstack}:${S3_SECRET_ACCESS_KEY:-brainstack-dev-secret}@localhost:9000
+    # The image runs as user "nonroot" (65532). A volume mounted on its home
+    # folder takes that folder's owner, so the server can write to it.
+    command: ["server", "/home/nonroot/data", "--console-address", ":9001"]
     ports:
-      - "${REDIS_PORT:-6379}:6379"
+      - "${MINIO_PORT:-9000}:9000"
+      - "${MINIO_CONSOLE_PORT:-9001}:9001"
     volumes:
-      - redis_data:/data
+      - minio_data:/home/nonroot
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "mc", "ready", "local"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -44,16 +57,20 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      redis:
+      minio:
         condition: service_healthy
     environment:
       NODE_ENV: production
       API_PORT: ${API_PORT:-3001}
       # Inside the compose network Postgres is `postgres:5432`, not the
-      # host-mapped localhost:5433 from the root .env.
+      # host-mapped localhost:55432 from the root .env.
       DATABASE_URL: postgresql://${POSTGRES_USER:-brainstack}:${POSTGRES_PASSWORD:-brainstack}@postgres:5432/${POSTGRES_DB:-brainstack_booking}
-      REDIS_HOST: redis
-      REDIS_PORT: 6379
+      # Inside the compose network MinIO is `minio:9000`. NODE_ENV is
+      # production here, so bucket creation is switched on explicitly.
+      S3_ENDPOINT: http://minio:9000
+      S3_CREATE_BUCKET: "true"
+      S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:-brainstack}
+      S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:-brainstack-dev-secret}
       DASHBOARD_URL: http://localhost:${DASHBOARD_PORT:-3000}
     ports:
       - "${API_PORT:-3001}:3001"
@@ -78,5 +95,5 @@ services:
 volumes:
   postgres_data:
     name: brainstack_platform_postgres_data
-  redis_data:
-    name: brainstack_platform_redis_data
+  minio_data:
+    name: brainstack_platform_minio_data

@@ -1,10 +1,10 @@
+import { defaultChatbotConfig } from '@brainstack/shared';
 import { ConflictException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { PrismaService } from '../../database/prisma.service';
 import { WorkspaceRole } from '../../generated/prisma/client';
 import { TENANT_PRISMA } from '../../tenancy/tenant-prisma';
 import { WorkspaceAccessService } from '../../tenancy/workspace-access.service';
-import { defaultChatbotConfig } from './default-chatbot-config';
 import { WorkspacesService } from './workspaces.service';
 
 // The parts of workspace.create()'s argument these tests look at.

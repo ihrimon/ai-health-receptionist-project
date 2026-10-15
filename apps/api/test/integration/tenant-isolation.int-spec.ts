@@ -1,3 +1,6 @@
+import { HeadObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import { defaultChatbotConfig } from '@brainstack/shared';
+import { ConfigService } from '@nestjs/config';
 import { NestExpressApplication } from '@nestjs/platform-express';
 import { Test } from '@nestjs/testing';
 import { randomUUID } from 'crypto';
@@ -9,14 +12,20 @@ import { PrismaService } from '../../src/database/prisma.service';
 import { WorkspaceRole } from '../../src/generated/prisma/client';
 import { SESSION_COOKIE } from '../../src/modules/auth/auth.constants';
 import { SessionsService } from '../../src/modules/auth/sessions.service';
+import { LlmChatClient } from '../../src/modules/chat/llm-chat.client';
+import { EmbeddingService } from '../../src/modules/knowledge/embedding.service';
+import { KnowledgeService } from '../../src/modules/knowledge/knowledge.service';
 import { WorkspacesService } from '../../src/modules/workspaces/workspaces.service';
+import { S3_CLIENT } from '../../src/storage/storage.service';
 import { runWithTenant } from '../../src/tenancy/tenant-context';
 import { TENANT_PRISMA, TenantPrisma } from '../../src/tenancy/tenant-prisma';
+import { FAKE_EMBEDDING_MODEL, fakeEmbeddingService } from './fake-embedding';
 
 /**
- * M1-25 (W4): two workspaces, proving A's users can't read or change B's
- * data — through the HTTP API and through the tenant Prisma client.
- * Runs on a real Postgres (+ Redis) test database.
+ * M1-25, M2-21 (W4): two workspaces, proving A's users can't read or change
+ * B's data — through the HTTP API and through the tenant Prisma client.
+ * Runs on a real Postgres and MinIO (no Redis); background jobs (knowledge
+ * indexing) run in the app as in production, with a fake embedding model.
  */
 describe('Tenant isolation (M1-25)', () => {
   const run = randomUUID().slice(0, 8);
@@ -26,6 +35,15 @@ describe('Tenant isolation (M1-25)', () => {
   let http: App;
   let prisma: PrismaService;
   let db: TenantPrisma;
+  // No real LLM calls: the preview test checks what would be sent.
+  const fakeLlm = {
+    complete: jest.fn((messages: unknown[]) =>
+      Promise.resolve({
+        role: 'assistant',
+        content: messages.length ? 'stub answer' : '',
+      }),
+    ),
+  };
 
   // Workspace A: owner + viewer. Workspace B: owner. A2: second workspace
   // of A's owner, for the switch test.
@@ -59,6 +77,16 @@ describe('Tenant isolation (M1-25)', () => {
         .patch(path)
         .set('Cookie', cookie)
         .set('X-Requested-With', 'fetch'),
+    put: (path: string) =>
+      request(http)
+        .put(path)
+        .set('Cookie', cookie)
+        .set('X-Requested-With', 'fetch'),
+    delete: (path: string) =>
+      request(http)
+        .delete(path)
+        .set('Cookie', cookie)
+        .set('X-Requested-With', 'fetch'),
   });
 
   // Prisma queries are lazy: they run when awaited, so await inside the
@@ -69,10 +97,43 @@ describe('Tenant isolation (M1-25)', () => {
       async () => await fn(),
     );
 
+  /** Polls a knowledge source until background indexing settles on `status`. */
+  /** Polls until `check` returns a value (background jobs settle). */
+  async function waitUntil<T>(
+    what: string,
+    check: () => Promise<T | null | undefined | false>,
+  ): Promise<T> {
+    for (let i = 0; i < 100; i++) {
+      const value = await check();
+      if (value) return value;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    throw new Error(`Timed out waiting for ${what}`);
+  }
+
+  async function waitForStatus(
+    cookie: string,
+    id: string,
+    status: 'READY' | 'FAILED',
+  ): Promise<{ status: string; error: string | null }> {
+    for (let i = 0; i < 100; i++) {
+      const res = await as(cookie).get(`/v1/knowledge-sources/${id}`);
+      const body = res.body as { status: string; error: string | null };
+      if (body.status === status) return body;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    throw new Error(`Source ${id} never reached ${status}`);
+  }
+
   beforeAll(async () => {
     const moduleRef = await Test.createTestingModule({
       imports: [AppModule],
-    }).compile();
+    })
+      .overrideProvider(EmbeddingService)
+      .useValue(fakeEmbeddingService)
+      .overrideProvider(LlmChatClient)
+      .useValue(fakeLlm)
+      .compile();
     app = moduleRef.createNestApplication<NestExpressApplication>();
     configureApp(app);
     await app.init();
@@ -232,6 +293,825 @@ describe('Tenant isolation (M1-25)', () => {
     });
   });
 
+  describe('rate limits in Postgres', () => {
+    it('allows 5 wrong logins a minute, then answers 429 with Retry-After', async () => {
+      // Counters outlive a test run in the test database; start clean.
+      await prisma.rateLimit.deleteMany({});
+      const attempt = () =>
+        request(http)
+          .post('/v1/auth/login')
+          .set('X-Requested-With', 'fetch')
+          .send({ email: email('nobody'), password: 'wrong-password-123' });
+
+      for (let i = 0; i < 5; i++) await attempt().expect(401);
+      const blocked = await attempt().expect(429);
+
+      const retryAfter = Number(blocked.headers['retry-after']);
+      expect(retryAfter).toBeGreaterThan(0);
+      expect(retryAfter).toBeLessThanOrEqual(60);
+      await prisma.rateLimit.deleteMany({});
+    });
+  });
+
+  describe('Chatbot API (M2-21)', () => {
+    interface ChatbotBody {
+      id: string;
+      status: string;
+      draftConfig: { identity: { botName: string } };
+      publishedVersion: { version: number } | null;
+      hasUnpublishedChanges: boolean;
+      allowedDomains: string[];
+    }
+    const draftA = () => {
+      const config = defaultChatbotConfig('Iso A');
+      config.identity.botName = 'Ava';
+      config.business.description = 'We sell shoes.';
+      return config;
+    };
+    const botB = () =>
+      prisma.chatbot.findUniqueOrThrow({
+        where: { id: ids.botB },
+        include: { versions: true },
+      });
+
+    it('each workspace sees only its own chatbot', async () => {
+      const a = await as(cookies.ownerA).get('/v1/chatbot').expect(200);
+      const b = await as(cookies.ownerB).get('/v1/chatbot').expect(200);
+      expect((a.body as ChatbotBody).id).toBe(ids.botA);
+      expect((b.body as ChatbotBody).id).toBe(ids.botB);
+    });
+
+    it("saving a draft changes only the caller's chatbot", async () => {
+      const res = await as(cookies.ownerA)
+        .put('/v1/chatbot/draft')
+        .send(draftA())
+        .expect(200);
+      expect((res.body as ChatbotBody).draftConfig.identity.botName).toBe(
+        'Ava',
+      );
+
+      const b = await botB();
+      expect(
+        (b.draftConfig as { identity: { botName: string } }).identity.botName,
+      ).toBe('Assistant');
+    });
+
+    it('rejects an invalid draft with field details (400)', async () => {
+      const draft = draftA();
+      draft.widget.primaryColor = 'teal';
+      const res = await as(cookies.ownerA)
+        .put('/v1/chatbot/draft')
+        .send(draft)
+        .expect(400);
+      expect(res.body).toMatchObject({
+        code: 'VALIDATION_FAILED',
+        details: [{ path: 'widget.primaryColor' }],
+      });
+    });
+
+    it("publishing creates a version in the caller's workspace only", async () => {
+      // Publishing needs knowledge to answer from (D-4 §4).
+      await as(cookies.ownerA)
+        .post('/v1/faqs')
+        .send({ question: 'Opening hours?', answer: '9 to 5.' })
+        .expect(201);
+
+      const res = await as(cookies.ownerA)
+        .post('/v1/chatbot/publish')
+        .expect(200);
+      const body = res.body as ChatbotBody;
+      expect(body.publishedVersion?.version).toBe(1);
+      expect(body.hasUnpublishedChanges).toBe(false);
+
+      const version = await prisma.chatbotVersion.findFirstOrThrow({
+        where: { chatbotId: ids.botA },
+      });
+      expect(version.workspaceId).toBe(ids.a);
+      expect(version.publishedById).toBe(users.ownerA);
+
+      const b = await botB();
+      expect(b.publishedVersionId).toBeNull();
+      expect(b.versions).toEqual([]);
+    });
+
+    it('publishing an unready draft is a 400 with the reasons', async () => {
+      const res = await as(cookies.ownerB)
+        .post('/v1/chatbot/publish')
+        .expect(400);
+      expect(res.body).toMatchObject({
+        details: [
+          { code: 'BUSINESS_DESCRIPTION_MISSING' },
+          { code: 'KNOWLEDGE_MISSING' },
+        ],
+      });
+    });
+
+    it("status and allowed domains change only the caller's chatbot", async () => {
+      await as(cookies.ownerA)
+        .patch('/v1/chatbot/status')
+        .send({ status: 'DISABLED' })
+        .expect(200);
+      const res = await as(cookies.ownerA)
+        .put('/v1/chatbot/allowed-domains')
+        .send({ domains: ['Shop.Example.com', '*.example.com'] })
+        .expect(200);
+      expect((res.body as ChatbotBody).allowedDomains).toEqual([
+        'shop.example.com',
+        '*.example.com',
+      ]);
+
+      const b = await botB();
+      expect(b.status).toBe('ENABLED');
+      expect(b.allowedDomains).toEqual([]);
+
+      await as(cookies.ownerA)
+        .patch('/v1/chatbot/status')
+        .send({ status: 'ENABLED' })
+        .expect(200);
+    });
+
+    it('discarding the draft brings back the live config', async () => {
+      const edited = draftA();
+      edited.identity.botName = 'Changed';
+      await as(cookies.ownerA)
+        .put('/v1/chatbot/draft')
+        .send(edited)
+        .expect(200);
+
+      const res = await as(cookies.ownerA)
+        .post('/v1/chatbot/discard-draft')
+        .expect(200);
+      const body = res.body as ChatbotBody;
+      expect(body.draftConfig.identity.botName).toBe('Ava');
+      expect(body.hasUnpublishedChanges).toBe(false);
+    });
+
+    it('a viewer can read the chatbot but not change it (403)', async () => {
+      await as(cookies.viewerA).get('/v1/chatbot').expect(200);
+      await as(cookies.viewerA)
+        .put('/v1/chatbot/draft')
+        .send(draftA())
+        .expect(403);
+      await as(cookies.viewerA).post('/v1/chatbot/publish').expect(403);
+      await as(cookies.viewerA)
+        .patch('/v1/chatbot/status')
+        .send({ status: 'DISABLED' })
+        .expect(403);
+    });
+  });
+
+  describe('Knowledge base API (M2-21)', () => {
+    // A's items, created through the API; B then tries to reach them.
+    const itemsA = { faq: '', customAnswer: '', source: '' };
+    const paths = () => ({
+      faq: `/v1/faqs/${itemsA.faq}`,
+      customAnswer: `/v1/custom-answers/${itemsA.customAnswer}`,
+      source: `/v1/knowledge-sources/${itemsA.source}`,
+    });
+    const listIds = async (cookie: string, path: string) =>
+      ((await as(cookie).get(path).expect(200)).body as { id: string }[]).map(
+        (row) => row.id,
+      );
+
+    beforeAll(async () => {
+      const owner = as(cookies.ownerA);
+      const faq = await owner
+        .post('/v1/faqs')
+        .send({ question: 'Do you ship abroad?', answer: 'Yes.' })
+        .expect(201);
+      const customAnswer = await owner
+        .post('/v1/custom-answers')
+        .send({ triggerQuestion: 'Who owns the shop?', answer: 'Rina.' })
+        .expect(201);
+      const source = await owner
+        .post('/v1/knowledge-sources')
+        .send({ type: 'POLICY', title: 'Returns', content: '30 days.' })
+        .expect(201);
+      itemsA.faq = (faq.body as { id: string }).id;
+      itemsA.customAnswer = (customAnswer.body as { id: string }).id;
+      itemsA.source = (source.body as { id: string; status: string }).id;
+      expect((source.body as { status: string }).status).toBe('QUEUED');
+    });
+
+    it("lists show only the caller's items", async () => {
+      expect(await listIds(cookies.ownerA, '/v1/faqs')).toContain(itemsA.faq);
+      expect(await listIds(cookies.ownerB, '/v1/faqs')).toEqual([]);
+      expect(await listIds(cookies.ownerB, '/v1/custom-answers')).toEqual([]);
+      expect(await listIds(cookies.ownerB, '/v1/knowledge-sources')).toEqual(
+        [],
+      );
+    });
+
+    it("another workspace's items are a 404 for read, edit and delete", async () => {
+      const b = as(cookies.ownerB);
+      const p = paths();
+      await b.get(p.source).expect(404);
+      await b.patch(p.faq).send({ answer: 'Hijacked' }).expect(404);
+      await b.patch(p.customAnswer).send({ answer: 'Hijacked' }).expect(404);
+      await b.patch(p.source).send({ content: 'Hijacked' }).expect(404);
+      await b.delete(p.faq).expect(404);
+      await b.delete(p.customAnswer).expect(404);
+      await b.delete(p.source).expect(404);
+
+      const [faq, customAnswer, source] = await Promise.all([
+        prisma.faq.findUniqueOrThrow({ where: { id: itemsA.faq } }),
+        prisma.customAnswer.findUniqueOrThrow({
+          where: { id: itemsA.customAnswer },
+        }),
+        prisma.knowledgeSource.findUniqueOrThrow({
+          where: { id: itemsA.source },
+        }),
+      ]);
+      expect(faq.answer).toBe('Yes.');
+      expect(customAnswer.answer).toBe('Rina.');
+      expect(source.content).toBe('30 days.');
+    });
+
+    it("reordering with another workspace's FAQ IDs is a 404", async () => {
+      await as(cookies.ownerB)
+        .put('/v1/faqs/order')
+        .send({ ids: [itemsA.faq] })
+        .expect(404);
+    });
+
+    it('the owner can edit, reorder and delete their own items', async () => {
+      const owner = as(cookies.ownerA);
+      const p = paths();
+      await owner.patch(p.faq).send({ answer: 'Yes, worldwide.' }).expect(200);
+      await owner.get(p.source).expect(200);
+
+      const ids = await listIds(cookies.ownerA, '/v1/faqs');
+      const reordered = await owner
+        .put('/v1/faqs/order')
+        .send({ ids: [...ids].reverse() })
+        .expect(200);
+      expect((reordered.body as { id: string }[]).map((f) => f.id)).toEqual(
+        [...ids].reverse(),
+      );
+
+      await owner.delete(p.customAnswer).expect(204);
+      expect(await listIds(cookies.ownerA, '/v1/custom-answers')).toEqual([]);
+    });
+
+    it('a viewer can read but not change knowledge (403)', async () => {
+      const viewer = as(cookies.viewerA);
+      await viewer.get('/v1/faqs').expect(200);
+      await viewer
+        .post('/v1/faqs')
+        .send({ question: 'Q', answer: 'A' })
+        .expect(403);
+      await viewer.delete(paths().faq).expect(403);
+      await viewer
+        .post('/v1/custom-answers')
+        .send({ triggerQuestion: 'Q', answer: 'A' })
+        .expect(403);
+      await viewer
+        .post('/v1/knowledge-sources')
+        .send({ type: 'TEXT', title: 'T', content: 'C' })
+        .expect(403);
+    });
+
+    describe('automatic re-indexing (M2-13)', () => {
+      const faqChunks = (faqId: string) =>
+        prisma.$queryRaw<{ workspace_id: string; content: string }[]>`
+          SELECT workspace_id::text, content FROM knowledge_chunks
+          WHERE faq_id = ${faqId}::uuid`;
+      const rowModel = (table: 'custom_answers' | 'products', id: string) =>
+        table === 'custom_answers'
+          ? prisma.customAnswer
+              .findUniqueOrThrow({
+                where: { id },
+                select: { embeddingModel: true },
+              })
+              .then((r) => r.embeddingModel)
+          : prisma.product
+              .findUniqueOrThrow({
+                where: { id },
+                select: { embeddingModel: true },
+              })
+              .then((r) => r.embeddingModel);
+
+      it("indexes an FAQ's latest text into its workspace's chunks", async () => {
+        // Edited to "Yes, worldwide." by an earlier test; the edit re-queued it.
+        const chunks = await waitUntil(
+          'the edited FAQ to be indexed',
+          async () => {
+            const rows = await faqChunks(itemsA.faq);
+            return rows.some((r) => r.content.includes('worldwide')) && rows;
+          },
+        );
+        expect(chunks).toEqual([
+          {
+            workspace_id: ids.a,
+            content: 'Do you ship abroad?\n\nYes, worldwide.',
+          },
+        ]);
+      });
+
+      it("B's search never finds A's FAQ", async () => {
+        const knowledge = app.get(KnowledgeService);
+        const inA = await inWorkspace(ids.a, () =>
+          knowledge.search(ids.botA, 'do you ship abroad'),
+        );
+        expect(inA.map((m) => m.content)).toContain(
+          'Do you ship abroad?\n\nYes, worldwide.',
+        );
+        await expect(
+          inWorkspace(ids.b, () => knowledge.search(ids.botB, 'ship abroad')),
+        ).resolves.toEqual([]);
+      });
+
+      it("embeds a custom answer's trigger question", async () => {
+        const res = await as(cookies.ownerA)
+          .post('/v1/custom-answers')
+          .send({ triggerQuestion: 'Who founded the shop?', answer: 'Rina.' })
+          .expect(201);
+        const id = (res.body as { id: string }).id;
+
+        await expect(
+          waitUntil('the custom answer embedding', () =>
+            rowModel('custom_answers', id),
+          ),
+        ).resolves.toBe(FAKE_EMBEDDING_MODEL);
+        await as(cookies.ownerA).delete(`/v1/custom-answers/${id}`).expect(204);
+      });
+
+      it('deleting an FAQ deletes its chunks', async () => {
+        const res = await as(cookies.ownerA)
+          .post('/v1/faqs')
+          .send({ question: 'Gift wrap?', answer: 'Yes, free.' })
+          .expect(201);
+        const id = (res.body as { id: string }).id;
+        await waitUntil(
+          'the new FAQ to be indexed',
+          async () => (await faqChunks(id)).length > 0,
+        );
+
+        await as(cookies.ownerA).delete(`/v1/faqs/${id}`).expect(204);
+
+        await expect(faqChunks(id)).resolves.toEqual([]);
+      });
+
+      it('embeds products', async () => {
+        const res = await as(cookies.ownerA)
+          .post('/v1/products')
+          .send({ name: 'Rain boot', category: 'Footwear' })
+          .expect(201);
+        const id = (res.body as { id: string }).id;
+
+        await expect(
+          waitUntil('the product embedding', () => rowModel('products', id)),
+        ).resolves.toBe(FAKE_EMBEDDING_MODEL);
+        await as(cookies.ownerA).delete(`/v1/products/${id}`).expect(204);
+      });
+    });
+
+    describe('document upload (M2-10, real MinIO)', () => {
+      interface SourceBody {
+        id: string;
+        type: string;
+        title: string;
+        status: string;
+        mimeType: string;
+      }
+      const PDF = Buffer.from('%PDF-1.7\n1 0 obj\n<<>>\nendobj\n%%EOF');
+      const upload = (cookie: string, file: Buffer, name: string) =>
+        as(cookie)
+          .post('/v1/knowledge-sources/upload')
+          .attach('file', file, name);
+      const fileExists = async (key: string) => {
+        const s3 = app.get<S3Client>(S3_CLIENT);
+        const Bucket = app
+          .get(ConfigService)
+          .getOrThrow<string>('storage.bucket');
+        return s3.send(new HeadObjectCommand({ Bucket, Key: key })).then(
+          () => true,
+          () => false,
+        );
+      };
+      let docA: SourceBody;
+      let keyA: string;
+
+      beforeAll(async () => {
+        const res = await upload(cookies.ownerA, PDF, 'Return policy.pdf')
+          .field('title', 'Returns')
+          .expect(202);
+        docA = res.body as SourceBody;
+        keyA = (
+          await prisma.knowledgeSource.findUniqueOrThrow({
+            where: { id: docA.id },
+          })
+        ).fileKey!;
+      });
+
+      it("stores the file under the caller's workspace and queues it", async () => {
+        expect(docA).toMatchObject({
+          type: 'DOCUMENT',
+          title: 'Returns',
+          status: 'QUEUED',
+          mimeType: 'application/pdf',
+        });
+        expect(keyA.startsWith(`workspaces/${ids.a}/documents/`)).toBe(true);
+        expect(await fileExists(keyA)).toBe(true);
+      });
+
+      it("another workspace can't see or delete the document (404)", async () => {
+        const b = as(cookies.ownerB);
+        await b.get(`/v1/knowledge-sources/${docA.id}`).expect(404);
+        await b.delete(`/v1/knowledge-sources/${docA.id}`).expect(404);
+        const list = (
+          await b.get('/v1/knowledge-sources?type=DOCUMENT').expect(200)
+        ).body as SourceBody[];
+        expect(list).toEqual([]);
+        expect(await fileExists(keyA)).toBe(true);
+      });
+
+      it('rejects a file whose content is not what its name says (400)', async () => {
+        await upload(
+          cookies.ownerA,
+          Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00]),
+          'cat.pdf',
+        ).expect(400);
+        await as(cookies.ownerA)
+          .post('/v1/knowledge-sources/upload')
+          .expect(400);
+      });
+
+      it('is a 413 for a document over 10 MB', async () => {
+        await upload(
+          cookies.ownerA,
+          Buffer.alloc(10 * 1024 * 1024 + 1, 'a'),
+          'big.txt',
+        ).expect(413);
+      });
+
+      it('a viewer cannot upload (403)', async () => {
+        await upload(cookies.viewerA, PDF, 'x.pdf').expect(403);
+      });
+
+      describe('indexing (M2-11, M2-12)', () => {
+        let txtA: SourceBody;
+        const chunksOf = (sourceId: string) =>
+          prisma.$queryRaw<
+            {
+              workspace_id: string;
+              chatbot_id: string;
+              content: string;
+              embedding_model: string;
+            }[]
+          >`SELECT workspace_id::text, chatbot_id::text, content, embedding_model
+            FROM knowledge_chunks WHERE source_id = ${sourceId}::uuid`;
+
+        beforeAll(async () => {
+          const res = await upload(
+            cookies.ownerA,
+            Buffer.from('# Shipping\n\nWe ship to Dhaka within 2 days.'),
+            'shipping.md',
+          ).expect(202);
+          txtA = res.body as SourceBody;
+        });
+
+        it('indexes an upload into chunks owned by its workspace and chatbot', async () => {
+          await waitForStatus(cookies.ownerA, txtA.id, 'READY');
+
+          const chunks = await chunksOf(txtA.id);
+          expect(chunks).toEqual([
+            {
+              workspace_id: ids.a,
+              chatbot_id: ids.botA,
+              content: 'Shipping\nWe ship to Dhaka within 2 days.',
+              embedding_model: FAKE_EMBEDDING_MODEL,
+            },
+          ]);
+          const detail = (
+            await as(cookies.ownerA)
+              .get(`/v1/knowledge-sources/${txtA.id}`)
+              .expect(200)
+          ).body as { content: string };
+          expect(detail.content).toContain('We ship to Dhaka');
+        });
+
+        it("search finds only the caller's chunks", async () => {
+          const knowledge = app.get(KnowledgeService);
+          const inA = await inWorkspace(ids.a, () =>
+            knowledge.search(ids.botA, 'shipping to Dhaka'),
+          );
+          expect(inA.map((m) => m.content)).toContain(
+            'Shipping\nWe ship to Dhaka within 2 days.',
+          );
+          // B asking about A's chatbot, or its own: nothing of A's.
+          await expect(
+            inWorkspace(ids.b, () => knowledge.search(ids.botA, 'shipping')),
+          ).resolves.toEqual([]);
+          await expect(
+            inWorkspace(ids.b, () => knowledge.search(ids.botB, 'shipping')),
+          ).resolves.toEqual([]);
+          await expect(
+            inWorkspace(ids.b, () => db.knowledgeChunk.findMany()),
+          ).resolves.toEqual([]);
+        });
+
+        it('marks an unreadable PDF FAILED with a readable reason', async () => {
+          const failed = await waitForStatus(cookies.ownerA, docA.id, 'FAILED');
+          expect(failed.error).toMatch(/PDF/);
+        });
+
+        it("another workspace can't reindex the source (404); the owner can", async () => {
+          await as(cookies.ownerB)
+            .post(`/v1/knowledge-sources/${docA.id}/reindex`)
+            .expect(404);
+          const res = await as(cookies.ownerA)
+            .post(`/v1/knowledge-sources/${docA.id}/reindex`)
+            .expect(202);
+          expect((res.body as SourceBody).status).toBe('QUEUED');
+          await waitForStatus(cookies.ownerA, docA.id, 'FAILED');
+        });
+
+        it('deleting a source deletes its chunks', async () => {
+          await as(cookies.ownerA)
+            .delete(`/v1/knowledge-sources/${txtA.id}`)
+            .expect(204);
+          await expect(chunksOf(txtA.id)).resolves.toEqual([]);
+        });
+      });
+
+      it('deleting the document deletes its file', async () => {
+        await as(cookies.ownerA)
+          .delete(`/v1/knowledge-sources/${docA.id}`)
+          .expect(204);
+        expect(await fileExists(keyA)).toBe(false);
+      });
+    });
+  });
+
+  describe('Preview chat (M3-13, M3-14)', () => {
+    interface PreviewBody {
+      reply: string;
+      sources: { title: string; page: number | null; similarity: number }[];
+    }
+    const sentToLlm = () =>
+      JSON.stringify(fakeLlm.complete.mock.calls.at(-1)?.[0] ?? []);
+
+    beforeAll(async () => {
+      const a = await as(cookies.ownerA)
+        .post('/v1/knowledge-sources')
+        .send({
+          type: 'POLICY',
+          title: 'Preview A hours',
+          content: 'We open at 9am.',
+        })
+        .expect(201);
+      const b = await as(cookies.ownerB)
+        .post('/v1/knowledge-sources')
+        .send({
+          type: 'POLICY',
+          title: 'Preview B secret',
+          content: 'The warehouse code is B-7781.',
+        })
+        .expect(201);
+      await waitForStatus(
+        cookies.ownerA,
+        (a.body as { id: string }).id,
+        'READY',
+      );
+      await waitForStatus(
+        cookies.ownerB,
+        (b.body as { id: string }).id,
+        'READY',
+      );
+    });
+
+    it("answers from the caller's knowledge only, never another workspace's", async () => {
+      const res = await as(cookies.ownerA)
+        .post('/v1/chatbot/preview/messages')
+        .send({ message: 'What is the warehouse code?' })
+        .expect(200);
+      const body = res.body as PreviewBody;
+      expect(body.reply).toBe('stub answer');
+      // A has other items from earlier tests, so which of A's chunks rank
+      // first depends on the fake embedding; B's must never appear.
+      const titles = body.sources.map((s) => s.title);
+      expect(titles.length).toBeGreaterThan(0);
+      expect(titles).not.toContain('Preview B secret');
+      expect(sentToLlm()).not.toContain('B-7781');
+    });
+
+    it("B's preview finds B's knowledge, not A's", async () => {
+      const res = await as(cookies.ownerB)
+        .post('/v1/chatbot/preview/messages')
+        .send({ message: 'When do you open?' })
+        .expect(200);
+      const titles = (res.body as PreviewBody).sources.map((s) => s.title);
+      expect(titles).toContain('Preview B secret');
+      expect(titles).not.toContain('Preview A hours');
+      expect(sentToLlm()).not.toContain('We open at 9am.');
+    });
+
+    it('a viewer can use the preview', async () => {
+      await as(cookies.viewerA)
+        .post('/v1/chatbot/preview/messages')
+        .send({ message: 'Hi' })
+        .expect(200);
+    });
+
+    it('rejects an empty message (400) and no session (401)', async () => {
+      await as(cookies.ownerA)
+        .post('/v1/chatbot/preview/messages')
+        .send({ message: '   ' })
+        .expect(400);
+      await request(http)
+        .post('/v1/chatbot/preview/messages')
+        .set('X-Requested-With', 'fetch')
+        .send({ message: 'Hi' })
+        .expect(401);
+    });
+  });
+
+  describe('Products API (M2-21)', () => {
+    interface ProductBody {
+      id: string;
+      name: string;
+      sku: string | null;
+      price: string | null;
+      currency: string;
+    }
+    interface Page {
+      items: ProductBody[];
+      nextCursor: string | null;
+    }
+    let productA: ProductBody;
+
+    beforeAll(async () => {
+      const res = await as(cookies.ownerA)
+        .post('/v1/products')
+        .send({ name: 'Trail shoe', sku: 'SKU-1', price: '49.9' })
+        .expect(201);
+      productA = res.body as ProductBody;
+    });
+
+    it("stores money as a string and uses the chatbot's currency", () => {
+      expect(productA.price).toBe('49.90');
+      expect(productA.currency).toBe('USD');
+    });
+
+    it("lists and searches only the caller's products", async () => {
+      const a = (await as(cookies.ownerA).get('/v1/products').expect(200))
+        .body as Page;
+      expect(a.items.map((p) => p.id)).toContain(productA.id);
+
+      const b = (
+        await as(cookies.ownerB).get('/v1/products?q=trail').expect(200)
+      ).body as Page;
+      expect(b.items).toEqual([]);
+    });
+
+    it("another workspace's product is a 404 for edit and delete", async () => {
+      const b = as(cookies.ownerB);
+      await b
+        .patch(`/v1/products/${productA.id}`)
+        .send({ price: '1' })
+        .expect(404);
+      await b.delete(`/v1/products/${productA.id}`).expect(404);
+
+      const row = await prisma.product.findUniqueOrThrow({
+        where: { id: productA.id },
+      });
+      expect(row.price?.toFixed(2)).toBe('49.90');
+    });
+
+    it('SKUs are unique per chatbot, not across workspaces', async () => {
+      await as(cookies.ownerA)
+        .post('/v1/products')
+        .send({ name: 'Copy', sku: 'SKU-1' })
+        .expect(409);
+      const res = await as(cookies.ownerB)
+        .post('/v1/products')
+        .send({ name: 'Other shop shoe', sku: 'SKU-1' })
+        .expect(201);
+      await as(cookies.ownerB)
+        .delete(`/v1/products/${(res.body as ProductBody).id}`)
+        .expect(204);
+    });
+
+    it("pages through the caller's products with a cursor", async () => {
+      const owner = as(cookies.ownerA);
+      for (const name of ['Sandal', 'Boot']) {
+        await owner.post('/v1/products').send({ name }).expect(201);
+      }
+
+      const first = (await owner.get('/v1/products?limit=2').expect(200))
+        .body as Page;
+      expect(first.items.map((p) => p.name)).toEqual(['Boot', 'Sandal']);
+      expect(first.nextCursor).not.toBeNull();
+
+      const second = (
+        await owner
+          .get(`/v1/products?limit=2&cursor=${first.nextCursor}`)
+          .expect(200)
+      ).body as Page;
+      expect(second.items.map((p) => p.name)).toEqual(['Trail shoe']);
+      expect(second.nextCursor).toBeNull();
+
+      // A's cursor in B's hands only pages through B's (empty) list.
+      const b = (
+        await as(cookies.ownerB)
+          .get(`/v1/products?cursor=${first.nextCursor}`)
+          .expect(200)
+      ).body as Page;
+      expect(b.items).toEqual([]);
+    });
+
+    it('a viewer can read products but not change them (403)', async () => {
+      const viewer = as(cookies.viewerA);
+      await viewer.get('/v1/products').expect(200);
+      await viewer.post('/v1/products').send({ name: 'X' }).expect(403);
+      await viewer
+        .patch(`/v1/products/${productA.id}`)
+        .send({ name: 'X' })
+        .expect(403);
+      await viewer.delete(`/v1/products/${productA.id}`).expect(403);
+    });
+
+    describe('CSV import (M2-8)', () => {
+      interface ImportBody {
+        created: number;
+        updated: number;
+        failed: number;
+        errors: { row: number; message: string }[];
+      }
+      const upload = (cookie: string, ...lines: string[]) =>
+        as(cookie)
+          .post('/v1/products/import')
+          .attach('file', Buffer.from(lines.join('\n')), 'products.csv');
+
+      it("importing another workspace's SKU creates the caller's own product", async () => {
+        const res = await upload(
+          cookies.ownerB,
+          'sku,name,price',
+          'SKU-1,Other shop shoe,5',
+        ).expect(200);
+        expect(res.body).toEqual({
+          created: 1,
+          updated: 0,
+          failed: 0,
+          errors: [],
+        });
+
+        const a = await prisma.product.findUniqueOrThrow({
+          where: { id: productA.id },
+        });
+        expect(a.name).toBe('Trail shoe');
+        expect(a.price?.toFixed(2)).toBe('49.90');
+
+        // Later tests expect B to have no products.
+        await prisma.product.deleteMany({ where: { workspaceId: ids.b } });
+      });
+
+      it('updates by SKU, creates new rows and reports bad ones', async () => {
+        const res = await upload(
+          cookies.ownerA,
+          'sku,name,price',
+          'SKU-1,Trail shoe v2,59',
+          'SKU-9,Socks,3',
+          'SKU-10,,1',
+        ).expect(200);
+        const body = res.body as ImportBody;
+        expect(body).toMatchObject({ created: 1, updated: 1, failed: 1 });
+        expect(body.errors.map((e) => e.row)).toEqual([4]);
+
+        const updated = await prisma.product.findUniqueOrThrow({
+          where: { id: productA.id },
+        });
+        expect(updated.name).toBe('Trail shoe v2');
+        expect(updated.isActive).toBe(true);
+      });
+
+      it('is a 400 without a file or with unknown columns', async () => {
+        await as(cookies.ownerA).post('/v1/products/import').expect(400);
+        await upload(cookies.ownerA, 'name,colour', 'Shoe,red').expect(400);
+      });
+
+      it('is a 413 for a file over 1 MB', async () => {
+        await as(cookies.ownerA)
+          .post('/v1/products/import')
+          .attach('file', Buffer.alloc(1024 * 1024 + 1, 'a'), 'big.csv')
+          .expect(413);
+      });
+
+      it('a viewer can download the template but not import (403)', async () => {
+        const viewer = as(cookies.viewerA);
+        const res = await viewer
+          .get('/v1/products/import/template.csv')
+          .expect(200)
+          .expect('Content-Type', /text\/csv/);
+        expect(res.text.split('\r\n')[0]).toBe(
+          'sku,name,description,price,compare_at_price,currency,stock_status,stock_quantity,category,url,image_url',
+        );
+        await upload(cookies.viewerA, 'name', 'Shoe').expect(403);
+      });
+    });
+  });
+
   describe('tenant Prisma client', () => {
     it('lists only the current workspace', async () => {
       const bots = await inWorkspace(ids.a, () => db.chatbot.findMany());
@@ -261,6 +1141,68 @@ describe('Tenant isolation (M1-25)', () => {
           db.workspace.findUnique({ where: { id: ids.b } }),
         ),
       ).resolves.toBeNull();
+    });
+
+    it("can't see another workspace's knowledge", async () => {
+      // Runs after the Knowledge base API tests, so A has FAQs and a policy.
+      const [faqA, sourceA] = await Promise.all([
+        prisma.faq.findFirstOrThrow({ where: { workspaceId: ids.a } }),
+        prisma.knowledgeSource.findFirstOrThrow({
+          where: { workspaceId: ids.a },
+        }),
+      ]);
+      await expect(
+        inWorkspace(ids.b, () => db.faq.findMany()),
+      ).resolves.toEqual([]);
+      await expect(
+        inWorkspace(ids.b, () => db.customAnswer.findMany()),
+      ).resolves.toEqual([]);
+      await expect(
+        inWorkspace(ids.b, () => db.faq.findUnique({ where: { id: faqA.id } })),
+      ).resolves.toBeNull();
+      await expect(
+        inWorkspace(ids.b, () =>
+          db.knowledgeSource.deleteMany({ where: { id: sourceA.id } }),
+        ),
+      ).resolves.toEqual({ count: 0 });
+    });
+
+    it("can't see another workspace's products", async () => {
+      // Runs after the Products API tests, so A has products.
+      const productA = await prisma.product.findFirstOrThrow({
+        where: { workspaceId: ids.a },
+      });
+      await expect(
+        inWorkspace(ids.b, () => db.product.findMany()),
+      ).resolves.toEqual([]);
+      await expect(
+        inWorkspace(ids.b, () =>
+          db.product.updateMany({
+            where: { id: productA.id },
+            data: { name: 'hijacked' },
+          }),
+        ),
+      ).resolves.toEqual({ count: 0 });
+    });
+
+    it("can't see another workspace's chatbot versions", async () => {
+      // Runs after the Chatbot API tests, so A has a published version.
+      const versionA = await prisma.chatbotVersion.findFirstOrThrow({
+        where: { workspaceId: ids.a },
+      });
+      await expect(
+        inWorkspace(ids.b, () => db.chatbotVersion.findMany()),
+      ).resolves.toEqual([]);
+      await expect(
+        inWorkspace(ids.b, () =>
+          db.chatbotVersion.findUnique({ where: { id: versionA.id } }),
+        ),
+      ).resolves.toBeNull();
+      await expect(
+        inWorkspace(ids.b, () =>
+          db.chatbotVersion.deleteMany({ where: { id: versionA.id } }),
+        ),
+      ).resolves.toEqual({ count: 0 });
     });
 
     it("counts only the current workspace's rows", async () => {

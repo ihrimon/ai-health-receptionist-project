@@ -40,9 +40,8 @@ coverage/
 # Markdown docs (not published to GitHub, except the root README)
 *.md
 !README.md
-# ...except these two — read from disk at runtime (LlmChatClient's system
-# prompt, and the RAG knowledge base source), not just documentation. A
-# deploy built from a git checkout (e.g. Render) is missing them entirely
-# without this, so every chat message 500s on fs.readFileSync ENOENT.
+# ...except this one — read from disk at runtime (LlmChatClient's system
+# prompt), not just documentation. A deploy built from a git checkout (e.g.
+# Render) is missing it entirely without this, so every chat message 500s
+# on fs.readFileSync ENOENT.
 !packages/ai/prompts/assistant.md
-!packages/ai/knowledge/faq.md
