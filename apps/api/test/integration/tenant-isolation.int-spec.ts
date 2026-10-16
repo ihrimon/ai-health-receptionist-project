@@ -1453,6 +1453,42 @@ describe('Tenant isolation (M1-25)', () => {
       ).resolves.toBeNull();
     });
 
+    it('opens CORS to the widget app for the public API only, without cookies (M4-3)', async () => {
+      const widget = process.env.WIDGET_URL ?? 'http://localhost:3002';
+      const publicId = await publicIdOf(ids.botA);
+      const preflight = await request(http)
+        .options(`/v1/public/chatbots/${publicId}/conversations`)
+        .set('Origin', widget)
+        .set('Access-Control-Request-Method', 'POST')
+        .set(
+          'Access-Control-Request-Headers',
+          'content-type,x-requested-with,authorization',
+        )
+        .expect(204);
+      expect(preflight.headers['access-control-allow-origin']).toBe(widget);
+      expect(preflight.headers['access-control-allow-credentials']).toBe(
+        undefined,
+      );
+
+      const config = await request(http)
+        .get(`/v1/public/chatbots/${publicId}/config`)
+        .set('Origin', widget)
+        .expect(200);
+      expect(config.headers['access-control-allow-origin']).toBe(widget);
+
+      const dashboardRoute = await request(http)
+        .get('/v1/auth/me')
+        .set('Origin', widget);
+      expect(dashboardRoute.headers['access-control-allow-origin']).toBe(
+        undefined,
+      );
+      const otherSite = await request(http)
+        .get(`/v1/public/chatbots/${publicId}/config`)
+        .set('Origin', 'https://shop.example.com')
+        .expect(200);
+      expect(otherSite.headers['access-control-allow-origin']).toBe(undefined);
+    });
+
     it('keeps the history on the server and returns it with the token', async () => {
       const { conversationId, conversationToken } = await started();
       const chat = conversation(conversationId, conversationToken);

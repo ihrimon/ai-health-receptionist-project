@@ -1,6 +1,8 @@
 import { ValidationPipe } from '@nestjs/common';
 import { NestExpressApplication } from '@nestjs/platform-express';
 import cookieParser from 'cookie-parser';
+import type { Request } from 'express';
+import { corsOptionsFor } from './common/cors';
 import { requireFetchHeader } from './common/require-fetch-header';
 
 /**
@@ -21,9 +23,16 @@ export function configureApp(app: NestExpressApplication): void {
   app.use(cookieParser());
   app.use(requireFetchHeader);
 
-  app.enableCors({
-    origin: process.env.DASHBOARD_URL ?? 'http://localhost:3000',
-    credentials: true,
+  const allowed = {
+    dashboardUrl: process.env.DASHBOARD_URL ?? 'http://localhost:3000',
+    // The widget app's origin (apps/widget, Vite on :3002 locally).
+    widgetUrl: process.env.WIDGET_URL ?? 'http://localhost:3002',
+  };
+  app.enableCors((req: Request, callback) => {
+    callback(
+      null,
+      corsOptionsFor(req.headers.origin, req.originalUrl ?? req.url, allowed),
+    );
   });
 
   app.useGlobalPipes(
