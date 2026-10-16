@@ -29,17 +29,21 @@ export const PRODUCT_TOOLS: ChatCompletionTool[] = [
             type: 'string',
             description: 'What the customer is looking for, in a few words.',
           },
+          // Optional arguments may be null: many models send null for a
+          // filter they don't use, and some providers (Groq) reject the
+          // call before it reaches us when the schema doesn't allow it.
           category: {
-            type: 'string',
-            description: 'Only products in this category.',
+            type: ['string', 'null'],
+            description: 'Only products in this category, or null.',
           },
           max_price: {
-            type: 'number',
-            description: 'Only products priced at or below this amount.',
+            type: ['number', 'null'],
+            description:
+              'Only products priced at or below this amount, or null.',
           },
           in_stock_only: {
-            type: 'boolean',
-            description: 'Leave out products that are out of stock.',
+            type: ['boolean', 'null'],
+            description: 'Leave out products that are out of stock, or null.',
           },
         },
         required: ['query'],
@@ -63,11 +67,12 @@ export const PRODUCT_TOOLS: ChatCompletionTool[] = [
   },
 ];
 
+// null and missing mean the same: no filter.
 const searchArgs = z.object({
   query: z.string().trim().max(200).default(''),
-  category: z.string().trim().max(100).optional(),
-  max_price: z.number().nonnegative().optional(),
-  in_stock_only: z.boolean().optional(),
+  category: z.string().trim().max(100).nullish(),
+  max_price: z.number().nonnegative().nullish(),
+  in_stock_only: z.boolean().nullish(),
 });
 const getArgs = z.object({ id: z.uuid() });
 
@@ -77,6 +82,14 @@ export interface ToolRun {
   /** The products the answer may now rely on. */
   products: ProductHit[];
 }
+
+/** The words the model should use; the enum names read badly in an answer. */
+const STOCK_TEXT: Record<ProductHit['stockStatus'], string> = {
+  IN_STOCK: 'in stock',
+  OUT_OF_STOCK: 'out of stock',
+  PREORDER: 'available to pre-order',
+  UNKNOWN: 'stock level not known',
+};
 
 /** The model sees names and numbers as plain text, so format them here. */
 function forModel(hit: ProductHit, detailed: boolean) {
@@ -91,7 +104,7 @@ function forModel(hit: ProductHit, detailed: boolean) {
       hit.compareAtPrice === null
         ? undefined
         : `${hit.compareAtPrice} ${hit.currency}`,
-    stock: hit.stockStatus,
+    stock: STOCK_TEXT[hit.stockStatus],
     category: hit.category ?? undefined,
     description: hit.description
       ? hit.description.slice(0, detailed ? 1000 : 200)
@@ -140,9 +153,9 @@ export class ProductToolsService {
         chatbotId,
         {
           query: parsed.data.query,
-          category: parsed.data.category,
-          maxPrice: parsed.data.max_price,
-          inStockOnly: parsed.data.in_stock_only,
+          category: parsed.data.category ?? undefined,
+          maxPrice: parsed.data.max_price ?? undefined,
+          inStockOnly: parsed.data.in_stock_only ?? undefined,
         },
         SEARCH_RESULTS,
       );

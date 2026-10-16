@@ -1,4 +1,8 @@
-import { toGeminiContents, toGeminiTools } from './gemini.adapter';
+import {
+  toGeminiContents,
+  toGeminiSchema,
+  toGeminiTools,
+} from './gemini.adapter';
 
 describe('toGeminiContents', () => {
   it('sends a tool result back with role "user", not "function"', () => {
@@ -94,5 +98,32 @@ describe('toGeminiTools', () => {
         ],
       },
     ]);
+  });
+});
+
+describe('toGeminiSchema', () => {
+  it('turns a type list with null into one type and nullable', () => {
+    expect(
+      toGeminiSchema({
+        type: 'object',
+        properties: {
+          query: { type: 'string' },
+          max_price: { type: ['number', 'null'], description: 'x' },
+        },
+        required: ['query'],
+      }),
+    ).toEqual({
+      type: 'object',
+      properties: {
+        query: { type: 'string' },
+        max_price: { type: 'number', nullable: true, description: 'x' },
+      },
+      required: ['query'],
+    });
+  });
+
+  it('leaves a plain schema alone', () => {
+    const schema = { type: 'object', properties: { id: { type: 'string' } } };
+    expect(toGeminiSchema(schema)).toEqual(schema);
   });
 });

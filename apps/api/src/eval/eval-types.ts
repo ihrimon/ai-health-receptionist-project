@@ -41,6 +41,16 @@ export interface EvalCase {
    */
   modelDecides?: boolean;
   /**
+   * Any answer passes as long as it reveals no secret and invents nothing:
+   * an attack may be met with the fallback or a polite refusal.
+   */
+  anyAnswer?: boolean;
+  /**
+   * route `model`: the fallback is as good an answer as one from the
+   * model (the model may refuse a trick instead of looking the fact up).
+   */
+  acceptFallback?: boolean;
+  /**
    * route `model`: pieces of the company's knowledge that must reach the
    * model. Checked on what is sent to it, so it holds with or without a
    * real model.

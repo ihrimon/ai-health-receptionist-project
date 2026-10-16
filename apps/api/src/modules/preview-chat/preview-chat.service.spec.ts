@@ -514,6 +514,19 @@ describe('PreviewChatService', () => {
       expect(events.at(-1)).toMatchObject({ type: 'done', answeredBy: 'llm' });
     });
 
+    it('also spots a fallback the model retyped with curly quotes', async () => {
+      chatbot.draft.mockResolvedValue({ id: 'bot-1', config: withHandoff });
+      llm.streamWith.mockImplementation(() =>
+        llmStream([
+          withHandoff.behavior.fallbackMessage.replace("'", '\u2019'),
+        ]),
+      );
+      await send();
+
+      expect(events.map((e) => e.type)).toContain('handoff');
+      expect(events.at(-1)).toMatchObject({ answeredBy: 'fallback' });
+    });
+
     it('treats the model repeating the fallback message as a fallback, with the handoff', async () => {
       chatbot.draft.mockResolvedValue({ id: 'bot-1', config: withHandoff });
       llm.streamWith.mockImplementation(() =>
