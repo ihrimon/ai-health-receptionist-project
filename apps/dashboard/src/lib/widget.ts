@@ -1,8 +1,12 @@
-import type {
-  ChatStreamEvent,
-  PublicChatConfig,
-  PublicConversation,
-  PublicMessageView,
+import {
+  type ChatStreamEvent,
+  type HostToWidgetMessage,
+  type PublicChatConfig,
+  type PublicConversation,
+  type PublicMessageView,
+  WIDGET_PROTOCOL_NS,
+  WIDGET_PROTOCOL_VERSION,
+  type WidgetToHostMessage,
 } from "@brainstack/shared";
 import { apiFetch } from "@/lib/api";
 import { postChatStream } from "@/lib/chat-stream";
@@ -10,13 +14,65 @@ import { postChatStream } from "@/lib/chat-stream";
 /* The embeddable widget (early MVP): the /w/[publicId] page that
    public/chatbot.js opens in an iframe on the company's site. */
 
-/** Messages between the widget page and the loader on the host page. */
-export const WIDGET_MESSAGES = {
-  /** Page → loader: colors and side for the launcher button. */
-  config: "brainstack:config",
-  /** Page → loader: the visitor closed the chat. */
-  close: "brainstack:close",
-} as const;
+/** The page's line to the loader on the host page (protocol v1, M4-10). */
+export interface LoaderLink {
+  /** Held back until the loader has said who it is (`init`). */
+  post(message: WidgetToHostMessage): void;
+  disconnect(): void;
+}
+
+/** The part of `window` the link uses, so tests can pass a fake. */
+export type LoaderWindow = Pick<Window, "parent" | "addEventListener" | "removeEventListener"> & {
+  location: { ancestorOrigins?: { length: number; [index: number]: string } };
+};
+
+/**
+ * Connects to the loader (`chatbot.js`, built from apps/widget), or null
+ * outside a frame. Same rules as the widget app's `connectHost`
+ * (apps/widget/src/host.ts), kept here because this page is only the
+ * fallback until M4-19 serves the widget app: an empty `ready` to `*`,
+ * then only the parent's `init` sets the host origin, and every later
+ * message goes to and comes only from that origin.
+ */
+export function connectLoader(win: LoaderWindow): LoaderLink | null {
+  if (!win.parent || win.parent === (win as unknown)) return null;
+  let hostOrigin: string | null = null;
+  const queue: WidgetToHostMessage[] = [];
+  const wrap = (message: WidgetToHostMessage) => ({
+    ns: WIDGET_PROTOCOL_NS,
+    v: WIDGET_PROTOCOL_VERSION,
+    ...message,
+  });
+  const send = (message: WidgetToHostMessage) =>
+    win.parent.postMessage(wrap(message), hostOrigin!);
+
+  const listener = (event: MessageEvent) => {
+    if (hostOrigin !== null || event.source !== win.parent) return;
+    if (!isInit(event.data) || !/^https?:\/\//.test(event.origin)) return;
+    const ancestors = win.location.ancestorOrigins;
+    if (ancestors && ancestors.length > 0 && ancestors[0] !== event.origin) return;
+    hostOrigin = event.origin;
+    queue.splice(0).forEach(send);
+  };
+
+  win.addEventListener("message", listener);
+  win.parent.postMessage(wrap({ type: "ready" }), "*");
+  return {
+    post: (message) => (hostOrigin ? send(message) : queue.push(message)),
+    disconnect: () => win.removeEventListener("message", listener),
+  };
+}
+
+function isInit(data: unknown): data is HostToWidgetMessage {
+  const m = data as Partial<HostToWidgetMessage & { ns: string; v: number }> | null;
+  return (
+    !!m &&
+    m.ns === WIDGET_PROTOCOL_NS &&
+    m.v === WIDGET_PROTOCOL_VERSION &&
+    m.type === "init" &&
+    typeof m.open === "boolean"
+  );
+}
 
 export const widgetApi = {
   config: (publicId: string) =>

@@ -12,12 +12,13 @@ import {
 } from "@/lib/preview-chat";
 import { cn } from "@/lib/utils";
 import {
+  connectLoader,
+  type LoaderLink,
   loadStoredChat,
   newVisitorId,
   saveStoredChat,
   type StoredChat,
   textOn,
-  WIDGET_MESSAGES,
   widgetApi,
 } from "@/lib/widget";
 
@@ -29,11 +30,22 @@ type State =
 /**
  * The chat window visitors see on a company's site (early MVP): opened by
  * public/chatbot.js in an iframe, no login. Always light, so it looks the
- * same on every site. History lives in this page only.
+ * same on every site. History lives in this page only. Talks to the loader
+ * with protocol v1 (M4-10); it is the fallback until M4-19 serves the
+ * apps/widget page.
  */
 export default function WidgetPage() {
   const { publicId } = useParams<{ publicId: string }>();
   const [state, setState] = useState<State>({ kind: "loading" });
+  const [link, setLink] = useState<LoaderLink | null>(null);
+
+  useEffect(() => {
+    const connected = connectLoader(window);
+    // In state, so the close button shows once the link exists; set in a
+    // microtask because React's lint rule rejects setState in the effect body.
+    queueMicrotask(() => setLink(connected));
+    return () => connected?.disconnect();
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -41,16 +53,6 @@ export default function WidgetPage() {
       (config) => {
         if (cancelled) return;
         setState({ kind: "ready", config });
-        // Only colors and side: nothing private goes to the host page.
-        window.parent.postMessage(
-          {
-            type: WIDGET_MESSAGES.config,
-            primaryColor: config.primaryColor,
-            textColor: textOn(config.primaryColor),
-            position: config.position,
-          },
-          "*",
-        );
       },
       () => !cancelled && setState({ kind: "unavailable" }),
     );
@@ -58,6 +60,13 @@ export default function WidgetPage() {
       cancelled = true;
     };
   }, [publicId]);
+
+  // Only colors and side: nothing private goes to the host page.
+  useEffect(() => {
+    if (state.kind !== "ready") return;
+    const { primaryColor, position } = state.config;
+    link?.post({ type: "config", primaryColor, textColor: textOn(primaryColor), position });
+  }, [state, link]);
 
   if (state.kind !== "ready") {
     return (
@@ -68,15 +77,23 @@ export default function WidgetPage() {
       </div>
     );
   }
-  return <ChatWindow publicId={publicId} config={state.config} />;
+  return (
+    <ChatWindow
+      publicId={publicId}
+      config={state.config}
+      onClose={link ? () => link.post({ type: "close" }) : undefined}
+    />
+  );
 }
 
 function ChatWindow({
   publicId,
   config,
+  onClose,
 }: {
   publicId: string;
   config: PublicChatConfig;
+  onClose?: () => void;
 }) {
   const [messages, setMessages] = useState<PreviewMessage[]>([]);
   const [input, setInput] = useState("");
@@ -188,14 +205,16 @@ function ChatWindow({
           <img src={config.avatarUrl} alt="" className="size-8 rounded-full object-cover" />
         )}
         <h1 className="flex-1 truncate text-sm font-semibold">{config.headerTitle}</h1>
-        <button
-          type="button"
-          aria-label="Close chat"
-          className="rounded-md p-1 opacity-80 hover:opacity-100"
-          onClick={() => window.parent.postMessage({ type: WIDGET_MESSAGES.close }, "*")}
-        >
-          <X className="size-5" />
-        </button>
+        {onClose && (
+          <button
+            type="button"
+            aria-label="Close chat"
+            className="rounded-md p-1 opacity-80 hover:opacity-100"
+            onClick={onClose}
+          >
+            <X className="size-5" />
+          </button>
+        )}
       </header>
 
       <div className="flex-1 space-y-3 overflow-y-auto p-4 text-sm" aria-live="polite">
