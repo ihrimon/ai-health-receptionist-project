@@ -1,13 +1,36 @@
 @import "tailwindcss";
 
+/*
+ * Full height on a phone too (M4-7): `--app-height` is the visible part of
+ * the screen, kept up to date by `watchViewport` (src/viewport.ts), so the
+ * on-screen keyboard never covers the message box. Before the script runs,
+ * or without visualViewport, the dynamic viewport height (dvh) is used,
+ * which follows the browser's own toolbars.
+ */
 html,
 body,
 #app {
   height: 100%;
+  height: var(--app-height, 100dvh);
 }
 
 body {
   margin: 0;
+  overflow: hidden;
   background: #ffffff;
   color: #18181b;
+}
+
+/*
+ * A visible focus ring on every control for keyboard users: a dark ring
+ * with a white gap, so it shows on white and on any brand color.
+ */
+:where(a, button, textarea, [tabindex]):focus-visible {
+  outline: 2px solid #18181b;
+  outline-offset: 2px;
+  box-shadow: 0 0 0 2px #ffffff;
+}
+
+textarea:focus-visible {
+  outline-offset: 0;
 }
