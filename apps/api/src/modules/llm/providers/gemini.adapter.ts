@@ -24,6 +24,28 @@ import {
 // literals (never any other Groq.ChatCompletionTool variant), so
 // `function` is always present despite the SDK's general type marking it
 // optional.
+/**
+ * Our tool schemas say an optional argument may be null with a type list
+ * (`['number', 'null']`); Gemini takes one type plus `nullable: true`.
+ */
+export function toGeminiSchema(schema: unknown): unknown {
+  if (Array.isArray(schema)) return schema.map(toGeminiSchema);
+  if (typeof schema !== 'object' || schema === null) return schema;
+  const copy: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(schema)) {
+    copy[key] = toGeminiSchema(value);
+  }
+  if (Array.isArray(copy.type)) {
+    const types = copy.type as string[];
+    const real = types.find((t) => t !== 'null');
+    if (real) {
+      copy.type = real;
+      if (types.includes('null')) copy.nullable = true;
+    }
+  }
+  return copy;
+}
+
 export function toGeminiTools(tools: ChatCompletionTool[]): Tool[] {
   const functionDeclarations: FunctionDeclaration[] = tools.map((tool) => ({
     name: tool.function!.name,
@@ -31,8 +53,9 @@ export function toGeminiTools(tools: ChatCompletionTool[]): Tool[] {
     // SchemaType's enum values ARE the plain lowercase JSON Schema type
     // strings ("object", "string", ...) our tool defs already use — this
     // is a type-level cast, not a value conversion.
-    parameters: tool.function!
-      .parameters as unknown as FunctionDeclarationSchema,
+    parameters: toGeminiSchema(
+      tool.function!.parameters,
+    ) as FunctionDeclarationSchema,
   }));
   return [{ functionDeclarations }];
 }

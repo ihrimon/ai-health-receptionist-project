@@ -90,13 +90,57 @@ describe('ProductToolsService', () => {
           name: 'Trail shoe',
           price: '49.90 USD',
           compare_at_price: '59.00 USD',
-          stock: 'IN_STOCK',
+          stock: 'in stock',
           category: 'Shoes',
           description: 'Light shoe for trails.',
           url: 'https://shop.example.com/trail',
         },
       ],
     });
+  });
+
+  it('treats a null filter like a missing one', async () => {
+    knowledge.searchProducts.mockResolvedValue([shoe]);
+
+    await service.run(
+      'bot-1',
+      'search_products',
+      JSON.stringify({
+        query: 'shoe',
+        category: null,
+        max_price: null,
+        in_stock_only: null,
+      }),
+    );
+
+    expect(knowledge.searchProducts).toHaveBeenCalledWith(
+      'bot-1',
+      {
+        query: 'shoe',
+        category: undefined,
+        maxPrice: undefined,
+        inStockOnly: undefined,
+      },
+      5,
+    );
+  });
+
+  it('lets the model send null for every optional filter', () => {
+    const search = PRODUCT_TOOLS.find(
+      (t) => t.function!.name === 'search_products',
+    )!;
+    const properties = (
+      search.function!.parameters as {
+        properties: Record<string, { type: unknown }>;
+        required: string[];
+      }
+    ).properties;
+    for (const name of ['category', 'max_price', 'in_stock_only']) {
+      expect(properties[name].type).toEqual([expect.any(String), 'null']);
+    }
+    expect(
+      (search.function!.parameters as { required: string[] }).required,
+    ).toEqual(['query']);
   });
 
   it('says plainly when nothing was found', async () => {
@@ -123,6 +167,29 @@ describe('ProductToolsService', () => {
     const price = (JSON.parse(run.content) as { products: { price: string }[] })
       .products[0].price;
     expect(price).toMatch(/not listed/);
+  });
+
+  it('says stock in words, never as an enum name', async () => {
+    knowledge.searchProducts.mockResolvedValue([
+      { ...shoe, stockStatus: 'OUT_OF_STOCK' },
+      { ...shoe, id: 'p2', stockStatus: 'PREORDER' },
+      { ...shoe, id: 'p3', stockStatus: 'UNKNOWN' },
+    ]);
+    const run = await service.run(
+      'bot-1',
+      'search_products',
+      JSON.stringify({ query: 'shoe' }),
+    );
+    expect(
+      (
+        JSON.parse(run.content) as { products: { stock: string }[] }
+      ).products.map((p) => p.stock),
+    ).toEqual([
+      'out of stock',
+      'available to pre-order',
+      'stock level not known',
+    ]);
+    expect(run.content).not.toMatch(/OUT_OF_STOCK|PREORDER|UNKNOWN/);
   });
 
   it('gets one product with its attributes', async () => {
