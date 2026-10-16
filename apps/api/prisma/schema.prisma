@@ -134,6 +134,7 @@ model Workspace {
   llmKeys         WorkspaceLlmKey[]
   conversations   Conversation[]
   messages        Message[]
+  usageCounters   UsageCounter[]
   /// Sessions currently switched to this workspace.
   activeSessions  Session[]
 
@@ -507,6 +508,28 @@ model Message {
   @@index([conversationId, createdAt])
   @@index([workspaceId, answeredBy, createdAt])
   @@map("messages")
+}
+
+/// How much a workspace used chat in one calendar month, UTC (M3-11). Live
+/// visitor messages and dashboard "Test chat" messages are counted apart.
+/// The base for the monthly quota that arrives with plans (M6/M7).
+model UsageCounter {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId     String   @map("workspace_id") @db.Uuid
+  /// "2026-10".
+  period          String   @db.Char(7)
+  /// Answers to live visitors.
+  messages        Int      @default(0)
+  /// Answers in the dashboard Test chat.
+  previewMessages Int      @default(0) @map("preview_messages")
+  tokensIn        BigInt   @default(0) @map("tokens_in")
+  tokensOut       BigInt   @default(0) @map("tokens_out")
+  updatedAt       DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, period])
+  @@map("usage_counters")
 }
 
 /// A searchable piece of an FAQ, policy, text page or document (M2-12).

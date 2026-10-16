@@ -23,6 +23,7 @@ import {
   KnowledgeService,
 } from '../knowledge/knowledge.service';
 import { LlmKeysService } from '../llm-keys/llm-keys.service';
+import { UsageService } from '../usage/usage.service';
 import type { ChatCompletionMessageParam } from '../llm/providers/provider-adapter.types';
 import { PRODUCT_TOOLS, ProductToolsService } from './product-tools.service';
 import { buildPreviewMessages } from './preview-prompt';
@@ -70,6 +71,7 @@ export class PreviewChatService {
     private readonly keys: LlmKeysService,
     private readonly conversations: ConversationsService,
     private readonly products: ProductToolsService,
+    private readonly usage: UsageService,
   ) {}
 
   async send(
@@ -364,8 +366,9 @@ export class PreviewChatService {
     context: AnswerContext,
     answer: AnswerDetails,
   ): Promise<string | null> {
+    let conversationId: string;
     try {
-      return await this.conversations.recordTurn({
+      conversationId = await this.conversations.recordTurn({
         chatbotId: botId,
         conversationId: request.conversationId,
         visitorId: context.visitorId,
@@ -378,6 +381,17 @@ export class PreviewChatService {
       this.logger.error(`Could not store the chat turn: ${String(err)}`);
       return null;
     }
+    // Counting never costs the visitor an answer.
+    try {
+      await this.usage.record({
+        preview: context.isPreview,
+        tokensIn: answer.tokensIn ?? 0,
+        tokensOut: answer.tokensOut ?? 0,
+      });
+    } catch (err) {
+      this.logger.error(`Could not count the chat turn: ${String(err)}`);
+    }
+    return conversationId;
   }
 }
 

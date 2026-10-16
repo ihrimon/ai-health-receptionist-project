@@ -18,6 +18,7 @@ export const TENANT_MODELS = new Set<string>([
   'WorkspaceLlmKey',
   'Conversation',
   'Message',
+  'UsageCounter',
 ]);
 
 const READ_MANY_OPS = new Set([

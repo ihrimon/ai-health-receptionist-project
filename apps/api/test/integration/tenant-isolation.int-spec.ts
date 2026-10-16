@@ -1574,6 +1574,74 @@ describe('Tenant isolation (M1-25)', () => {
     });
   });
 
+  describe('Usage (M3-11, M3-13)', () => {
+    interface UsageBody {
+      period: string;
+      messages: number;
+      previewMessages: number;
+      tokensIn: number;
+      tokensOut: number;
+      limit: number | null;
+    }
+    const usageOf = async (cookie: string) =>
+      (await as(cookie).get('/v1/usage').expect(200)).body as UsageBody;
+
+    it('counts Test chat and visitor answers apart, per workspace', async () => {
+      const before = await usageOf(cookies.ownerA);
+      const beforeB = await usageOf(cookies.ownerB);
+
+      await as(cookies.ownerA)
+        .post('/v1/chatbot/preview/messages')
+        .send({ message: 'When do you open?' })
+        .expect(200);
+      const publicId = (
+        await prisma.chatbot.findUniqueOrThrow({
+          where: { id: ids.botA },
+          select: { publicId: true },
+        })
+      ).publicId;
+      const started = await request(http)
+        .post(`/v1/public/chatbots/${publicId}/conversations`)
+        .set('X-Requested-With', 'fetch')
+        .send({ visitorId: 'visitor_usage1' })
+        .expect(201);
+      const { conversationId, conversationToken } = started.body as {
+        conversationId: string;
+        conversationToken: string;
+      };
+      await request(http)
+        .post(`/v1/public/conversations/${conversationId}/messages`)
+        .set('X-Requested-With', 'fetch')
+        .set('Authorization', `Bearer ${conversationToken}`)
+        .send({ message: 'When do you open?' })
+        .expect(200);
+
+      const after = await usageOf(cookies.ownerA);
+      expect(after.period).toMatch(/^\d{4}-\d{2}$/);
+      expect(after.previewMessages).toBe(before.previewMessages + 1);
+      expect(after.messages).toBe(before.messages + 1);
+      // The fake model reports 100 tokens in and 7 out for each answer.
+      expect(after.tokensIn).toBe(before.tokensIn + 200);
+      expect(after.tokensOut).toBe(before.tokensOut + 14);
+      expect(after.limit).toBeNull();
+
+      // Workspace B saw none of it.
+      expect(await usageOf(cookies.ownerB)).toEqual(beforeB);
+    });
+
+    it("each workspace's row is its own, and a viewer can read it", async () => {
+      const rows = await prisma.usageCounter.findMany({
+        where: { workspaceId: { in: [ids.a, ids.b] } },
+      });
+      expect(rows.some((r) => r.workspaceId === ids.a)).toBe(true);
+      await expect(
+        inWorkspace(ids.b, () => db.usageCounter.findMany()),
+      ).resolves.toEqual(rows.filter((r) => r.workspaceId === ids.b));
+      await as(cookies.viewerA).get('/v1/usage').expect(200);
+      await request(http).get('/v1/usage').expect(401);
+    });
+  });
+
   describe('Products API (M2-21)', () => {
     interface ProductBody {
       id: string;
