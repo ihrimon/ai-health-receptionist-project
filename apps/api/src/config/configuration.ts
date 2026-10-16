@@ -1,14 +1,25 @@
+import { join } from 'path';
+
 export default () => ({
   nodeEnv: process.env.NODE_ENV ?? 'development',
   apiPort: parseInt(process.env.API_PORT ?? '3001', 10),
   dashboardUrl: process.env.DASHBOARD_URL ?? 'http://localhost:3000',
   // Script src in the embed snippet (FR-3.1). The loader is built from
-  // apps/widget (M4-8); until M4-19 the dashboard serves a copy of it
-  // (public/chatbot.js) that opens its own /w/:publicId page.
-  // WIDGET_LOADER_URL points the snippet at the widget host or a CDN.
+  // apps/widget (M4-8). Unset, the dashboard's copy (public/chatbot.js),
+  // which opens the dashboard's own /w/:publicId page with no domain
+  // check. Set it to <this API's URL>/chatbot.js to switch to the page the
+  // API serves with the frame-ancestors CSP (M4-19).
   widgetLoaderUrl:
     process.env.WIDGET_LOADER_URL ??
     `${process.env.DASHBOARD_URL ?? 'http://localhost:3000'}/chatbot.js`,
+
+  // The static build of apps/widget (index.html, assets/, chatbot.js) that
+  // the API serves at /w/:publicId (M4-19). The API runs from apps/api.
+  widget: {
+    distDir:
+      process.env.WIDGET_DIST_DIR ??
+      join(process.cwd(), '..', 'widget', 'dist'),
+  },
 
   database: {
     // Prisma connects with DATABASE_URL (the Prisma CLI reads it too, via

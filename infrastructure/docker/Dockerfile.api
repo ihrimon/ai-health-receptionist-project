@@ -11,9 +11,13 @@ WORKDIR /repo
 
 COPY . .
 # apps/api's postinstall runs `prisma generate` (no database needed).
-RUN pnpm install --filter=api...
+# The widget is installed and built too: the API serves its static build
+# (apps/widget/dist) at /w/:publicId and /chatbot.js (M4-19).
+RUN pnpm install --filter=api... --filter=widget...
 # "api..." also builds the workspace packages it imports (@brainstack/shared).
-RUN pnpm --filter=api... build
+# The widget is built without VITE_API_URL / VITE_WIDGET_URL, so the page
+# calls the API on its own origin and the loader opens this origin's page.
+RUN pnpm --filter=api... --filter=widget... build
 
 WORKDIR /repo/apps/api
 ENV NODE_ENV=production

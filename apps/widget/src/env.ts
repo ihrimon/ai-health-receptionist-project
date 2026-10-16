@@ -8,7 +8,8 @@
  *   M4-14) is ignored.
  * - The API is fixed per build (`VITE_API_URL`), like the dashboard's
  *   `NEXT_PUBLIC_API_URL`: the files are static and the same for every
- *   company.
+ *   company. Unset, a production build calls the origin it was served
+ *   from (the API serves this page, M4-19), and `vite dev` the local API.
  */
 export function publicIdFrom(pathname: string): string | null {
   const match = /\/w\/([^/]+)\/?$/.exec(pathname);
@@ -20,8 +21,11 @@ export function publicIdFrom(pathname: string): string | null {
   }
 }
 
-export function apiBaseFrom(apiUrl: string | undefined): string {
-  return `${(apiUrl || "http://localhost:3001").replace(/\/+$/, "")}/v1`;
+export function apiBaseFrom(apiUrl: string | undefined, fallback: string): string {
+  return `${(apiUrl || fallback).replace(/\/+$/, "")}/v1`;
 }
 
-export const API_BASE = apiBaseFrom(import.meta.env.VITE_API_URL);
+export const API_BASE = apiBaseFrom(
+  import.meta.env.VITE_API_URL,
+  import.meta.env.DEV ? "http://localhost:3001" : location.origin,
+);

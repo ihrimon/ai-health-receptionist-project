@@ -17,8 +17,11 @@ export function configureApp(app: NestExpressApplication): void {
     app.set('trust proxy', parseInt(process.env.TRUST_PROXY, 10));
   }
 
-  // D-2 §1: everything under /v1, except the health check.
-  app.setGlobalPrefix('v1', { exclude: ['health'] });
+  // D-2 §1: everything under /v1, except the health check and the widget
+  // page with its files (M4-19), whose URLs are in every embed snippet.
+  app.setGlobalPrefix('v1', {
+    exclude: ['health', 'w/:publicId', 'w/assets/:file', 'chatbot.js'],
+  });
 
   app.use(cookieParser());
   app.use(requireFetchHeader);

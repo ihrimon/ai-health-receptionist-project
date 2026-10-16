@@ -17,9 +17,9 @@ describe("publicIdFrom", () => {
 });
 
 describe("apiBaseFrom", () => {
-  it("adds /v1 to the build's API origin, local API by default", () => {
-    expect(apiBaseFrom("https://api.example.com/")).toBe("https://api.example.com/v1");
-    expect(apiBaseFrom(undefined)).toBe("http://localhost:3001/v1");
-    expect(apiBaseFrom("")).toBe("http://localhost:3001/v1");
+  it("adds /v1 to the build's API origin, or to the fallback when unset", () => {
+    expect(apiBaseFrom("https://api.example.com/", "https://x.test")).toBe("https://api.example.com/v1");
+    expect(apiBaseFrom(undefined, "https://page.example.com")).toBe("https://page.example.com/v1");
+    expect(apiBaseFrom("", "http://localhost:3001")).toBe("http://localhost:3001/v1");
   });
 });

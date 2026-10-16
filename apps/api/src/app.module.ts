@@ -19,6 +19,7 @@ import { PreviewChatModule } from './modules/preview-chat/preview-chat.module';
 import { LlmKeysModule } from './modules/llm-keys/llm-keys.module';
 import { PublicChatModule } from './modules/public-chat/public-chat.module';
 import { UsageModule } from './modules/usage/usage.module';
+import { WidgetPageModule } from './modules/widget-page/widget-page.module';
 
 @Module({
   imports: [
@@ -43,6 +44,7 @@ import { UsageModule } from './modules/usage/usage.module';
     LlmKeysModule,
     PublicChatModule,
     UsageModule,
+    WidgetPageModule,
   ],
   controllers: [AppController],
   providers: [AppService],

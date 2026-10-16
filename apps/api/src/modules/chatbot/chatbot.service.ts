@@ -16,6 +16,7 @@ import { ConfigService } from '@nestjs/config';
 import { ChatbotStatus, Prisma } from '../../generated/prisma/client';
 import { requireTenant } from '../../tenancy/tenant-context';
 import { TENANT_PRISMA, type TenantPrisma } from '../../tenancy/tenant-prisma';
+import { WidgetPageCache } from '../widget-page/widget-page.cache';
 import { sameJson } from './same-json';
 
 const WITH_PUBLISHED = {
@@ -63,6 +64,9 @@ export class ChatbotService {
   constructor(
     @Inject(TENANT_PRISMA) private readonly db: TenantPrisma,
     private readonly config: ConfigService,
+    // The widget page's frame-ancestors follow domains, status and the
+    // live version at once (M4-19).
+    private readonly widgetPages: WidgetPageCache,
   ) {}
 
   async get(): Promise<ChatbotView> {
@@ -169,6 +173,7 @@ export class ChatbotService {
           ...WITH_PUBLISHED,
         });
       });
+      this.widgetPages.invalidate(published.publicId);
       return this.view(published);
     } catch (err) {
       // Two publishes raced for the same version number.
@@ -206,6 +211,7 @@ export class ChatbotService {
       data: { status },
       ...WITH_PUBLISHED,
     });
+    this.widgetPages.invalidate(saved.publicId);
     return this.view(saved);
   }
 
@@ -227,6 +233,7 @@ export class ChatbotService {
       data: { allowedDomains: check.domains },
       ...WITH_PUBLISHED,
     });
+    this.widgetPages.invalidate(saved.publicId);
     return this.view(saved);
   }
 
