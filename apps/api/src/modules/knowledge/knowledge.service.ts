@@ -89,10 +89,10 @@ export class KnowledgeService {
     @Inject(TENANT_PRISMA) private readonly db: TenantPrisma,
     config: ConfigService,
   ) {
-    this.topK = config.get<number>('knowledge.topK') ?? 3;
+    this.topK = config.get<number>('knowledge.topK') ?? 5;
     this.minSimilarity = config.get<number>('knowledge.minSimilarity') ?? 0.3;
     this.customAnswerThreshold =
-      config.get<number>('knowledge.customAnswerThreshold') ?? 0.8;
+      config.get<number>('knowledge.customAnswerThreshold') ?? 0.7;
   }
 
   /**
@@ -200,6 +200,8 @@ export class KnowledgeService {
       (Omit<ProductHit, 'price' | 'compareAtPrice'> & {
         price: string | null;
         compareAtPrice: string | null;
+        similarity: number | null;
+        keywordHit: boolean;
       })[]
     >`
       WITH eligible AS (
@@ -235,13 +237,39 @@ export class KnowledgeService {
       )
       SELECT p.id::text AS id, p.name, p.description, p.price::text AS price,
              p.compare_at_price::text AS "compareAtPrice", p.currency,
-             p.stock_status::text AS "stockStatus", p.category, p.url, p.attributes
+             p.stock_status::text AS "stockStatus", p.category, p.url, p.attributes,
+             CASE WHEN p.embedding IS NULL THEN NULL
+                  ELSE 1 - (p.embedding <=> ${vector}::vector) END AS similarity,
+             EXISTS (SELECT 1 FROM keyword k WHERE k.id = p.id) AS "keywordHit"
       FROM fused f
       JOIN products p ON p.id = f.id
       WHERE p.workspace_id = ${workspaceId}::uuid AND p.chatbot_id = ${chatbotId}::uuid
       ORDER BY f.score DESC, p.id
       LIMIT ${limit}`;
-    return rows;
+    // Like the knowledge chunks: a product that shares no word with the
+    // question and is far in meaning is not an answer, however it ranks.
+    return rows
+      .filter((row) =>
+        isRelevant(
+          {
+            keywordHit: row.keywordHit,
+            similarity: Number(row.similarity ?? 0),
+          },
+          this.minSimilarity,
+        ),
+      )
+      .map((row) => ({
+        id: row.id,
+        name: row.name,
+        description: row.description,
+        price: row.price,
+        compareAtPrice: row.compareAtPrice,
+        currency: row.currency,
+        stockStatus: row.stockStatus,
+        category: row.category,
+        url: row.url,
+        attributes: row.attributes,
+      }));
   }
 
   /** One active product of this chatbot, or null. */
