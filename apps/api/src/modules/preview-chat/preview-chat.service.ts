@@ -23,8 +23,13 @@ import {
   KnowledgeService,
 } from '../knowledge/knowledge.service';
 import { LlmKeysService } from '../llm-keys/llm-keys.service';
+import type { ChatCompletionMessageParam } from '../llm/providers/provider-adapter.types';
+import { PRODUCT_TOOLS, ProductToolsService } from './product-tools.service';
 import { buildPreviewMessages } from './preview-prompt';
 import { isSmallTalk } from './small-talk';
+
+/** How many times the model may call tools before it has to answer (M3-8). */
+const MAX_TOOL_ROUNDS = 3;
 
 /** D-2 §5: preview messages per user per minute. */
 export const PREVIEW_RATE_LIMIT = { limit: 30, windowSeconds: 60 };
@@ -64,6 +69,7 @@ export class PreviewChatService {
     private readonly rateLimit: RateLimitService,
     private readonly keys: LlmKeysService,
     private readonly conversations: ConversationsService,
+    private readonly products: ProductToolsService,
   ) {}
 
   async send(
@@ -170,34 +176,89 @@ export class PreviewChatService {
 
     // Grounding (M3-10): nothing relevant was found, so the server says so
     // itself instead of letting the model guess. Greetings and thanks still
-    // go to the model: they need no knowledge.
-    if (matches.length === 0 && !isSmallTalk(request.message)) {
+    // go to the model: they need no knowledge. A chatbot with products goes
+    // on: the answer may come from the product tools (M3-8).
+    const smallTalk = isSmallTalk(request.message);
+    const hasProducts = await this.products.hasProducts(botId);
+    if (matches.length === 0 && !smallTalk && !hasProducts) {
       await this.sendFallback(botId, config, request, emit, context, startedAt);
       return;
     }
+    // With no knowledge match the text is held back until a tool has
+    // returned a product; without one it is replaced by the fallback.
+    const needsToolData = matches.length === 0 && !smallTalk;
 
     const messages = buildPreviewMessages(
       config,
       matches,
       history,
       request.message,
+      hasProducts,
     );
 
     let text = '';
     let model: string | null = null;
     let tokensIn: number | null = null;
     let tokensOut: number | null = null;
+    const productHits = new Map<string, string>();
     try {
-      for await (const event of this.llm.streamWith(credentials, messages)) {
-        if (event.type === 'text') {
-          text += event.text;
-          // The client has gone: stop, and store nothing.
-          if (!emit({ type: 'delta', text: event.text })) return;
-        } else {
-          void this.keys.markUsed(event.credentialId);
-          model = event.model;
-          tokensIn = event.usage?.inputTokens ?? null;
-          tokensOut = event.usage?.outputTokens ?? null;
+      for (let round = 0; ; round++) {
+        // The last round has no tools, so the model has to answer.
+        const tools =
+          hasProducts && round < MAX_TOOL_ROUNDS ? PRODUCT_TOOLS : undefined;
+        let roundText = '';
+        let toolCalls: NonNullable<
+          Extract<
+            ChatCompletionMessageParam,
+            { role: 'assistant' }
+          >['tool_calls']
+        > = [];
+        for await (const event of this.llm.streamWith(
+          credentials,
+          messages,
+          tools,
+        )) {
+          if (event.type === 'text') {
+            roundText += event.text;
+            if (!needsToolData) {
+              text += event.text;
+              // The client has gone: stop, and store nothing.
+              if (!emit({ type: 'delta', text: event.text })) return;
+            }
+          } else {
+            void this.keys.markUsed(event.credentialId);
+            model = event.model;
+            if (event.usage) {
+              tokensIn = (tokensIn ?? 0) + event.usage.inputTokens;
+              tokensOut = (tokensOut ?? 0) + event.usage.outputTokens;
+            }
+            toolCalls = event.message.tool_calls ?? [];
+          }
+        }
+
+        if (toolCalls.length === 0) {
+          if (needsToolData) text = roundText;
+          break;
+        }
+        messages.push({
+          role: 'assistant',
+          content: roundText || null,
+          tool_calls: toolCalls,
+        });
+        for (const call of toolCalls) {
+          const run = await this.products.run(
+            botId,
+            call.function.name,
+            call.function.arguments,
+          );
+          for (const product of run.products) {
+            productHits.set(product.id, product.name);
+          }
+          messages.push({
+            role: 'tool',
+            tool_call_id: call.id,
+            content: run.content,
+          });
         }
       }
     } catch (err) {
@@ -218,6 +279,36 @@ export class PreviewChatService {
       throw err;
     }
 
+    // No knowledge and no product found: nothing grounds the text, so the
+    // server's fallback replaces whatever the model wrote.
+    if (needsToolData) {
+      if (productHits.size === 0) {
+        await this.sendFallback(
+          botId,
+          config,
+          request,
+          emit,
+          context,
+          startedAt,
+        );
+        return;
+      }
+      if (!emit({ type: 'delta', text })) return;
+    }
+
+    // Products the answer drew on count as sources too (M3-14).
+    const answerSources = [
+      ...sources,
+      ...[...productHits.values()].map((name) => ({
+        title: `Product: ${name}`,
+        page: null,
+        similarity: 1,
+      })),
+    ];
+    if (productHits.size > 0 && context.includeSources) {
+      emit({ type: 'sources', sources: answerSources });
+    }
+
     let answeredBy: AnsweredBy = 'llm';
     let reply = text.trim();
     if (!reply) {
@@ -232,7 +323,7 @@ export class PreviewChatService {
 
     const conversationId = await this.store(botId, request, context, {
       content: reply,
-      sources,
+      sources: answerSources,
       answeredBy,
       model,
       tokensIn,

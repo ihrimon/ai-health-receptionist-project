@@ -217,4 +217,35 @@ describe('KnowledgeService', () => {
       expect(call.slice(1)).toContain('[0.7,0.8]');
     });
   });
+
+  describe('searchProducts (M3-8)', () => {
+    it('searches only active products of the chatbot in the workspace', async () => {
+      db.$queryRaw.mockResolvedValue([]);
+
+      await inTenant(() =>
+        service.searchProducts(
+          'bot-1',
+          { query: 'trail shoe', category: 'Shoes', maxPrice: 60 },
+          5,
+        ),
+      );
+
+      const [call] = db.$queryRaw.mock.calls as unknown[][];
+      const sql = sqlOf(call);
+      expect(sql).toContain('workspace_id = ?::uuid AND chatbot_id = ?::uuid');
+      expect(sql).toContain('AND is_active');
+      // The final join adds them again.
+      expect(sql.split('workspace_id = ?::uuid').length).toBeGreaterThanOrEqual(
+        3,
+      );
+      const params = call.slice(1);
+      expect(params).toContain('ws-1');
+      expect(params).toContain('bot-1');
+      expect(params).toContain('Shoes');
+      expect(params).toContain(60);
+      expect(params).toContain('trail | shoe');
+      // Values are bound, never part of the SQL text.
+      expect(sql).not.toContain('Shoes');
+    });
+  });
 });
