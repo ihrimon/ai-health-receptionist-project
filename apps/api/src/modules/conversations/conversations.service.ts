@@ -38,6 +38,55 @@ export interface RecordTurn {
 export class ConversationsService {
   constructor(@Inject(TENANT_PRISMA) private readonly db: TenantPrisma) {}
 
+  /** An empty live conversation, started by a visitor opening the chat. */
+  async start(input: {
+    chatbotId: string;
+    visitorId: string;
+    originUrl: string | null;
+    versionId: string;
+  }): Promise<string> {
+    const { workspaceId } = requireTenant();
+    const created = await this.db.conversation.create({
+      data: {
+        workspaceId,
+        chatbotId: input.chatbotId,
+        visitorId: input.visitorId,
+        originUrl: input.originUrl,
+        versionId: input.versionId,
+        isPreview: false,
+      },
+      select: { id: true },
+    });
+    return created.id;
+  }
+
+  /** A live conversation of this chatbot, or null. */
+  find(conversationId: string, chatbotId: string) {
+    return this.db.conversation.findFirst({
+      where: { id: conversationId, chatbotId, isPreview: false },
+      select: { id: true, visitorId: true, messageCount: true },
+    });
+  }
+
+  /** What a visitor sees again after a reload, oldest first. */
+  async messages(
+    conversationId: string,
+  ): Promise<
+    { id: string; role: 'user' | 'assistant'; text: string; createdAt: Date }[]
+  > {
+    const rows = await this.db.message.findMany({
+      where: { conversationId },
+      orderBy: { createdAt: 'asc' },
+      select: { id: true, role: true, content: true, createdAt: true },
+    });
+    return rows.map((row) => ({
+      id: row.id,
+      role: row.role === MessageRole.USER ? 'user' : 'assistant',
+      text: row.content,
+      createdAt: row.createdAt,
+    }));
+  }
+
   /**
    * The latest turns of a conversation, oldest first, for the prompt. A
    * conversation that isn't this chatbot's, this visitor's or this kind

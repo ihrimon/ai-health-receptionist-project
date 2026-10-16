@@ -59,6 +59,10 @@ export default () => ({
   // tests fall back to a fixed key, so local data isn't protected by it.
   security: {
     llmKeyEncryptionKey: process.env.LLM_KEY_ENCRYPTION_KEY ?? '',
+    // Signs the public chat's conversation tokens (M3-4). Generate with
+    // `openssl rand -base64 32`; required in production, where public
+    // chat answers 503 without it.
+    conversationTokenSecret: process.env.CONVERSATION_TOKEN_SECRET ?? '',
   },
 
   knowledge: {

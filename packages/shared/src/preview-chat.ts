@@ -28,11 +28,6 @@ export const previewChatRequestSchema = z.strictObject({
     .default([]),
   /** Continue a stored conversation (the one a reply returned). */
   conversationId: z.uuid().optional(),
-  /** Public widget only: the random ID the widget made for this visitor. */
-  visitorId: z
-    .string()
-    .regex(/^[A-Za-z0-9_-]{8,64}$/)
-    .optional(),
 });
 
 export type PreviewChatTurn = z.output<typeof previewChatTurnSchema>;

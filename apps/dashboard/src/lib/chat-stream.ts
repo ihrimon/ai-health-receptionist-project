@@ -40,11 +40,12 @@ export async function postChatStream(
   path: string,
   body: unknown,
   onEvent: (event: ChatStreamEvent) => void,
+  headers: Record<string, string> = {},
 ): Promise<void> {
   const res = await fetch(`${API_BASE}${path}`, {
     method: "POST",
     credentials: "include",
-    headers: API_HEADERS,
+    headers: { ...API_HEADERS, ...headers },
     body: JSON.stringify(body),
   });
   if (!res.ok) {

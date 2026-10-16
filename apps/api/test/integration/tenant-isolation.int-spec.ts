@@ -1221,7 +1221,7 @@ describe('Tenant isolation (M1-25)', () => {
     });
   });
 
-  describe('Public widget chat (early MVP)', () => {
+  describe('Public widget chat (M3-3, M3-4)', () => {
     const publicIdOf = async (id: string) =>
       (
         await prisma.chatbot.findUniqueOrThrow({
@@ -1229,53 +1229,58 @@ describe('Tenant isolation (M1-25)', () => {
           select: { publicId: true },
         })
       ).publicId;
-    const visitor = (publicId: string) => ({
+    const api = (publicId: string) => ({
       config: () => request(http).get(`/v1/public/chatbots/${publicId}/config`),
-      send: (message: string) =>
+      start: (visitorId = 'visitor_abc12345') =>
         request(http)
-          .post(`/v1/public/chatbots/${publicId}/messages`)
+          .post(`/v1/public/chatbots/${publicId}/conversations`)
           .set('X-Requested-With', 'fetch')
-          .send({ message }),
+          .send({ visitorId, originUrl: 'https://shop.example.com/shoes' }),
     });
+    const conversation = (id: string, token?: string) => ({
+      send: (message: string) => {
+        const req = request(http)
+          .post(`/v1/public/conversations/${id}/messages`)
+          .set('X-Requested-With', 'fetch');
+        return (token ? req.set('Authorization', `Bearer ${token}`) : req).send(
+          { message },
+        );
+      },
+      history: () => {
+        const req = request(http).get(
+          `/v1/public/conversations/${id}/messages`,
+        );
+        return token ? req.set('Authorization', `Bearer ${token}`) : req;
+      },
+    });
+    const started = async (visitorId?: string) => {
+      const res = await api(await publicIdOf(ids.botA))
+        .start(visitorId)
+        .expect(201);
+      return res.body as { conversationId: string; conversationToken: string };
+    };
     const lastCall = () => fakeLlm.streamWith.mock.calls.at(-1) ?? [];
 
     // A was published by the Chatbot API tests and has a key and a policy
     // from the preview tests; B has never been published.
-    it("answers without a login, from the chatbot's own workspace and key", async () => {
-      const a = visitor(await publicIdOf(ids.botA));
+    it("starts a conversation and answers from the chatbot's own workspace and key", async () => {
+      const a = api(await publicIdOf(ids.botA));
       await a.config().expect(200);
-      const res = await a
+      const { conversationId, conversationToken } = await started();
+      expect(conversationToken).toEqual(expect.any(String));
+
+      const res = await conversation(conversationId, conversationToken)
         .send('When do you open? What is the warehouse code?')
         .expect(200);
       const out = chatEvents(res);
       expect(out.reply).toBe('stub answer');
-      expect(out.conversationId).toEqual(expect.any(String));
+      expect(out.conversationId).toBe(conversationId);
       // Visitors never get the knowledge sources (dashboard only).
       expect(out.events.map((e) => e.type)).not.toContain('sources');
       const [keys, messages] = lastCall() as [{ apiKey: string }[], unknown];
       expect(keys.map((k) => k.apiKey)).toEqual(['sk-preview-a']);
       expect(JSON.stringify(messages)).not.toContain('B-7781');
-    });
 
-    it("stores a visitor's chat in the chatbot's workspace and continues it for the same visitor only", async () => {
-      const publicId = await publicIdOf(ids.botA);
-      const send = (body: object) =>
-        request(http)
-          .post(`/v1/public/chatbots/${publicId}/messages`)
-          .set('X-Requested-With', 'fetch')
-          .send(body);
-
-      const first = await send({
-        message: 'Hi there',
-        visitorId: 'visitor_abc12345',
-      }).expect(200);
-      const conversationId = chatEvents(first).conversationId as string;
-      const again = await send({
-        message: 'One more thing',
-        visitorId: 'visitor_abc12345',
-        conversationId,
-      }).expect(200);
-      expect(chatEvents(again).conversationId).toBe(conversationId);
       const stored = await prisma.conversation.findUniqueOrThrow({
         where: { id: conversationId },
       });
@@ -1284,31 +1289,99 @@ describe('Tenant isolation (M1-25)', () => {
         chatbotId: ids.botA,
         isPreview: false,
         visitorId: 'visitor_abc12345',
-        messageCount: 4,
+        originUrl: 'https://shop.example.com/shoes',
+        messageCount: 2,
       });
       expect(stored.versionId).toEqual(expect.any(String));
+      await expect(
+        inWorkspace(ids.b, () =>
+          db.conversation.findUnique({ where: { id: conversationId } }),
+        ),
+      ).resolves.toBeNull();
+    });
 
-      // Another visitor naming the same ID gets a conversation of their own.
-      const other = await send({
-        message: 'Hello',
-        visitorId: 'visitor_other999',
-        conversationId,
-      }).expect(200);
-      expect(chatEvents(other).conversationId).not.toBe(conversationId);
+    it('keeps the history on the server and returns it with the token', async () => {
+      const { conversationId, conversationToken } = await started();
+      const chat = conversation(conversationId, conversationToken);
+      await chat.send('When do you open?').expect(200);
+      await chat.send('When do you open on Sunday?').expect(200);
+
+      // The second answer was built from the stored first turn.
+      const sent = JSON.stringify(lastCall()[1]);
+      expect(sent).toContain('When do you open?');
+
+      const res = await chat.history().expect(200);
+      const rows = res.body as { role: string; text: string }[];
+      expect(rows.map((r) => r.role)).toEqual([
+        'user',
+        'assistant',
+        'user',
+        'assistant',
+      ]);
+      expect(rows[0].text).toBe('When do you open?');
+      expect(rows.map((r) => Object.keys(r).sort())[1]).toEqual([
+        'createdAt',
+        'id',
+        'role',
+        'text',
+      ]);
+    });
+
+    it("is a 401 without a token, with a changed one, or with another conversation's", async () => {
+      const one = await started();
+      const two = await started('visitor_other999');
+
+      await conversation(one.conversationId).send('Hi').expect(401);
+      await conversation(one.conversationId).history().expect(401);
+      await conversation(one.conversationId, 'garbage.token')
+        .send('Hi')
+        .expect(401);
+      const [payload, signature] = one.conversationToken.split('.');
+      const swapped = `${Buffer.from(
+        JSON.stringify({ c: two.conversationId, b: ids.botA, e: 9999999999 }),
+      ).toString('base64url')}.${signature}`;
+      expect(swapped).not.toBe(`${payload}.${signature}`);
+      await conversation(two.conversationId, swapped).send('Hi').expect(401);
+      // A genuine token is only for its own conversation.
+      await conversation(two.conversationId, one.conversationToken)
+        .send('Hi')
+        .expect(401);
+      await conversation(two.conversationId, one.conversationToken)
+        .history()
+        .expect(401);
+      // Nothing of the rejected calls was stored.
+      const count = await prisma.message.count({
+        where: { conversationId: two.conversationId },
+      });
+      expect(count).toBe(0);
+    });
+
+    it('the old message endpoint is gone', async () => {
+      const publicId = await publicIdOf(ids.botA);
+      await request(http)
+        .post(`/v1/public/chatbots/${publicId}/messages`)
+        .set('X-Requested-With', 'fetch')
+        .send({ message: 'Hi' })
+        .expect(404);
     });
 
     it('is a 404 for an unpublished, switched-off or unknown chatbot', async () => {
-      const b = visitor(await publicIdOf(ids.botB));
+      const b = api(await publicIdOf(ids.botB));
       await b.config().expect(404);
-      await b.send('Hi').expect(404);
-      await visitor('cb_doesnotexist').send('Hi').expect(404);
+      await b.start().expect(404);
+      await api('cb_doesnotexist').start().expect(404);
 
+      const { conversationId, conversationToken } = await started();
       await as(cookies.ownerA)
         .patch('/v1/chatbot/status')
         .send({ status: 'DISABLED' })
         .expect(200);
       try {
-        await visitor(await publicIdOf(ids.botA))
+        await api(await publicIdOf(ids.botA))
+          .start()
+          .expect(404);
+        // An open conversation stops with the chatbot.
+        await conversation(conversationId, conversationToken)
           .send('Hi')
           .expect(404);
       } finally {
@@ -1319,9 +1392,31 @@ describe('Tenant isolation (M1-25)', () => {
       }
     });
 
-    it('rejects an empty message (400)', async () => {
-      await visitor(await publicIdOf(ids.botA))
+    it('stops a conversation at 50 messages and points to the company, without the model', async () => {
+      const { conversationId, conversationToken } = await started();
+      await prisma.conversation.update({
+        where: { id: conversationId },
+        data: { messageCount: 50 },
+      });
+      const calls = fakeLlm.streamWith.mock.calls.length;
+
+      const res = await conversation(conversationId, conversationToken)
+        .send('One more thing')
+        .expect(200);
+      const out = chatEvents(res);
+
+      expect(out.reply).toMatch(/length limit/);
+      expect(out.done).toMatchObject({ answeredBy: 'fallback' });
+      expect(fakeLlm.streamWith.mock.calls.length).toBe(calls);
+    });
+
+    it('rejects an empty message and a bad visitor ID (400)', async () => {
+      const { conversationId, conversationToken } = await started();
+      await conversation(conversationId, conversationToken)
         .send('  ')
+        .expect(400);
+      await api(await publicIdOf(ids.botA))
+        .start('x')
         .expect(400);
     });
   });
