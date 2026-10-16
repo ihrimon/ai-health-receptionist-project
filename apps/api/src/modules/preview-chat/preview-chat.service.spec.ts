@@ -329,6 +329,45 @@ describe('PreviewChatService', () => {
       );
     });
 
+    it('streams the answer piece by piece once a tool has found a product', async () => {
+      knowledge.search.mockResolvedValue([]);
+      let calls = 0;
+      llm.streamWith.mockImplementation(() => {
+        calls += 1;
+        return calls === 1
+          ? oneEvent(toolCall)
+          : llmStream(['The Trail shoe ', 'costs 49.90 USD.']);
+      });
+
+      await service.send(
+        'user-1',
+        { message: 'How much is the trail shoe?', history: [] },
+        emit,
+      );
+
+      const deltas = events.filter((e) => e.type === 'delta');
+      expect(deltas).toHaveLength(2);
+      expect(text()).toBe('The Trail shoe costs 49.90 USD.');
+      expect(events.at(-1)).toMatchObject({ answeredBy: 'llm' });
+    });
+
+    it('lets the model greet back to two greetings in one message', async () => {
+      knowledge.search.mockResolvedValue([]);
+      llm.streamWith.mockImplementation(() =>
+        llmStream(['Hi! I am doing well. ', 'How can I help?']),
+      );
+
+      await service.send(
+        'user-1',
+        { message: 'Hello, how are you?', history: [] },
+        emit,
+      );
+
+      expect(text()).toBe('Hi! I am doing well. How can I help?');
+      expect(events.filter((e) => e.type === 'delta')).toHaveLength(2);
+      expect(events.at(-1)).toMatchObject({ answeredBy: 'llm' });
+    });
+
     it('sends the fallback instead of text that no knowledge or product backs', async () => {
       knowledge.search.mockResolvedValue([]);
       llm.streamWith.mockImplementation(() =>

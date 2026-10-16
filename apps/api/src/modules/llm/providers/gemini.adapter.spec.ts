@@ -1,7 +1,10 @@
+import { GoogleGenerativeAIFetchError } from '@google/generative-ai';
 import {
+  thinkingConfigFor,
   toGeminiContents,
   toGeminiSchema,
   toGeminiTools,
+  withThinkingFallback,
 } from './gemini.adapter';
 
 describe('toGeminiContents', () => {
@@ -125,5 +128,74 @@ describe('toGeminiSchema', () => {
   it('leaves a plain schema alone', () => {
     const schema = { type: 'object', properties: { id: { type: 'string' } } };
     expect(toGeminiSchema(schema)).toEqual(schema);
+  });
+});
+
+describe('thinkingConfigFor', () => {
+  it.each([
+    ['gemini-2.5-flash', { thinkingBudget: 0 }],
+    ['gemini-2.5-flash-lite', { thinkingBudget: 0 }],
+    ['gemini-3-flash-preview', { thinkingLevel: 'minimal' }],
+    ['gemini-3.6-flash', { thinkingLevel: 'minimal' }],
+  ])('turns thinking down for %s', (model, expected) => {
+    expect(thinkingConfigFor(model)).toEqual(expected);
+  });
+
+  it.each(['gemini-2.5-pro', 'gemini-3-pro', 'gemini-1.5-flash'])(
+    'leaves %s on its default',
+    (model) => {
+      expect(thinkingConfigFor(model)).toBeUndefined();
+    },
+  );
+});
+
+describe('withThinkingFallback', () => {
+  const badRequest = () =>
+    new GoogleGenerativeAIFetchError('Bad Request', 400, 'Bad Request');
+
+  it('sends the thinking setting when the model takes it', async () => {
+    const request = jest.fn().mockResolvedValue('ok');
+    await expect(
+      withThinkingFallback('gemini-2.5-flash', request),
+    ).resolves.toBe('ok');
+    expect(request).toHaveBeenCalledTimes(1);
+    expect(request).toHaveBeenCalledWith({ thinkingBudget: 0 });
+  });
+
+  it('asks again without it after a 400, and then stops sending it', async () => {
+    const request = jest
+      .fn()
+      .mockRejectedValueOnce(badRequest())
+      .mockResolvedValue('ok');
+    await expect(
+      withThinkingFallback('gemini-3.9-flash', request),
+    ).resolves.toBe('ok');
+    expect(request).toHaveBeenNthCalledWith(1, { thinkingLevel: 'minimal' });
+    expect(request).toHaveBeenNthCalledWith(2, undefined);
+
+    request.mockClear();
+    await withThinkingFallback('gemini-3.9-flash', request);
+    expect(request).toHaveBeenCalledTimes(1);
+    expect(request).toHaveBeenCalledWith(undefined);
+  });
+
+  it('keeps the setting when the plain request fails too (a bad key)', async () => {
+    const request = jest.fn().mockRejectedValue(badRequest());
+    await expect(
+      withThinkingFallback('gemini-3.8-flash', request),
+    ).rejects.toThrow();
+    request.mockReset().mockResolvedValue('ok');
+    await withThinkingFallback('gemini-3.8-flash', request);
+    expect(request).toHaveBeenCalledWith({ thinkingLevel: 'minimal' });
+  });
+
+  it('does not retry other errors', async () => {
+    const request = jest
+      .fn()
+      .mockRejectedValue(new GoogleGenerativeAIFetchError('Too many', 429));
+    await expect(
+      withThinkingFallback('gemini-3.7-flash', request),
+    ).rejects.toThrow();
+    expect(request).toHaveBeenCalledTimes(1);
   });
 });

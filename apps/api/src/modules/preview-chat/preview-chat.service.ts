@@ -200,6 +200,7 @@ export class PreviewChatService {
     );
 
     let text = '';
+    let streamed = false;
     let model: string | null = null;
     let tokensIn: number | null = null;
     let tokensOut: number | null = null;
@@ -223,7 +224,10 @@ export class PreviewChatService {
         )) {
           if (event.type === 'text') {
             roundText += event.text;
-            if (!needsToolData) {
+            // Held back only until a tool has found a product: from then
+            // on the answer is grounded, so it streams like any other.
+            if (!needsToolData || productHits.size > 0) {
+              streamed = true;
               text += event.text;
               // The client has gone: stop, and store nothing.
               if (!emit({ type: 'delta', text: event.text })) return;
@@ -240,7 +244,7 @@ export class PreviewChatService {
         }
 
         if (toolCalls.length === 0) {
-          if (needsToolData) text = roundText;
+          if (needsToolData && !streamed) text = roundText;
           break;
         }
         messages.push({
@@ -296,7 +300,7 @@ export class PreviewChatService {
         );
         return;
       }
-      if (!emit({ type: 'delta', text })) return;
+      if (!streamed && !emit({ type: 'delta', text })) return;
     }
 
     // Products the answer drew on count as sources too (M3-14).
