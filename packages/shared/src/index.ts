@@ -9,3 +9,4 @@ export * from './usage';
 export * from './types/booking';
 export * from './types/conversation';
 export * from './types/call-session';
+export * from './widget-protocol';
