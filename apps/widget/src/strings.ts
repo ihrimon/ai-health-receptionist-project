@@ -28,3 +28,12 @@ export const STRINGS = {
     url: "Contact us",
   },
 } as const;
+
+/** The loader's texts on the company's page (`chatbot.js`, M4-9); a separate object so its bundle takes only these. */
+export const LOADER_STRINGS = {
+  openChat: "Open chat",
+  closeChat: "Close chat",
+  /** Added to the launcher's label while answers wait unread. */
+  unread: (count: number) => `${count} new message${count > 1 ? "s" : ""}`,
+  frameTitle: "Chat",
+} as const;
