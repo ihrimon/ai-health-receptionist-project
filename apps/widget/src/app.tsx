@@ -38,7 +38,10 @@ export function App({ publicId }: { publicId: string | null }) {
 
   if (load.kind !== "ready" || !publicId) {
     return (
-      <div class="flex h-full items-center justify-center bg-white p-6 text-center text-sm text-zinc-500">
+      <div
+        role="status"
+        class="flex h-full items-center justify-center bg-white p-6 text-center text-sm text-zinc-500"
+      >
         {load.kind === "loading" ? STRINGS.loading : STRINGS.unavailable}
       </div>
     );
