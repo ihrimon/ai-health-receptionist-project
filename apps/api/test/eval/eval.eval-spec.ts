@@ -72,6 +72,32 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 interface ChatMessage {
   role: string;
   content?: string | null;
+  tool_calls?: { function: { name: string; arguments: string } }[];
+}
+
+/** The tool calls the model made in a case and how many products each found. */
+function toolTrace(calls: ChatMessage[][]): string {
+  const last = calls.at(-1) ?? [];
+  const lines: string[] = [];
+  const results = last.filter((m) => m.role === 'tool');
+  last
+    .filter((m) => m.role === 'assistant' && m.tool_calls?.length)
+    .flatMap((m) => m.tool_calls ?? [])
+    .forEach((call, i) => {
+      let found = '?';
+      try {
+        const parsed = JSON.parse(String(results[i]?.content ?? '{}')) as {
+          count?: number;
+        };
+        found = String(parsed.count ?? '?');
+      } catch {
+        found = '?';
+      }
+      lines.push(
+        `${call.function.name}(${call.function.arguments}) -> ${found}`,
+      );
+    });
+  return lines.join('; ');
 }
 
 /** The stand-in model: asks for a product search, then answers "stub". */
@@ -135,6 +161,7 @@ describe('Chat answer quality', () => {
   /** Calls and tokens of the case that is running (real model only). */
   let callStats = { calls: 0, tokensIn: 0, tokensOut: 0 };
   /** Speed and size of the case that just ran. */
+  let lastTrace = '';
   let lastMetrics: CaseMetrics = {
     firstWordMs: null,
     totalMs: 0,
@@ -358,6 +385,7 @@ describe('Chat answer quality', () => {
     };
     const done = events.find((e) => e.type === 'done');
     const calls = sentToModel;
+    lastTrace = toolTrace(calls);
     const lastCall = calls.at(-1) ?? [];
     const toolMessage = lastCall.find((m) => m.role === 'tool');
     let productFirst: string | null = null;
@@ -378,6 +406,24 @@ describe('Chat answer quality', () => {
       productFirst,
       realModel: REAL_MODEL,
     };
+  }
+
+  /** An error while answering fails that case; it does not end the run. */
+  async function runSafely(
+    company: FixtureCompany,
+    c: EvalCase,
+  ): Promise<CaseOutcome> {
+    try {
+      return await run(company, c);
+    } catch (err) {
+      return {
+        answeredBy: null,
+        reply: `ERROR: ${err instanceof Error ? err.message : String(err)}`,
+        modelContext: sentToModel.map(textOf).join('\n'),
+        productFirst: null,
+        realModel: REAL_MODEL,
+      };
+    }
   }
 
   /**
@@ -415,7 +461,7 @@ describe('Chat answer quality', () => {
       for (const company of COMPANIES) {
         const amounts = knownAmounts(company);
         for (const c of company.cases) {
-          let outcome = await run(company, c);
+          let outcome = await runSafely(company, c);
           for (
             let attempt = 0;
             REAL_MODEL &&
@@ -424,12 +470,17 @@ describe('Chat answer quality', () => {
             attempt++
           ) {
             await sleep(RETRY_WAIT_MS);
-            outcome = await run(company, c);
+            outcome = await runSafely(company, c);
           }
           allMetrics.push(lastMetrics);
           if (REAL_MODEL && DELAY_MS) await sleep(DELAY_MS);
           const verdict = checkCase(c, outcome, amounts);
           results.push({ case: c, verdict });
+          // Straight to the terminal, so a long run shows how far it got.
+          process.stderr.write(
+            `[${results.length}/${COMPANIES.reduce((n, x) => n + x.cases.length, 0)}] ${c.id} ${verdict.pass ? 'ok' : 'FAIL'} (${outcome.answeredBy ?? 'error'})
+`,
+          );
           if (verbose || !verdict.pass) {
             const near = await closeness(company, c.question);
             const sim = (n: number | null) =>
@@ -442,7 +493,7 @@ describe('Chat answer quality', () => {
             }
             if (!verdict.pass) {
               lines.push(
-                `FAIL ${c.id} [${c.category}] "${c.question}"\n     ${verdict.failures.join('; ')}\n     ${numbers}\n     answered by ${outcome.answeredBy}: ${outcome.reply.slice(0, 120)}`,
+                `FAIL ${c.id} [${c.category}] "${c.question}"\n     ${verdict.failures.join('; ')}\n     ${numbers}\n     answered by ${outcome.answeredBy}: ${outcome.reply.slice(0, 120)}${lastTrace ? `\n     tools: ${lastTrace}` : ''}`,
               );
             }
           }

@@ -5,6 +5,7 @@ import {
   type PreviewChatSource,
 } from '@brainstack/shared';
 import { Injectable, Logger } from '@nestjs/common';
+import { sameText } from '../../common/same-text';
 import type { EmitChatEvent } from '../../common/sse';
 import { RateLimitService } from '../../rate-limit/rate-limit.service';
 import { ChatbotService } from '../chatbot/chatbot.service';
@@ -317,7 +318,7 @@ export class PreviewChatService {
       reply = config.behavior.fallbackMessage;
       answeredBy = 'fallback';
       emit({ type: 'delta', text: reply });
-    } else if (reply === config.behavior.fallbackMessage) {
+    } else if (sameText(reply, config.behavior.fallbackMessage)) {
       // The model followed the rule and gave the fallback itself.
       answeredBy = 'fallback';
     }

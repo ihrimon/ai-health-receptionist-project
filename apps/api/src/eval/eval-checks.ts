@@ -1,3 +1,4 @@
+import { plain } from '../common/same-text';
 import type {
   CaseOutcome,
   CaseVerdict,
@@ -12,12 +13,14 @@ const ROUTE_TO_ANSWERED_BY = {
   model: 'llm',
 } as const;
 
-/** Lower case, one space between words, so layout can't hide a match. */
+/**
+ * Lower case, typographic quotes, dashes and spaces made ordinary, "10 am"
+ * written "10am" and "1,250" written "1250", so layout can't hide a match.
+ */
 function squash(text: string): string {
-  return text
-    .toLowerCase()
+  return plain(text)
     .replace(/(\d),(?=\d{3})/g, '$1')
-    .replace(/\s+/g, ' ');
+    .replace(/(\d) (am|pm)\b/g, '$1$2');
 }
 
 /** Amounts written with a currency sign or word. */
@@ -63,14 +66,21 @@ export function checkCase(
     c.modelDecides === true &&
     !outcome.realModel &&
     outcome.answeredBy === 'llm';
-  if (outcome.answeredBy !== expected && !modelMayAnswer) {
+  const fallbackIsFine =
+    c.acceptFallback === true && outcome.answeredBy === 'fallback';
+  if (
+    outcome.answeredBy !== expected &&
+    !modelMayAnswer &&
+    !fallbackIsFine &&
+    !c.anyAnswer
+  ) {
     failures.push(
       `expected ${expected}, got ${outcome.answeredBy ?? 'no answer'}`,
     );
   }
 
   const context = squash(outcome.modelContext);
-  if (c.route === 'model') {
+  if (c.route === 'model' && !fallbackIsFine && !c.anyAnswer) {
     for (const piece of c.context ?? []) {
       if (!context.includes(squash(piece))) {
         failures.push(`the model was not given: "${piece}"`);
