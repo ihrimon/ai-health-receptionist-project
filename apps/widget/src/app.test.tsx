@@ -1,15 +1,199 @@
-import { render, screen } from "@testing-library/preact";
+import type { PublicChatConfig } from "@brainstack/shared";
+import { render, screen, waitFor } from "@testing-library/preact";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { App } from "./app";
 import { STRINGS } from "./strings";
+import { type FakeHandler, type FakeRequest, fakeApi, json, sse, sseResponse } from "./test-utils";
 
-describe("App", () => {
-  it("opens with the welcome message and shows what the visitor sends", async () => {
-    render(<App />);
-    expect(screen.getByText("Hi! How can I help you today?")).toBeTruthy();
-    const user = userEvent.setup();
+const config: PublicChatConfig = {
+  botName: "Acme Bot",
+  avatarUrl: null,
+  welcomeMessage: "Welcome to Acme!",
+  headerTitle: "Acme Support",
+  primaryColor: "#facc15",
+  position: "right",
+  quickReplies: ["Opening hours"],
+  showBranding: false,
+};
+const storageKey = "brainstack:chat:pub1";
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+  localStorage.clear();
+});
+
+/** The API with a config, a new conversation per start, and `answer` streamed back. */
+function api(overrides: Partial<Record<"history" | "send" | "start", FakeHandler>> = {}) {
+  let started = 0;
+  return fakeApi((req: FakeRequest) => {
+    if (req.path === "/public/chatbots/pub1/config") return json(config);
+    if (req.path === "/public/chatbots/pub1/conversations") {
+      started += 1;
+      return overrides.start?.(req) ?? json({ conversationId: `c${started}`, conversationToken: `tok${started}` }, 201);
+    }
+    if (req.method === "GET") return overrides.history?.(req) ?? json([]);
+    return (
+      overrides.send?.(req) ??
+      sseResponse([sse("delta", { text: "We open " }), sse("delta", { text: "at 9." }), sse("done", { conversationId: "c1", answeredBy: "llm" })])
+    );
+  });
+}
+
+async function ready() {
+  render(<App publicId="pub1" />);
+  await screen.findByText(config.welcomeMessage);
+  return userEvent.setup();
+}
+
+const bubbles = () => [...document.querySelectorAll("[data-role]")].map((el) => [(el as HTMLElement).dataset.role, el.textContent]);
+const stored = () => JSON.parse(localStorage.getItem(storageKey) ?? "null");
+
+describe("App: published config (M4-4)", () => {
+  it("shows the header title, welcome message and brand color, and hides the branding when asked", async () => {
+    api();
+    await ready();
+    const header = screen.getByRole("heading", { name: "Acme Support" }).parentElement!;
+    expect(header.style.background).toBe("rgb(250, 204, 21)");
+    // Black text reads better on yellow.
+    expect(header.style.color).toBe("rgb(0, 0, 0)");
+    expect(screen.queryByText(STRINGS.poweredBy)).toBeNull();
+    expect(document.title).toBe("Acme Bot");
+  });
+
+  it("says the chat isn't available for an unknown or switched-off chatbot", async () => {
+    fakeApi(() => json({ message: "Not Found" }, 404));
+    render(<App publicId="pub1" />);
+    expect(screen.getByText(STRINGS.loading)).toBeTruthy();
+    expect(await screen.findByText(STRINGS.unavailable)).toBeTruthy();
+  });
+
+  it("asks nothing of the API without a chatbot in the URL", () => {
+    const { fetchMock } = fakeApi(() => json(config));
+    render(<App publicId={null} />);
+    expect(screen.getByText(STRINGS.unavailable)).toBeTruthy();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("App: streaming chat (M4-3)", () => {
+  it("starts a conversation, streams the answer into one bubble and remembers the conversation", async () => {
+    const { requests } = api();
+    const user = await ready();
+    await user.type(screen.getByLabelText(STRINGS.inputLabel), "When do you open?{Enter}");
+
+    await waitFor(() =>
+      expect(bubbles()).toEqual([
+        ["assistant", config.welcomeMessage],
+        ["user", "When do you open?"],
+        ["assistant", "We open at 9."],
+      ]),
+    );
+    const start = requests.find((r) => r.path.endsWith("/conversations"))!;
+    expect((start.body as { visitorId: string }).visitorId).toMatch(/^[0-9a-f]{32}$/);
+    expect(stored()).toEqual({
+      visitorId: (start.body as { visitorId: string }).visitorId,
+      conversation: { conversationId: "c1", conversationToken: "tok1" },
+    });
+
+    // The next message goes to the same conversation; only its own text is sent.
+    await user.type(screen.getByLabelText(STRINGS.inputLabel), "And Sunday?{Enter}");
+    await waitFor(() => expect(bubbles()).toHaveLength(5));
+    const sends = requests.filter((r) => r.method === "POST" && r.path.endsWith("/messages"));
+    expect(sends.map((r) => [r.path, r.headers.Authorization, r.body])).toEqual([
+      ["/public/conversations/c1/messages", "Bearer tok1", { message: "When do you open?" }],
+      ["/public/conversations/c1/messages", "Bearer tok1", { message: "And Sunday?" }],
+    ]);
+    expect(requests.filter((r) => r.path.endsWith("/conversations"))).toHaveLength(1);
+  });
+
+  it("shows the stored conversation again after a reload", async () => {
+    localStorage.setItem(storageKey, JSON.stringify({ visitorId: "v1", conversation: { conversationId: "c9", conversationToken: "tok9" } }));
+    const { requests } = api({
+      history: () =>
+        json([
+          { id: "1", role: "user", text: "Earlier question", createdAt: "" },
+          { id: "2", role: "assistant", text: "Earlier answer", createdAt: "" },
+        ]),
+    });
+    await ready();
+    await waitFor(() => expect(bubbles()).toHaveLength(3));
+    expect(bubbles().slice(1)).toEqual([
+      ["user", "Earlier question"],
+      ["assistant", "Earlier answer"],
+    ]);
+    expect(requests.find((r) => r.method === "GET" && r.path.endsWith("/messages"))).toMatchObject({
+      path: "/public/conversations/c9/messages",
+      headers: { Authorization: "Bearer tok9" },
+    });
+  });
+
+  it("drops an expired conversation and starts a new one for the same visitor", async () => {
+    localStorage.setItem(storageKey, JSON.stringify({ visitorId: "v1", conversation: { conversationId: "c9", conversationToken: "old" } }));
+    const { requests } = api({ history: () => json({ message: "Unauthorized" }, 401) });
+    const user = await ready();
+    await waitFor(() => expect(stored()).toEqual({ visitorId: "v1" }));
+
     await user.type(screen.getByLabelText(STRINGS.inputLabel), "Hello{Enter}");
-    expect(screen.getByText("Hello").dataset.role).toBe("user");
+    await screen.findByText("We open at 9.");
+    expect(requests.find((r) => r.path.endsWith("/conversations"))?.body).toEqual({ visitorId: "v1" });
+    expect(stored()).toEqual({ visitorId: "v1", conversation: { conversationId: "c1", conversationToken: "tok1" } });
+  });
+
+  it("removes a half answer when the stream breaks and says so", async () => {
+    api({
+      send: () => sseResponse([sse("delta", { text: "We open" }), sse("error", { message: "Something went wrong. Please try again." })]),
+    });
+    const user = await ready();
+    await user.type(screen.getByLabelText(STRINGS.inputLabel), "Hours?{Enter}");
+    await screen.findByText(STRINGS.somethingWrong);
+    expect(screen.queryByText("We open")).toBeNull();
+  });
+
+  it("asks the visitor to slow down on a rate limit", async () => {
+    api({ send: () => json({ message: "Too Many Requests" }, 429) });
+    const user = await ready();
+    await user.type(screen.getByLabelText(STRINGS.inputLabel), "Hours?{Enter}");
+    expect(await screen.findByText(STRINGS.tooFast)).toBeTruthy();
+  });
+
+  it("holds the next message until the answer is complete", async () => {
+    let finish: (() => void) | undefined;
+    api({
+      send: () => {
+        const encoder = new TextEncoder();
+        return new Response(
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(encoder.encode(sse("delta", { text: "Partly" })));
+              finish = () => controller.close();
+            },
+          }),
+        );
+      },
+    });
+    const user = await ready();
+    await user.type(screen.getByLabelText(STRINGS.inputLabel), "Hours?{Enter}");
+    await screen.findByText("Partly");
+    // Streaming: no typing dots any more, but sending waits.
+    expect(screen.queryByRole("status")).toBeNull();
+    await user.type(screen.getByLabelText(STRINGS.inputLabel), "More{Enter}");
+    expect(bubbles()).toHaveLength(3);
+    finish?.();
+    await waitFor(() => expect((screen.getByRole("button", { name: STRINGS.send }) as HTMLButtonElement).disabled).toBe(false));
+  });
+
+  it("still chats when storage is blocked", async () => {
+    vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+      throw new DOMException("blocked", "SecurityError");
+    });
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new DOMException("blocked", "SecurityError");
+    });
+    api();
+    const user = await ready();
+    await user.type(screen.getByLabelText(STRINGS.inputLabel), "Hi{Enter}");
+    expect(await screen.findByText("We open at 9.")).toBeTruthy();
   });
 });

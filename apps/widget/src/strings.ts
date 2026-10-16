@@ -13,4 +13,8 @@ export const STRINGS = {
   ratingSkip: "Skip for now",
   ratingThanks: "Thanks for your feedback!",
   poweredBy: "Powered by BrainStack",
+  loading: "Loading…",
+  unavailable: "This chat isn't available right now.",
+  somethingWrong: "Sorry, something went wrong. Please try again.",
+  tooFast: "You're sending messages quickly. Please wait a minute and try again.",
 } as const;

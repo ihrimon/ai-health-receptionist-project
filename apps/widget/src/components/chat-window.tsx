@@ -18,6 +18,7 @@ export function ChatWindow({
   welcomeMessage,
   messages,
   typing,
+  busy = false,
   brand,
   onSend,
   onClose,
@@ -29,6 +30,8 @@ export function ChatWindow({
   messages: ChatMessage[];
   /** True while waiting for the answer's first word; sending waits too. */
   typing: boolean;
+  /** True until the answer is complete (it may be streaming already). */
+  busy?: boolean;
   brand: Brand;
   onSend: (text: string) => void;
   onClose?: () => void;
@@ -72,7 +75,7 @@ export function ChatWindow({
         <div ref={endRef} />
       </div>
 
-      <MessageInput onSend={onSend} disabled={typing} brand={brand} />
+      <MessageInput onSend={onSend} disabled={typing || busy} brand={brand} />
       {showBranding && (
         <p class="pb-2 text-center text-[11px] text-zinc-400">{STRINGS.poweredBy}</p>
       )}
