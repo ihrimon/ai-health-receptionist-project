@@ -12,15 +12,19 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { AllowedDomainsEditor } from "@/components/allowed-domains-editor";
 import { useChatbot } from "@/lib/chatbot";
+import { useSession } from "@/lib/session";
 import { toastError } from "@/lib/toast";
 import { useAiKeyReady } from "@/lib/use-ai-key-ready";
 
 /**
- * Settings → Install (early MVP of M4-13): the one-line snippet that puts
- * the chat on the company's site, and what must be true for it to answer.
+ * Settings → Install (M4-13, D-3 §3.5): the sites allowed to show the chat,
+ * the one-line snippet that puts it there, and what must be true for it to
+ * answer.
  */
 export default function InstallPage() {
+  const { me } = useSession();
   const { chatbot } = useChatbot();
   const aiKeyReady = useAiKeyReady();
   const [copied, setCopied] = useState(false);
@@ -29,7 +33,13 @@ export default function InstallPage() {
     return <Skeleton className="h-64 w-full" />;
   }
 
+  const canEdit = me.role === "OWNER" || me.role === "ADMIN";
   const checks = [
+    {
+      ok: chatbot.allowedDomains.length > 0,
+      text: "Website domain added",
+      fix: "Add it under Allowed domains above.",
+    },
     {
       ok: chatbot.publishedVersion !== null,
       text: "Published",
@@ -66,7 +76,20 @@ export default function InstallPage() {
     <div className="grid gap-4">
       <Card>
         <CardHeader>
-          <CardTitle>Add the chat to your website</CardTitle>
+          <CardTitle>1. Allowed domains</CardTitle>
+          <CardDescription>
+            The chat only loads on these websites, so nobody can put your bot
+            on theirs.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <AllowedDomainsEditor canEdit={canEdit} />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>2. Add the chat to your website</CardTitle>
           <CardDescription>
             Paste this line just before <code>&lt;/body&gt;</code> on every
             page where the chat should appear. A chat button shows up in the
