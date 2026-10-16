@@ -9,7 +9,6 @@ import {
   ChevronsUpDown,
   House,
   LogOut,
-  MessageCircle,
   Package,
   Settings,
   Shield,
@@ -176,14 +175,6 @@ export function WorkspaceSidebar() {
               />
               <DropdownMenuContent side="top" align="start" className="w-56">
                 <DropdownMenuGroup>
-                  <DropdownMenuItem
-                    render={
-                      <Link href="/chat">
-                        <MessageCircle />
-                        Demo chat
-                      </Link>
-                    }
-                  />
                   {me.user.isPlatformAdmin && (
                     <DropdownMenuItem
                       render={

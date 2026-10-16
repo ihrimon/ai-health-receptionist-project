@@ -12,7 +12,7 @@ import { PrismaService } from '../../src/database/prisma.service';
 import { WorkspaceRole } from '../../src/generated/prisma/client';
 import { SESSION_COOKIE } from '../../src/modules/auth/auth.constants';
 import { SessionsService } from '../../src/modules/auth/sessions.service';
-import { LlmChatClient } from '../../src/modules/chat/llm-chat.client';
+import { LlmChatClient } from '../../src/modules/llm/llm-chat.client';
 import { EmbeddingService } from '../../src/modules/knowledge/embedding.service';
 import { KnowledgeService } from '../../src/modules/knowledge/knowledge.service';
 import { WorkspacesService } from '../../src/modules/workspaces/workspaces.service';
@@ -20,6 +20,37 @@ import { S3_CLIENT } from '../../src/storage/storage.service';
 import { runWithTenant } from '../../src/tenancy/tenant-context';
 import { TENANT_PRISMA, TenantPrisma } from '../../src/tenancy/tenant-prisma';
 import { FAKE_EMBEDDING_MODEL, fakeEmbeddingService } from './fake-embedding';
+
+interface ChatEventRow {
+  type: string;
+  text?: string;
+  sources?: { title: string }[];
+  conversationId?: string | null;
+  answeredBy?: string;
+}
+
+/** The events of a chat response (text/event-stream), in order. */
+function chatEvents(res: { text: string; headers: Record<string, unknown> }) {
+  expect(String(res.headers['content-type'])).toContain('text/event-stream');
+  const events: ChatEventRow[] = res.text
+    .split('\n\n')
+    .filter((block) => block.trim())
+    .map((block): ChatEventRow => {
+      const type = /^event: (.+)$/m.exec(block)?.[1] ?? '';
+      const data = /^data: (.+)$/m.exec(block)?.[1] ?? '{}';
+      return { ...(JSON.parse(data) as Partial<ChatEventRow>), type };
+    });
+  return {
+    events,
+    reply: events
+      .map((e) => (e.type === 'delta' ? (e.text ?? '') : ''))
+      .join(''),
+    sources: events.filter((e) => e.type === 'sources').at(-1)?.sources ?? [],
+    done: events.find((e) => e.type === 'done'),
+    conversationId:
+      events.find((e) => e.type === 'done')?.conversationId ?? null,
+  };
+}
 
 /**
  * M1-25, M2-21 (W4): two workspaces, proving A's users can't read or change
@@ -38,16 +69,50 @@ describe('Tenant isolation (M1-25)', () => {
   // No real LLM calls: the preview test checks what would be sent, and
   // every key "verifies".
   const fakeLlm = {
-    completeWith: jest.fn(
-      (credentials: { id: string }[], messages: unknown[]) =>
-        Promise.resolve({
-          message: {
-            role: 'assistant',
-            content: messages.length ? 'stub answer' : '',
-          },
-          credentialId: credentials[0].id,
-        }),
-    ),
+    streamWith: jest.fn(async function* (
+      credentials: { id: string }[],
+      messages: { role: string; content?: string | null }[],
+      tools?: unknown[],
+    ) {
+      await Promise.resolve();
+      const done = (message: object) => ({
+        type: 'done',
+        message,
+        credentialId: credentials[0].id,
+        model: 'stub-model',
+        usage: { inputTokens: 100, outputTokens: 7 },
+      });
+      const toolResult = messages.find((m) => m.role === 'tool');
+      const asked = (
+        [...messages].reverse().find((m) => m.role === 'user')?.content ?? ''
+      ).replace(/<\/?visitor_message>/g, '');
+      // A question naming ZORBIX makes the model look the product up.
+      if (tools?.length && !toolResult && asked.includes('ZORBIX')) {
+        yield done({
+          role: 'assistant',
+          content: null,
+          tool_calls: [
+            {
+              id: 'call_1',
+              type: 'function',
+              function: {
+                name: 'search_products',
+                arguments: JSON.stringify({ query: 'Zorbix' }),
+              },
+            },
+          ],
+        });
+        return;
+      }
+      const content = toolResult
+        ? `From the catalog: ${toolResult.content}`
+        : messages.length
+          ? 'stub answer'
+          : '';
+      yield { type: 'text', text: content.slice(0, 5) };
+      yield { type: 'text', text: content.slice(5) };
+      yield done({ role: 'assistant', content });
+    }),
     verify: jest.fn(() => Promise.resolve()),
   };
 
@@ -429,11 +494,52 @@ describe('Tenant isolation (M1-25)', () => {
       const b = await botB();
       expect(b.status).toBe('ENABLED');
       expect(b.allowedDomains).toEqual([]);
+      // B reads its own (empty) list, never A's.
+      const readB = await as(cookies.ownerB).get('/v1/chatbot').expect(200);
+      expect((readB.body as ChatbotBody).allowedDomains).toEqual([]);
 
       await as(cookies.ownerA)
         .patch('/v1/chatbot/status')
         .send({ status: 'ENABLED' })
         .expect(200);
+    });
+
+    it("B replacing its allowed domains leaves A's list alone (M4-13)", async () => {
+      const res = await as(cookies.ownerB)
+        .put('/v1/chatbot/allowed-domains')
+        .send({
+          domains: ['https://b-shop.example.net/', 'b-shop.example.net'],
+        })
+        .expect(200);
+      // Scheme and trailing slash stripped, duplicates dropped.
+      expect((res.body as ChatbotBody).allowedDomains).toEqual([
+        'b-shop.example.net',
+      ]);
+
+      const a = await prisma.chatbot.findUniqueOrThrow({
+        where: { id: ids.botA },
+      });
+      expect(a.allowedDomains).toEqual(['shop.example.com', '*.example.com']);
+
+      await as(cookies.ownerB)
+        .put('/v1/chatbot/allowed-domains')
+        .send({ domains: [] })
+        .expect(200);
+    });
+
+    it('rejects a bad allowed domain with details and saves nothing (400)', async () => {
+      const res = await as(cookies.ownerA)
+        .put('/v1/chatbot/allowed-domains')
+        .send({ domains: ['ok.example.com', 'shop.example.com/checkout'] })
+        .expect(400);
+      expect(res.body).toMatchObject({
+        code: 'VALIDATION_FAILED',
+        details: [{ domain: 'shop.example.com/checkout' }],
+      });
+      const a = await prisma.chatbot.findUniqueOrThrow({
+        where: { id: ids.botA },
+      });
+      expect(a.allowedDomains).toEqual(['shop.example.com', '*.example.com']);
     });
 
     it('discarding the draft brings back the live config', async () => {
@@ -462,6 +568,10 @@ describe('Tenant isolation (M1-25)', () => {
       await as(cookies.viewerA)
         .patch('/v1/chatbot/status')
         .send({ status: 'DISABLED' })
+        .expect(403);
+      await as(cookies.viewerA)
+        .put('/v1/chatbot/allowed-domains')
+        .send({ domains: ['evil.example.com'] })
         .expect(403);
     });
   });
@@ -924,14 +1034,10 @@ describe('Tenant isolation (M1-25)', () => {
   });
 
   describe('Preview chat (M3-13, M3-14)', () => {
-    interface PreviewBody {
-      reply: string;
-      sources: { title: string; page: number | null; similarity: number }[];
-    }
     const sentToLlm = () =>
-      JSON.stringify(fakeLlm.completeWith.mock.calls.at(-1)?.[1] ?? []);
+      JSON.stringify(fakeLlm.streamWith.mock.calls.at(-1)?.[1] ?? []);
     const keysSent = () =>
-      (fakeLlm.completeWith.mock.calls.at(-1)?.[0] ?? []) as {
+      (fakeLlm.streamWith.mock.calls.at(-1)?.[0] ?? []) as {
         apiKey: string;
       }[];
 
@@ -977,13 +1083,14 @@ describe('Tenant isolation (M1-25)', () => {
     it("answers from the caller's knowledge only, never another workspace's", async () => {
       const res = await as(cookies.ownerA)
         .post('/v1/chatbot/preview/messages')
-        .send({ message: 'What is the warehouse code?' })
+        .send({ message: 'When do you open? What is the warehouse code?' })
         .expect(200);
-      const body = res.body as PreviewBody;
-      expect(body.reply).toBe('stub answer');
+      const out = chatEvents(res);
+      expect(out.reply).toBe('stub answer');
+      expect(out.done).toMatchObject({ answeredBy: 'llm' });
       // A has other items from earlier tests, so which of A's chunks rank
       // first depends on the fake embedding; B's must never appear.
-      const titles = body.sources.map((s) => s.title);
+      const titles = out.sources.map((s) => s.title);
       expect(titles.length).toBeGreaterThan(0);
       expect(titles).not.toContain('Preview B secret');
       expect(sentToLlm()).not.toContain('B-7781');
@@ -993,26 +1100,260 @@ describe('Tenant isolation (M1-25)', () => {
     it("B's preview finds B's knowledge, not A's", async () => {
       const res = await as(cookies.ownerB)
         .post('/v1/chatbot/preview/messages')
-        .send({ message: 'When do you open?' })
+        .send({ message: 'What is the warehouse code? When do you open?' })
         .expect(200);
-      const titles = (res.body as PreviewBody).sources.map((s) => s.title);
+      const titles = chatEvents(res).sources.map((s) => s.title);
       expect(titles).toContain('Preview B secret');
       expect(titles).not.toContain('Preview A hours');
       expect(sentToLlm()).not.toContain('We open at 9am.');
       expect(keysSent().map((k) => k.apiKey)).toEqual(['gsk-preview-b']);
     });
 
+    it("stores each turn in the caller's own workspace, with how it was answered (M3-5, M3-11)", async () => {
+      const first = await as(cookies.ownerA)
+        .post('/v1/chatbot/preview/messages')
+        .send({ message: 'What time do you open?' })
+        .expect(200);
+      const conversationId = chatEvents(first).conversationId as string;
+      expect(conversationId).toEqual(expect.any(String));
+
+      const second = await as(cookies.ownerA)
+        .post('/v1/chatbot/preview/messages')
+        .send({ message: 'When do you open on Sunday?', conversationId })
+        .expect(200);
+      expect(chatEvents(second).conversationId).toBe(conversationId);
+      // The second turn was answered from the stored first one.
+      const sent = JSON.stringify(fakeLlm.streamWith.mock.calls.at(-1)?.[1]);
+      expect(sent).toContain('What time do you open?');
+      expect(sent).toContain('stub answer');
+
+      const conversation = await prisma.conversation.findUniqueOrThrow({
+        where: { id: conversationId },
+        include: { messages: { orderBy: { createdAt: 'asc' } } },
+      });
+      expect(conversation).toMatchObject({
+        workspaceId: ids.a,
+        chatbotId: ids.botA,
+        isPreview: true,
+        messageCount: 4,
+      });
+      expect(conversation.messages.map((m) => m.role)).toEqual([
+        'USER',
+        'ASSISTANT',
+        'USER',
+        'ASSISTANT',
+      ]);
+      expect(new Set(conversation.messages.map((m) => m.workspaceId))).toEqual(
+        new Set([ids.a]),
+      );
+      expect(conversation.messages[1]).toMatchObject({
+        answeredBy: 'llm',
+        model: 'stub-model',
+        tokensIn: 100,
+        tokensOut: 7,
+      });
+    });
+
+    it('answers a matching custom answer as written, without the model, and never across workspaces (M3-6)', async () => {
+      const created = await as(cookies.ownerA)
+        .post('/v1/custom-answers')
+        .send({
+          triggerQuestion: 'Do you deliver on public holidays?',
+          answer: 'Yes, until 6pm, with a small holiday fee.',
+        })
+        .expect(201);
+      const id = (created.body as { id: string }).id;
+      await waitUntil(
+        'the custom answer embedding',
+        async () =>
+          (
+            await prisma.customAnswer.findUniqueOrThrow({
+              where: { id },
+              select: { embeddingModel: true },
+            })
+          ).embeddingModel,
+      );
+      const calls = fakeLlm.streamWith.mock.calls.length;
+
+      const res = await as(cookies.ownerA)
+        .post('/v1/chatbot/preview/messages')
+        .send({ message: 'Do you deliver on public holidays?' })
+        .expect(200);
+      const out = chatEvents(res);
+      expect(out.reply).toBe('Yes, until 6pm, with a small holiday fee.');
+      expect(out.done).toMatchObject({ answeredBy: 'custom_answer' });
+      expect(fakeLlm.streamWith.mock.calls.length).toBe(calls);
+      const stored = await prisma.message.findFirstOrThrow({
+        where: {
+          conversationId: out.conversationId as string,
+          role: 'ASSISTANT',
+        },
+      });
+      expect(stored).toMatchObject({
+        workspaceId: ids.a,
+        answeredBy: 'custom_answer',
+        model: null,
+      });
+
+      // The same question in another workspace never finds it.
+      const other = await as(cookies.ownerB)
+        .post('/v1/chatbot/preview/messages')
+        .send({ message: 'Do you deliver on public holidays?' })
+        .expect(200);
+      expect(chatEvents(other).reply).not.toContain('holiday fee');
+      expect(chatEvents(other).done).not.toMatchObject({
+        answeredBy: 'custom_answer',
+      });
+
+      await as(cookies.ownerA).delete(`/v1/custom-answers/${id}`).expect(204);
+    });
+
+    it("answers a product question from the caller's own products, with exact prices, and never another workspace's (M3-8)", async () => {
+      const make = async (cookie: string, price: string) =>
+        (
+          (
+            await as(cookie)
+              .post('/v1/products')
+              .send({ name: 'Zorbix lamp', price, sku: `ZB-${price}` })
+              .expect(201)
+          ).body as { id: string }
+        ).id;
+      const idA = await make(cookies.ownerA, '19.50');
+      const idB = await make(cookies.ownerB, '88.00');
+      try {
+        const res = await as(cookies.ownerA)
+          .post('/v1/chatbot/preview/messages')
+          .send({ message: 'How much is the ZORBIX lamp?' })
+          .expect(200);
+        const out = chatEvents(res);
+        expect(out.reply).toContain('19.50 USD');
+        expect(out.reply).not.toContain('88.00');
+        expect(out.done).toMatchObject({ answeredBy: 'llm' });
+        expect(out.sources.map((x) => x.title)).toContain(
+          'Product: Zorbix lamp',
+        );
+
+        const other = await as(cookies.ownerB)
+          .post('/v1/chatbot/preview/messages')
+          .send({ message: 'How much is the ZORBIX lamp?' })
+          .expect(200);
+        const otherOut = chatEvents(other);
+        expect(otherOut.reply).toContain('88.00 USD');
+        expect(otherOut.reply).not.toContain('19.50');
+
+        const stored = await prisma.message.findFirstOrThrow({
+          where: {
+            conversationId: out.conversationId as string,
+            role: 'ASSISTANT',
+          },
+        });
+        expect(stored).toMatchObject({ workspaceId: ids.a, tokensIn: 200 });
+      } finally {
+        await as(cookies.ownerA).delete(`/v1/products/${idA}`).expect(204);
+        await as(cookies.ownerB).delete(`/v1/products/${idB}`).expect(204);
+      }
+    });
+
+    it("is a 404, not another workspace's product, when a product id from elsewhere is looked up (M3-8)", async () => {
+      const created = await as(cookies.ownerB)
+        .post('/v1/products')
+        .send({ name: 'Hidden item', price: '5.00', sku: 'HID-1' })
+        .expect(201);
+      const productId = (created.body as { id: string }).id;
+      try {
+        const knowledge = app.get(KnowledgeService);
+        await expect(
+          inWorkspace(ids.a, () => knowledge.getProduct(ids.botA, productId)),
+        ).resolves.toBeNull();
+        await expect(
+          inWorkspace(ids.a, () =>
+            knowledge.searchProducts(ids.botA, { query: 'Hidden item' }, 5),
+          ),
+        ).resolves.toEqual([]);
+        const own = await inWorkspace(ids.b, () =>
+          knowledge.getProduct(ids.botB, productId),
+        );
+        expect(own?.price).toBe('5.00');
+      } finally {
+        await as(cookies.ownerB)
+          .delete(`/v1/products/${productId}`)
+          .expect(204);
+      }
+    });
+
+    it('answers with the configured fallback, without the model, when nothing relevant is found (M3-10)', async () => {
+      const calls = fakeLlm.streamWith.mock.calls.length;
+      const res = await as(cookies.ownerA)
+        .post('/v1/chatbot/preview/messages')
+        .send({ message: 'Who painted the Mona Lisa?' })
+        .expect(200);
+      const out = chatEvents(res);
+
+      expect(out.done).toMatchObject({ answeredBy: 'fallback' });
+      expect(out.reply).not.toBe('stub answer');
+      expect(out.sources).toEqual([]);
+      expect(fakeLlm.streamWith.mock.calls.length).toBe(calls);
+
+      const stored = await prisma.message.findFirstOrThrow({
+        where: {
+          conversationId: out.conversationId as string,
+          role: 'ASSISTANT',
+        },
+      });
+      expect(stored).toMatchObject({
+        workspaceId: ids.a,
+        answeredBy: 'fallback',
+        model: null,
+        tokensIn: null,
+      });
+      expect(stored.content).toBe(out.reply);
+    });
+
+    it("another workspace can't see or continue the conversation", async () => {
+      const first = await as(cookies.ownerA)
+        .post('/v1/chatbot/preview/messages')
+        .send({ message: 'Private question' })
+        .expect(200);
+      const conversationId = chatEvents(first).conversationId as string;
+
+      await expect(
+        inWorkspace(ids.b, () =>
+          db.conversation.findUnique({ where: { id: conversationId } }),
+        ),
+      ).resolves.toBeNull();
+      await expect(
+        inWorkspace(ids.b, () =>
+          db.message.findMany({ where: { conversationId } }),
+        ),
+      ).resolves.toEqual([]);
+
+      // B naming A's conversation ID starts B's own conversation instead.
+      const res = await as(cookies.ownerB)
+        .post('/v1/chatbot/preview/messages')
+        .send({ message: 'Hello', conversationId })
+        .expect(200);
+      const bId = chatEvents(res).conversationId as string;
+      expect(bId).not.toBe(conversationId);
+      const untouched = await prisma.conversation.findUniqueOrThrow({
+        where: { id: conversationId },
+      });
+      expect(untouched.workspaceId).toBe(ids.a);
+      expect(untouched.messageCount).toBe(2);
+      const mine = await prisma.conversation.findUniqueOrThrow({
+        where: { id: bId },
+      });
+      expect(mine.workspaceId).toBe(ids.b);
+    });
+
     it('is off in a workspace without its own key, with no LLM call', async () => {
-      const calls = fakeLlm.completeWith.mock.calls.length;
+      const calls = fakeLlm.streamWith.mock.calls.length;
       const a2 = await login(users.ownerA, ids.a2);
       const res = await as(a2)
         .post('/v1/chatbot/preview/messages')
         .send({ message: 'Hi' })
         .expect(200);
-      expect((res.body as PreviewBody).reply).toMatch(
-        /add your own LLM API key/,
-      );
-      expect(fakeLlm.completeWith.mock.calls.length).toBe(calls);
+      expect(chatEvents(res).reply).toMatch(/add your own LLM API key/);
+      expect(fakeLlm.streamWith.mock.calls.length).toBe(calls);
     });
 
     it('a viewer can use the preview', async () => {
@@ -1035,7 +1376,50 @@ describe('Tenant isolation (M1-25)', () => {
     });
   });
 
-  describe('Public widget chat (early MVP)', () => {
+  // After the preview tests: B gets chunks of its own here, and the
+  // earlier tests expect B to have none.
+  describe('Hybrid retrieval (M3-7)', () => {
+    it("keyword search finds an exact code, and only in the caller's own workspace (M3-7)", async () => {
+      const knowledge = app.get(KnowledgeService);
+      const make = async (cookie: string, title: string, content: string) => {
+        const res = await as(cookie)
+          .post('/v1/knowledge-sources')
+          .send({ type: 'POLICY', title, content })
+          .expect(201);
+        await waitForStatus(cookie, (res.body as { id: string }).id, 'READY');
+      };
+      await make(
+        cookies.ownerA,
+        'Hybrid A',
+        'Your claim reference is QXZK4410 for all repairs.',
+      );
+      await make(
+        cookies.ownerB,
+        'Hybrid B',
+        'Your claim reference is QXZK9999 for all repairs.',
+      );
+
+      const inA = await inWorkspace(ids.a, () =>
+        knowledge.search(ids.botA, 'QXZK4410', 5),
+      );
+      expect(inA[0].content).toContain('QXZK4410');
+      expect(inA.map((m) => m.content).join(' ')).not.toContain('QXZK9999');
+
+      // The other workspace's code is a keyword A can type, and still isn't found.
+      const stolen = await inWorkspace(ids.a, () =>
+        knowledge.search(ids.botA, 'QXZK9999', 5),
+      );
+      expect(stolen.map((m) => m.content).join(' ')).not.toContain('QXZK9999');
+
+      const inB = await inWorkspace(ids.b, () =>
+        knowledge.search(ids.botB, 'QXZK9999', 5),
+      );
+      expect(inB[0].content).toContain('QXZK9999');
+      expect(inB.map((m) => m.content).join(' ')).not.toContain('QXZK4410');
+    });
+  });
+
+  describe('Public widget chat (M3-3, M3-4)', () => {
     const publicIdOf = async (id: string) =>
       (
         await prisma.chatbot.findUniqueOrThrow({
@@ -1043,40 +1427,195 @@ describe('Tenant isolation (M1-25)', () => {
           select: { publicId: true },
         })
       ).publicId;
-    const visitor = (publicId: string) => ({
+    const api = (publicId: string) => ({
       config: () => request(http).get(`/v1/public/chatbots/${publicId}/config`),
-      send: (message: string) =>
+      start: (visitorId = 'visitor_abc12345') =>
         request(http)
-          .post(`/v1/public/chatbots/${publicId}/messages`)
+          .post(`/v1/public/chatbots/${publicId}/conversations`)
           .set('X-Requested-With', 'fetch')
-          .send({ message }),
+          .send({ visitorId, originUrl: 'https://shop.example.com/shoes' }),
     });
-    const lastCall = () => fakeLlm.completeWith.mock.calls.at(-1) ?? [];
+    const conversation = (id: string, token?: string) => ({
+      send: (message: string) => {
+        const req = request(http)
+          .post(`/v1/public/conversations/${id}/messages`)
+          .set('X-Requested-With', 'fetch');
+        return (token ? req.set('Authorization', `Bearer ${token}`) : req).send(
+          { message },
+        );
+      },
+      history: () => {
+        const req = request(http).get(
+          `/v1/public/conversations/${id}/messages`,
+        );
+        return token ? req.set('Authorization', `Bearer ${token}`) : req;
+      },
+    });
+    const started = async (visitorId?: string) => {
+      const res = await api(await publicIdOf(ids.botA))
+        .start(visitorId)
+        .expect(201);
+      return res.body as { conversationId: string; conversationToken: string };
+    };
+    const lastCall = () => fakeLlm.streamWith.mock.calls.at(-1) ?? [];
 
     // A was published by the Chatbot API tests and has a key and a policy
     // from the preview tests; B has never been published.
-    it("answers without a login, from the chatbot's own workspace and key", async () => {
-      const a = visitor(await publicIdOf(ids.botA));
+    it("starts a conversation and answers from the chatbot's own workspace and key", async () => {
+      const a = api(await publicIdOf(ids.botA));
       await a.config().expect(200);
-      const res = await a.send('What is the warehouse code?').expect(200);
-      expect(res.body).toEqual({ reply: 'stub answer' });
+      const { conversationId, conversationToken } = await started();
+      expect(conversationToken).toEqual(expect.any(String));
+
+      const res = await conversation(conversationId, conversationToken)
+        .send('When do you open? What is the warehouse code?')
+        .expect(200);
+      const out = chatEvents(res);
+      expect(out.reply).toBe('stub answer');
+      expect(out.conversationId).toBe(conversationId);
+      // Visitors never get the knowledge sources (dashboard only).
+      expect(out.events.map((e) => e.type)).not.toContain('sources');
       const [keys, messages] = lastCall() as [{ apiKey: string }[], unknown];
       expect(keys.map((k) => k.apiKey)).toEqual(['sk-preview-a']);
       expect(JSON.stringify(messages)).not.toContain('B-7781');
+
+      const stored = await prisma.conversation.findUniqueOrThrow({
+        where: { id: conversationId },
+      });
+      expect(stored).toMatchObject({
+        workspaceId: ids.a,
+        chatbotId: ids.botA,
+        isPreview: false,
+        visitorId: 'visitor_abc12345',
+        originUrl: 'https://shop.example.com/shoes',
+        messageCount: 2,
+      });
+      expect(stored.versionId).toEqual(expect.any(String));
+      await expect(
+        inWorkspace(ids.b, () =>
+          db.conversation.findUnique({ where: { id: conversationId } }),
+        ),
+      ).resolves.toBeNull();
+    });
+
+    it('opens CORS to the widget app for the public API only, without cookies (M4-3)', async () => {
+      const widget = process.env.WIDGET_URL ?? 'http://localhost:3002';
+      const publicId = await publicIdOf(ids.botA);
+      const preflight = await request(http)
+        .options(`/v1/public/chatbots/${publicId}/conversations`)
+        .set('Origin', widget)
+        .set('Access-Control-Request-Method', 'POST')
+        .set(
+          'Access-Control-Request-Headers',
+          'content-type,x-requested-with,authorization',
+        )
+        .expect(204);
+      expect(preflight.headers['access-control-allow-origin']).toBe(widget);
+      expect(preflight.headers['access-control-allow-credentials']).toBe(
+        undefined,
+      );
+
+      const config = await request(http)
+        .get(`/v1/public/chatbots/${publicId}/config`)
+        .set('Origin', widget)
+        .expect(200);
+      expect(config.headers['access-control-allow-origin']).toBe(widget);
+
+      const dashboardRoute = await request(http)
+        .get('/v1/auth/me')
+        .set('Origin', widget);
+      expect(dashboardRoute.headers['access-control-allow-origin']).toBe(
+        undefined,
+      );
+      const otherSite = await request(http)
+        .get(`/v1/public/chatbots/${publicId}/config`)
+        .set('Origin', 'https://shop.example.com')
+        .expect(200);
+      expect(otherSite.headers['access-control-allow-origin']).toBe(undefined);
+    });
+
+    it('keeps the history on the server and returns it with the token', async () => {
+      const { conversationId, conversationToken } = await started();
+      const chat = conversation(conversationId, conversationToken);
+      await chat.send('When do you open?').expect(200);
+      await chat.send('When do you open on Sunday?').expect(200);
+
+      // The second answer was built from the stored first turn.
+      const sent = JSON.stringify(lastCall()[1]);
+      expect(sent).toContain('When do you open?');
+
+      const res = await chat.history().expect(200);
+      const rows = res.body as { role: string; text: string }[];
+      expect(rows.map((r) => r.role)).toEqual([
+        'user',
+        'assistant',
+        'user',
+        'assistant',
+      ]);
+      expect(rows[0].text).toBe('When do you open?');
+      expect(rows.map((r) => Object.keys(r).sort())[1]).toEqual([
+        'createdAt',
+        'id',
+        'role',
+        'text',
+      ]);
+    });
+
+    it("is a 401 without a token, with a changed one, or with another conversation's", async () => {
+      const one = await started();
+      const two = await started('visitor_other999');
+
+      await conversation(one.conversationId).send('Hi').expect(401);
+      await conversation(one.conversationId).history().expect(401);
+      await conversation(one.conversationId, 'garbage.token')
+        .send('Hi')
+        .expect(401);
+      const [payload, signature] = one.conversationToken.split('.');
+      const swapped = `${Buffer.from(
+        JSON.stringify({ c: two.conversationId, b: ids.botA, e: 9999999999 }),
+      ).toString('base64url')}.${signature}`;
+      expect(swapped).not.toBe(`${payload}.${signature}`);
+      await conversation(two.conversationId, swapped).send('Hi').expect(401);
+      // A genuine token is only for its own conversation.
+      await conversation(two.conversationId, one.conversationToken)
+        .send('Hi')
+        .expect(401);
+      await conversation(two.conversationId, one.conversationToken)
+        .history()
+        .expect(401);
+      // Nothing of the rejected calls was stored.
+      const count = await prisma.message.count({
+        where: { conversationId: two.conversationId },
+      });
+      expect(count).toBe(0);
+    });
+
+    it('the old message endpoint is gone', async () => {
+      const publicId = await publicIdOf(ids.botA);
+      await request(http)
+        .post(`/v1/public/chatbots/${publicId}/messages`)
+        .set('X-Requested-With', 'fetch')
+        .send({ message: 'Hi' })
+        .expect(404);
     });
 
     it('is a 404 for an unpublished, switched-off or unknown chatbot', async () => {
-      const b = visitor(await publicIdOf(ids.botB));
+      const b = api(await publicIdOf(ids.botB));
       await b.config().expect(404);
-      await b.send('Hi').expect(404);
-      await visitor('cb_doesnotexist').send('Hi').expect(404);
+      await b.start().expect(404);
+      await api('cb_doesnotexist').start().expect(404);
 
+      const { conversationId, conversationToken } = await started();
       await as(cookies.ownerA)
         .patch('/v1/chatbot/status')
         .send({ status: 'DISABLED' })
         .expect(200);
       try {
-        await visitor(await publicIdOf(ids.botA))
+        await api(await publicIdOf(ids.botA))
+          .start()
+          .expect(404);
+        // An open conversation stops with the chatbot.
+        await conversation(conversationId, conversationToken)
           .send('Hi')
           .expect(404);
       } finally {
@@ -1087,10 +1626,100 @@ describe('Tenant isolation (M1-25)', () => {
       }
     });
 
-    it('rejects an empty message (400)', async () => {
-      await visitor(await publicIdOf(ids.botA))
+    it('stops a conversation at 50 messages and points to the company, without the model', async () => {
+      const { conversationId, conversationToken } = await started();
+      await prisma.conversation.update({
+        where: { id: conversationId },
+        data: { messageCount: 50 },
+      });
+      const calls = fakeLlm.streamWith.mock.calls.length;
+
+      const res = await conversation(conversationId, conversationToken)
+        .send('One more thing')
+        .expect(200);
+      const out = chatEvents(res);
+
+      expect(out.reply).toMatch(/length limit/);
+      expect(out.done).toMatchObject({ answeredBy: 'fallback' });
+      expect(fakeLlm.streamWith.mock.calls.length).toBe(calls);
+    });
+
+    it('rejects an empty message and a bad visitor ID (400)', async () => {
+      const { conversationId, conversationToken } = await started();
+      await conversation(conversationId, conversationToken)
         .send('  ')
         .expect(400);
+      await api(await publicIdOf(ids.botA))
+        .start('x')
+        .expect(400);
+    });
+  });
+
+  describe('Usage (M3-11, M3-13)', () => {
+    interface UsageBody {
+      period: string;
+      messages: number;
+      previewMessages: number;
+      tokensIn: number;
+      tokensOut: number;
+      limit: number | null;
+    }
+    const usageOf = async (cookie: string) =>
+      (await as(cookie).get('/v1/usage').expect(200)).body as UsageBody;
+
+    it('counts Test chat and visitor answers apart, per workspace', async () => {
+      const before = await usageOf(cookies.ownerA);
+      const beforeB = await usageOf(cookies.ownerB);
+
+      await as(cookies.ownerA)
+        .post('/v1/chatbot/preview/messages')
+        .send({ message: 'When do you open?' })
+        .expect(200);
+      const publicId = (
+        await prisma.chatbot.findUniqueOrThrow({
+          where: { id: ids.botA },
+          select: { publicId: true },
+        })
+      ).publicId;
+      const started = await request(http)
+        .post(`/v1/public/chatbots/${publicId}/conversations`)
+        .set('X-Requested-With', 'fetch')
+        .send({ visitorId: 'visitor_usage1' })
+        .expect(201);
+      const { conversationId, conversationToken } = started.body as {
+        conversationId: string;
+        conversationToken: string;
+      };
+      await request(http)
+        .post(`/v1/public/conversations/${conversationId}/messages`)
+        .set('X-Requested-With', 'fetch')
+        .set('Authorization', `Bearer ${conversationToken}`)
+        .send({ message: 'When do you open?' })
+        .expect(200);
+
+      const after = await usageOf(cookies.ownerA);
+      expect(after.period).toMatch(/^\d{4}-\d{2}$/);
+      expect(after.previewMessages).toBe(before.previewMessages + 1);
+      expect(after.messages).toBe(before.messages + 1);
+      // The fake model reports 100 tokens in and 7 out for each answer.
+      expect(after.tokensIn).toBe(before.tokensIn + 200);
+      expect(after.tokensOut).toBe(before.tokensOut + 14);
+      expect(after.limit).toBeNull();
+
+      // Workspace B saw none of it.
+      expect(await usageOf(cookies.ownerB)).toEqual(beforeB);
+    });
+
+    it("each workspace's row is its own, and a viewer can read it", async () => {
+      const rows = await prisma.usageCounter.findMany({
+        where: { workspaceId: { in: [ids.a, ids.b] } },
+      });
+      expect(rows.some((r) => r.workspaceId === ids.a)).toBe(true);
+      await expect(
+        inWorkspace(ids.b, () => db.usageCounter.findMany()),
+      ).resolves.toEqual(rows.filter((r) => r.workspaceId === ids.b));
+      await as(cookies.viewerA).get('/v1/usage').expect(200);
+      await request(http).get('/v1/usage').expect(401);
     });
   });
 

@@ -1,6 +1,8 @@
 import { ValidationPipe } from '@nestjs/common';
 import { NestExpressApplication } from '@nestjs/platform-express';
 import cookieParser from 'cookie-parser';
+import type { Request } from 'express';
+import { corsOptionsFor } from './common/cors';
 import { requireFetchHeader } from './common/require-fetch-header';
 
 /**
@@ -15,15 +17,25 @@ export function configureApp(app: NestExpressApplication): void {
     app.set('trust proxy', parseInt(process.env.TRUST_PROXY, 10));
   }
 
-  // D-2 §1: everything under /v1, except the health check.
-  app.setGlobalPrefix('v1', { exclude: ['health'] });
+  // D-2 §1: everything under /v1, except the health check and the widget
+  // page with its files (M4-19), whose URLs are in every embed snippet.
+  app.setGlobalPrefix('v1', {
+    exclude: ['health', 'w/:publicId', 'w/assets/:file', 'chatbot.js'],
+  });
 
   app.use(cookieParser());
   app.use(requireFetchHeader);
 
-  app.enableCors({
-    origin: process.env.DASHBOARD_URL ?? 'http://localhost:3000',
-    credentials: true,
+  const allowed = {
+    dashboardUrl: process.env.DASHBOARD_URL ?? 'http://localhost:3000',
+    // The widget app's origin (apps/widget, Vite on :3002 locally).
+    widgetUrl: process.env.WIDGET_URL ?? 'http://localhost:3002',
+  };
+  app.enableCors((req: Request, callback) => {
+    callback(
+      null,
+      corsOptionsFor(req.headers.origin, req.originalUrl ?? req.url, allowed),
+    );
   });
 
   app.useGlobalPipes(

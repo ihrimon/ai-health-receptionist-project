@@ -19,6 +19,7 @@
     "test:cov": "node --experimental-vm-modules node_modules/jest/bin/jest.js --coverage",
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
     "test:e2e": "jest --config ./test/jest-e2e.json",
+    "eval": "node --experimental-vm-modules node_modules/jest/bin/jest.js --config ./test/jest-eval.json --runInBand",
     "test:integration": "node --experimental-vm-modules node_modules/jest/bin/jest.js --config ./test/jest-integration.json --runInBand",
     "knowledge:eval": "ts-node -r tsconfig-paths/register src/modules/knowledge/eval/retrieval-eval.script.ts",
     "knowledge:reembed": "ts-node -r tsconfig-paths/register src/modules/knowledge/reembed.script.ts",

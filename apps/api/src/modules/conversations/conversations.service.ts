@@ -1,68 +1,182 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
-import { PrismaService } from '../../database/prisma.service';
-import { Conversation, Prisma } from '../../generated/prisma/client';
-import { CreateConversationDto } from './dto/create-conversation.dto';
+import type { PreviewChatSource } from '@brainstack/shared';
+import { Inject, Injectable } from '@nestjs/common';
+import { MessageRole } from '../../generated/prisma/client';
+import { requireTenant } from '../../tenancy/tenant-context';
+import { TENANT_PRISMA, type TenantPrisma } from '../../tenancy/tenant-prisma';
 
+export type AnsweredBy = 'llm' | 'custom_answer' | 'fallback';
+
+/** How an answer was made, saved with the assistant's message (M3-11). */
+export interface AnswerDetails {
+  content: string;
+  sources: PreviewChatSource[];
+  answeredBy: AnsweredBy;
+  model: string | null;
+  tokensIn: number | null;
+  tokensOut: number | null;
+  latencyMs: number;
+}
+
+export interface RecordTurn {
+  chatbotId: string;
+  /** Continue this conversation, if it is the same visitor's; otherwise a new one starts. */
+  conversationId?: string;
+  visitorId: string;
+  isPreview: boolean;
+  /** The published version that answered; null for the draft preview. */
+  versionId?: string | null;
+  userText: string;
+  answer: AnswerDetails;
+}
+
+/**
+ * Saves a visitor's message and the bot's answer in the current workspace
+ * (M3-5, M3-11). Must run inside a tenant context: the tenant client adds
+ * the workspace to every query.
+ */
 @Injectable()
 export class ConversationsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(@Inject(TENANT_PRISMA) private readonly db: TenantPrisma) {}
 
-  create(dto: CreateConversationDto): Promise<Conversation> {
-    return this.prisma.conversation.create({
+  /** An empty live conversation, started by a visitor opening the chat. */
+  async start(input: {
+    chatbotId: string;
+    visitorId: string;
+    originUrl: string | null;
+    versionId: string;
+  }): Promise<string> {
+    const { workspaceId } = requireTenant();
+    const created = await this.db.conversation.create({
       data: {
-        ...dto,
-        transcript: dto.transcript as Prisma.InputJsonValue | undefined,
+        workspaceId,
+        chatbotId: input.chatbotId,
+        visitorId: input.visitorId,
+        originUrl: input.originUrl,
+        versionId: input.versionId,
+        isPreview: false,
       },
+      select: { id: true },
+    });
+    return created.id;
+  }
+
+  /** A live conversation of this chatbot, or null. */
+  find(conversationId: string, chatbotId: string) {
+    return this.db.conversation.findFirst({
+      where: { id: conversationId, chatbotId, isPreview: false },
+      select: { id: true, visitorId: true, messageCount: true },
     });
   }
 
-  findAll(): Promise<Conversation[]> {
-    return this.prisma.conversation.findMany({
-      orderBy: { createdAt: 'desc' },
+  /** What a visitor sees again after a reload, oldest first. */
+  async messages(
+    conversationId: string,
+  ): Promise<
+    { id: string; role: 'user' | 'assistant'; text: string; createdAt: Date }[]
+  > {
+    const rows = await this.db.message.findMany({
+      where: { conversationId },
+      orderBy: { createdAt: 'asc' },
+      select: { id: true, role: true, content: true, createdAt: true },
     });
+    return rows.map((row) => ({
+      id: row.id,
+      role: row.role === MessageRole.USER ? 'user' : 'assistant',
+      text: row.content,
+      createdAt: row.createdAt,
+    }));
   }
 
-  async findOne(id: string): Promise<Conversation> {
-    const conversation = await this.prisma.conversation.findUnique({
-      where: { id },
-    });
-    if (!conversation) {
-      throw new NotFoundException(`Conversation ${id} not found`);
-    }
-    return conversation;
-  }
-
-  findByCallSid(callSid: string): Promise<Conversation | null> {
-    return this.prisma.conversation.findFirst({ where: { callSid } });
-  }
-
-  async appendTurn(
-    id: string,
-    partial: {
-      transcript?: Record<string, unknown>[];
-      summary?: string;
+  /**
+   * The latest turns of a conversation, oldest first, for the prompt. A
+   * conversation that isn't this chatbot's, this visitor's or this kind
+   * (preview or live) is empty, exactly as recordTurn() treats it.
+   */
+  async recentTurns(
+    scope: Pick<RecordTurn, 'chatbotId' | 'visitorId' | 'isPreview'> & {
+      conversationId: string;
     },
-  ): Promise<Conversation> {
-    await this.findOne(id);
-    return this.prisma.conversation.update({
-      where: { id },
-      data: {
-        ...partial,
-        transcript: partial.transcript as Prisma.InputJsonValue | undefined,
+    limit: number,
+  ): Promise<{ role: 'user' | 'assistant'; text: string }[]> {
+    const rows = await this.db.message.findMany({
+      where: {
+        conversationId: scope.conversationId,
+        conversation: {
+          chatbotId: scope.chatbotId,
+          visitorId: scope.visitorId,
+          isPreview: scope.isPreview,
+        },
       },
+      orderBy: { createdAt: 'desc' },
+      take: limit,
+      select: { role: true, content: true },
     });
+    return rows.reverse().map((row) => ({
+      role: row.role === MessageRole.USER ? 'user' : 'assistant',
+      text: row.content,
+    }));
   }
 
-  async rate(id: string, rating: number): Promise<Conversation> {
-    await this.findOne(id);
-    return this.prisma.conversation.update({
-      where: { id },
-      data: { rating },
-    });
-  }
+  /** Returns the conversation's ID. */
+  async recordTurn(turn: RecordTurn): Promise<string> {
+    const { workspaceId } = requireTenant();
+    const now = new Date();
+    const messages = [
+      // Explicit, ordered times: a single insert gives both rows the same default.
+      { role: MessageRole.USER, content: turn.userText, createdAt: now },
+      {
+        role: MessageRole.ASSISTANT,
+        content: turn.answer.content,
+        createdAt: new Date(now.getTime() + 1),
+        sources: turn.answer.sources as unknown as object,
+        answeredBy: turn.answer.answeredBy,
+        model: turn.answer.model,
+        tokensIn: turn.answer.tokensIn,
+        tokensOut: turn.answer.tokensOut,
+        latencyMs: turn.answer.latencyMs,
+      },
+    ];
 
-  async remove(id: string): Promise<void> {
-    await this.findOne(id);
-    await this.prisma.conversation.delete({ where: { id } });
+    // updateMany so a conversation of another chatbot, visitor or kind
+    // matches nothing and a new one starts instead.
+    if (turn.conversationId) {
+      const continued = await this.db.conversation.updateMany({
+        where: {
+          id: turn.conversationId,
+          chatbotId: turn.chatbotId,
+          visitorId: turn.visitorId,
+          isPreview: turn.isPreview,
+        },
+        data: { messageCount: { increment: 2 }, lastMessageAt: now },
+      });
+      if (continued.count === 1) {
+        await this.db.message.createMany({
+          data: messages.map((m) => ({
+            ...m,
+            workspaceId,
+            conversationId: turn.conversationId!,
+          })),
+        });
+        return turn.conversationId;
+      }
+    }
+
+    const created = await this.db.conversation.create({
+      data: {
+        workspaceId,
+        chatbotId: turn.chatbotId,
+        visitorId: turn.visitorId,
+        isPreview: turn.isPreview,
+        versionId: turn.versionId ?? null,
+        messageCount: 2,
+        startedAt: now,
+        lastMessageAt: now,
+        messages: {
+          create: messages.map((m) => ({ ...m, workspaceId })),
+        },
+      },
+      select: { id: true },
+    });
+    return created.id;
   }
 }

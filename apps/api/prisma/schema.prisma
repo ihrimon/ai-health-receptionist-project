@@ -132,6 +132,9 @@ model Workspace {
   products        Product[]
   knowledgeChunks KnowledgeChunk[]
   llmKeys         WorkspaceLlmKey[]
+  conversations   Conversation[]
+  messages        Message[]
+  usageCounters   UsageCounter[]
   /// Sessions currently switched to this workspace.
   activeSessions  Session[]
 
@@ -219,6 +222,7 @@ model Chatbot {
   sources          KnowledgeSource[]
   products         Product[]
   chunks           KnowledgeChunk[]
+  conversations    Conversation[]
 
   @@index([workspaceId])
   @@map("chatbots")
@@ -445,22 +449,87 @@ model LlmCredential {
   @@map("llm_credentials")
 }
 
-/// Interim single-tenant chat transcript (ChatService). Replaced by the
-/// workspace-scoped Conversation + Message models in M3.
+/// One chat between a visitor (or a dashboard user, `isPreview`) and a
+/// chatbot (M3-5). History lives on the server; the client sends only the
+/// new message.
 model Conversation {
-  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  /// `chat-<sessionId>` for web chat sessions.
-  callSid    String   @map("call_sid")
-  transcript Json?
-  summary    String?
-  /// Seconds.
-  duration   Int?
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId   String   @map("workspace_id") @db.Uuid
+  chatbotId     String   @map("chatbot_id") @db.Uuid
+  /// Random ID made by the widget (no personal data).
+  visitorId     String   @map("visitor_id") @db.VarChar(64)
+  /// Dashboard "Test chat"; left out of analytics.
+  isPreview     Boolean  @default(false) @map("is_preview")
+  /// The page the chat started on.
+  originUrl     String?  @map("origin_url")
+  /// The published version that answered, for debugging.
+  versionId     String?  @map("version_id") @db.Uuid
+  messageCount  Int      @default(0) @map("message_count")
   /// 1–5 stars (CHECK constraint in the migration SQL).
-  rating     Int?     @db.SmallInt
-  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz
+  rating        Int?     @db.SmallInt
+  startedAt     DateTime @default(now()) @map("started_at") @db.Timestamptz
+  lastMessageAt DateTime @default(now()) @map("last_message_at") @db.Timestamptz
 
-  @@index([callSid])
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  chatbot   Chatbot   @relation(fields: [chatbotId], references: [id], onDelete: Cascade)
+  messages  Message[]
+
+  @@index([workspaceId, chatbotId, lastMessageAt(sort: Desc)])
+  @@index([chatbotId, visitorId])
   @@map("conversations")
+}
+
+enum MessageRole {
+  USER
+  ASSISTANT
+}
+
+/// One turn of a Conversation (M3-5). Assistant rows also keep how the
+/// answer was made (M3-11): sources, model, tokens and latency.
+model Message {
+  id             String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId    String      @map("workspace_id") @db.Uuid
+  conversationId String      @map("conversation_id") @db.Uuid
+  role           MessageRole
+  content        String
+  /// [{ title, page, similarity }] the answer was built from.
+  sources        Json?
+  /// "llm" | "custom_answer" | "fallback"
+  answeredBy     String?     @map("answered_by") @db.VarChar(20)
+  model          String?     @db.VarChar(100)
+  tokensIn       Int?        @map("tokens_in")
+  tokensOut      Int?        @map("tokens_out")
+  latencyMs      Int?        @map("latency_ms")
+  createdAt      DateTime    @default(now()) @map("created_at") @db.Timestamptz
+
+  workspace    Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId, createdAt])
+  @@index([workspaceId, answeredBy, createdAt])
+  @@map("messages")
+}
+
+/// How much a workspace used chat in one calendar month, UTC (M3-11). Live
+/// visitor messages and dashboard "Test chat" messages are counted apart.
+/// The base for the monthly quota that arrives with plans (M6/M7).
+model UsageCounter {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId     String   @map("workspace_id") @db.Uuid
+  /// "2026-10".
+  period          String   @db.Char(7)
+  /// Answers to live visitors.
+  messages        Int      @default(0)
+  /// Answers in the dashboard Test chat.
+  previewMessages Int      @default(0) @map("preview_messages")
+  tokensIn        BigInt   @default(0) @map("tokens_in")
+  tokensOut       BigInt   @default(0) @map("tokens_out")
+  updatedAt       DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, period])
+  @@map("usage_counters")
 }
 
 /// A searchable piece of an FAQ, policy, text page or document (M2-12).

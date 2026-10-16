@@ -1,6 +1,5 @@
 import Link from "next/link";
 import {
-  ArrowRight,
   BookOpen,
   Code,
   MessageCircle,
@@ -62,19 +61,6 @@ export default function HomePage() {
             nativeButton={false}
             className="rounded-full px-8 text-base"
             render={<Link href="/signup">Get started</Link>}
-          />
-          <Button
-            size="lg"
-            nativeButton={false}
-            variant="outline"
-            className="group rounded-full px-8 text-base"
-            render={
-              <Link href="/chat">
-                <MessageCircle />
-                Try the demo
-                <ArrowRight className="transition-transform group-hover:translate-x-1" />
-              </Link>
-            }
           />
         </div>
 

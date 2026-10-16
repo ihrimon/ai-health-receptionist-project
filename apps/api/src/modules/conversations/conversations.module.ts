@@ -1,11 +1,8 @@
 import { Module } from '@nestjs/common';
-import { AuthModule } from '../auth/auth.module';
-import { ConversationsController } from './conversations.controller';
 import { ConversationsService } from './conversations.service';
 
+/** Stored chats and their messages, per workspace (M3-5, M3-11). */
 @Module({
-  imports: [AuthModule],
-  controllers: [ConversationsController],
   providers: [ConversationsService],
   exports: [ConversationsService],
 })

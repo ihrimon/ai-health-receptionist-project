@@ -1,13 +1,25 @@
+import { join } from 'path';
+
 export default () => ({
   nodeEnv: process.env.NODE_ENV ?? 'development',
   apiPort: parseInt(process.env.API_PORT ?? '3001', 10),
   dashboardUrl: process.env.DASHBOARD_URL ?? 'http://localhost:3000',
-  // Script src in the embed snippet (FR-3.1). The early MVP serves the
-  // loader from the dashboard (apps/dashboard/public/chatbot.js); M4's
-  // own widget app can move it with WIDGET_LOADER_URL.
+  // Script src in the embed snippet (FR-3.1). The loader is built from
+  // apps/widget (M4-8). Unset, the dashboard's copy (public/chatbot.js),
+  // which opens the dashboard's own /w/:publicId page with no domain
+  // check. Set it to <this API's URL>/chatbot.js to switch to the page the
+  // API serves with the frame-ancestors CSP (M4-19).
   widgetLoaderUrl:
     process.env.WIDGET_LOADER_URL ??
     `${process.env.DASHBOARD_URL ?? 'http://localhost:3000'}/chatbot.js`,
+
+  // The static build of apps/widget (index.html, assets/, chatbot.js) that
+  // the API serves at /w/:publicId (M4-19). The API runs from apps/api.
+  widget: {
+    distDir:
+      process.env.WIDGET_DIST_DIR ??
+      join(process.cwd(), '..', 'widget', 'dist'),
+  },
 
   database: {
     // Prisma connects with DATABASE_URL (the Prisma CLI reads it too, via
@@ -59,12 +71,24 @@ export default () => ({
   // tests fall back to a fixed key, so local data isn't protected by it.
   security: {
     llmKeyEncryptionKey: process.env.LLM_KEY_ENCRYPTION_KEY ?? '',
+    // Signs the public chat's conversation tokens (M3-4). Generate with
+    // `openssl rand -base64 32`; required in production, where public
+    // chat answers 503 without it.
+    conversationTokenSecret: process.env.CONVERSATION_TOKEN_SECRET ?? '',
   },
 
   knowledge: {
     embeddingModel:
       process.env.KNOWLEDGE_EMBEDDING_MODEL ?? 'Xenova/all-MiniLM-L6-v2',
-    topK: parseInt(process.env.KNOWLEDGE_TOP_K ?? '3', 10),
+    topK: parseInt(process.env.KNOWLEDGE_TOP_K ?? '5', 10),
+    // A chunk counts as relevant to a question when it matches one of its
+    // words or its cosine similarity is at least this (M3-10).
+    minSimilarity: parseFloat(process.env.KNOWLEDGE_MIN_SIMILARITY ?? '0.3'),
+    // A question this close to a custom answer's trigger question gets
+    // that answer as it is (M3-6).
+    customAnswerThreshold: parseFloat(
+      process.env.KNOWLEDGE_CUSTOM_ANSWER_THRESHOLD ?? '0.7',
+    ),
   },
 
   // Transactional email, sent via a plain Gmail account (SMTP through

@@ -9,8 +9,8 @@ import { SecretBox } from '../../common/secret-box';
 import type { WorkspaceLlmKey } from '../../generated/prisma/client';
 import { requireTenant } from '../../tenancy/tenant-context';
 import { TENANT_PRISMA, type TenantPrisma } from '../../tenancy/tenant-prisma';
-import { LlmChatClient } from '../chat/llm-chat.client';
-import type { LlmCredentialSnapshot } from '../chat/llm-key-manager';
+import { LlmChatClient } from '../llm/llm-chat.client';
+import type { LlmCredentialSnapshot } from '../llm/llm-key-manager';
 import { orNotFound } from '../knowledge-base/knowledge-errors';
 
 function toView(row: WorkspaceLlmKey): LlmKeyView {

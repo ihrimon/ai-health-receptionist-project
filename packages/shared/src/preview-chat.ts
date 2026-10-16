@@ -2,9 +2,10 @@ import { z } from 'zod';
 import { text } from './text';
 
 /**
- * Dashboard "Test chat" (D-2 §2.5, M3-13). The MVP keeps the conversation
- * in the browser, so each request carries the earlier turns; the server
- * only keeps the last few.
+ * Dashboard "Test chat" (D-2 §2.5, M3-13). The answer streams back as
+ * `ChatStreamEvent`s. The server keeps the conversation: a request carries
+ * only the new message and, to continue, the `conversationId` from the
+ * last `done` event.
  */
 
 export const PREVIEW_CHAT_LIMITS = {
@@ -20,10 +21,13 @@ export const previewChatTurnSchema = z.strictObject({
 
 export const previewChatRequestSchema = z.strictObject({
   message: text(1, PREVIEW_CHAT_LIMITS.messageChars, true),
+  /** Ignored: the server loads the history of `conversationId` itself. Still accepted so an old open tab doesn't break. */
   history: z
     .array(previewChatTurnSchema)
     .max(PREVIEW_CHAT_LIMITS.historyTurns)
     .default([]),
+  /** Continue a stored conversation (the one a reply returned). */
+  conversationId: z.uuid().optional(),
 });
 
 export type PreviewChatTurn = z.output<typeof previewChatTurnSchema>;
@@ -34,9 +38,4 @@ export interface PreviewChatSource {
   title: string;
   page: number | null;
   similarity: number;
-}
-
-export interface PreviewChatReply {
-  reply: string;
-  sources: PreviewChatSource[];
 }

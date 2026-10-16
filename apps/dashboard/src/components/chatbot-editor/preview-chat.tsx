@@ -1,10 +1,14 @@
 "use client";
 
+import type { PreviewChatSource } from "@brainstack/shared";
 import { Info, RotateCcw, Send } from "lucide-react";
 import { type FormEvent, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import {
+  handoffHref,
+  handoffLabel,
+  type Handoff,
   type PreviewMessage,
   sendPreviewMessage,
   uniqueSources,
@@ -15,7 +19,7 @@ import { cn } from "@/lib/utils";
 /**
  * "Test chat" (M3-13): talks to the saved draft over the workspace's
  * knowledge. Each bot reply can show the sources it was built from
- * (M3-14). The conversation lives only in this component.
+ * (M3-14). The answer streams in; the server keeps the conversation.
  */
 export function PreviewChat({
   welcomeMessage,
@@ -29,6 +33,7 @@ export function PreviewChat({
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [openSources, setOpenSources] = useState<number | null>(null);
+  const [conversationId, setConversationId] = useState<string | null>(null);
   const endRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -43,14 +48,44 @@ export function PreviewChat({
     setMessages([...earlier, { role: "user", text: message }]);
     setInput("");
     setSending(true);
+    // The answer's bubble appears with its first piece and grows from there.
+    let started = false;
+    let sources: PreviewChatSource[] = [];
+    let handoff: Handoff | undefined;
+    const showAnswer = (text: string) => {
+      const replace = started;
+      setMessages((current) => {
+        const answer: PreviewMessage = {
+          role: "assistant",
+          text,
+          sources,
+          handoff,
+        };
+        return replace ? [...current.slice(0, -1), answer] : [...current, answer];
+      });
+    };
     try {
-      const { reply, sources } = await sendPreviewMessage(message, earlier);
-      setMessages((current) => [
-        ...current,
-        { role: "assistant", text: reply, sources },
-      ]);
+      let text = "";
+      await sendPreviewMessage(message, conversationId, (event) => {
+        if (event.type === "sources") {
+          sources = event.sources;
+          if (started) showAnswer(text);
+        } else if (event.type === "delta") {
+          text += event.text;
+          showAnswer(text);
+          started = true;
+        } else if (event.type === "handoff") {
+          handoff = event;
+          showAnswer(text);
+        } else if (event.type === "done") {
+          setConversationId(event.conversationId);
+        } else if (event.type === "error") {
+          throw new Error(event.message);
+        }
+      });
     } catch (err) {
       toastError((err as Error).message);
+      // Nothing of a broken answer is stored, so none of it stays on screen.
       setMessages(earlier);
       setInput(message);
     } finally {
@@ -77,6 +112,7 @@ export function PreviewChat({
           onClick={() => {
             setMessages([]);
             setOpenSources(null);
+            setConversationId(null);
           }}
         >
           <RotateCcw />
@@ -90,6 +126,16 @@ export function PreviewChat({
           return (
             <div key={i} className="space-y-1">
               <Bubble role={m.role}>{m.text}</Bubble>
+              {m.handoff && (
+                <a
+                  href={handoffHref(m.handoff)}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="ml-1 inline-block rounded-full border px-3 py-1 text-xs hover:bg-muted"
+                >
+                  {handoffLabel(m.handoff)}
+                </a>
+              )}
               {m.role === "assistant" && (
                 <div className="pl-1 text-xs text-muted-foreground">
                   <button
@@ -114,7 +160,7 @@ export function PreviewChat({
             </div>
           );
         })}
-        {sending && (
+        {sending && messages.at(-1)?.role === "user" && (
           <Bubble role="assistant">
             <span className="text-muted-foreground">Thinking…</span>
           </Bubble>

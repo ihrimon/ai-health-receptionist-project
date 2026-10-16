@@ -9,8 +9,6 @@ import { StorageModule } from './storage/storage.module';
 import { RateLimitModule } from './rate-limit/rate-limit.module';
 import { TenancyModule } from './tenancy/tenancy.module';
 import { HealthModule } from './health/health.module';
-import { ConversationsModule } from './modules/conversations/conversations.module';
-import { ChatModule } from './modules/chat/chat.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { LlmCredentialsModule } from './modules/llm-credentials/llm-credentials.module';
 import { WorkspacesModule } from './modules/workspaces/workspaces.module';
@@ -20,6 +18,8 @@ import { ProductsModule } from './modules/products/products.module';
 import { PreviewChatModule } from './modules/preview-chat/preview-chat.module';
 import { LlmKeysModule } from './modules/llm-keys/llm-keys.module';
 import { PublicChatModule } from './modules/public-chat/public-chat.module';
+import { UsageModule } from './modules/usage/usage.module';
+import { WidgetPageModule } from './modules/widget-page/widget-page.module';
 
 @Module({
   imports: [
@@ -34,8 +34,6 @@ import { PublicChatModule } from './modules/public-chat/public-chat.module';
     RateLimitModule,
     TenancyModule,
     HealthModule,
-    ConversationsModule,
-    ChatModule,
     AuthModule,
     LlmCredentialsModule,
     WorkspacesModule,
@@ -45,6 +43,8 @@ import { PublicChatModule } from './modules/public-chat/public-chat.module';
     PreviewChatModule,
     LlmKeysModule,
     PublicChatModule,
+    UsageModule,
+    WidgetPageModule,
   ],
   controllers: [AppController],
   providers: [AppService],

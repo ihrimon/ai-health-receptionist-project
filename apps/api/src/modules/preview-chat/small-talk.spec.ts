@@ -1,0 +1,28 @@
+import { isSmallTalk } from './small-talk';
+
+describe('isSmallTalk', () => {
+  it.each([
+    'Hi',
+    'hello there!',
+    'Good morning',
+    'thanks!!',
+    'Thank you so much',
+    'ok',
+    'What can you do?',
+    'What can you help me with?',
+    'bye',
+  ])('treats "%s" as small talk', (message) => {
+    expect(isSmallTalk(message)).toBe(true);
+  });
+
+  it.each([
+    'Hi, what is the price of the ZX-9000?',
+    'Do you ship abroad?',
+    'thanks but can I return it',
+    'What is the capital of France?',
+    '',
+    '???',
+  ])('treats "%s" as a real question', (message) => {
+    expect(isSmallTalk(message)).toBe(false);
+  });
+});

@@ -3,8 +3,8 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
-    "build": "next build",
+    "dev": "pnpm --filter widget build:loader:dashboard && next dev",
+    "build": "pnpm --filter widget build:loader:dashboard && next build",
     "start": "next start",
     "lint": "eslint",
     "test": "vitest run"
@@ -32,7 +32,8 @@
     "eslint-config-next": "16.3.0",
     "tailwindcss": "^4",
     "typescript": "^5",
-    "vitest": "^5.0.4"
+    "vitest": "^5.0.4",
+    "widget": "workspace:*"
   },
   "packageManager": "pnpm@10.22.0"
 }

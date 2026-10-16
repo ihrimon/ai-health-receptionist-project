@@ -2,7 +2,16 @@ import {
   type PreviewChatRequest,
   previewChatRequestSchema,
 } from '@brainstack/shared';
-import { Body, Controller, HttpCode, HttpStatus, Post } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  HttpCode,
+  HttpStatus,
+  Post,
+  Res,
+} from '@nestjs/common';
+import type { Response } from 'express';
+import { streamChat } from '../../common/sse';
 import { ZodBodyPipe } from '../../common/zod-body.pipe';
 import { WorkspaceRole } from '../../generated/prisma/client';
 import { Roles } from '../../tenancy/workspace.guard';
@@ -10,7 +19,7 @@ import type { AuthContext } from '../auth/auth-context';
 import { CurrentAuth } from '../auth/auth-context';
 import { PreviewChatService } from './preview-chat.service';
 
-/** D-2 §2.5, without SSE for the MVP (docs/quick-decision.md, option A). */
+/** D-2 §2.5: the answer streams as Server-Sent Events (M3-3). */
 @Controller('chatbot/preview')
 export class PreviewChatController {
   constructor(private readonly preview: PreviewChatService) {}
@@ -18,10 +27,13 @@ export class PreviewChatController {
   @Post('messages')
   @HttpCode(HttpStatus.OK)
   @Roles(WorkspaceRole.VIEWER)
-  send(
+  async send(
     @CurrentAuth() auth: AuthContext,
+    @Res() res: Response,
     @Body(new ZodBodyPipe(previewChatRequestSchema)) body: PreviewChatRequest,
-  ) {
-    return this.preview.send(auth.user.id, body);
+  ): Promise<void> {
+    await streamChat(res, (emit) =>
+      this.preview.send(auth.user.id, body, emit),
+    );
   }
 }

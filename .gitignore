@@ -45,3 +45,6 @@ coverage/
 # Render) is missing it entirely without this, so every chat message 500s
 # on fs.readFileSync ENOENT.
 !packages/ai/prompts/assistant.md
+
+# Built from apps/widget (pnpm --filter widget build:loader:dashboard), not edited by hand
+apps/dashboard/public/chatbot.js

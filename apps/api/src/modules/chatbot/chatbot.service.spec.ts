@@ -9,6 +9,7 @@ import { Test } from '@nestjs/testing';
 import { Prisma } from '../../generated/prisma/client';
 import { runWithTenant } from '../../tenancy/tenant-context';
 import { TENANT_PRISMA } from '../../tenancy/tenant-prisma';
+import { WidgetPageCache } from '../widget-page/widget-page.cache';
 import { ChatbotService } from './chatbot.service';
 
 const publishable = (): ChatbotConfig => {
@@ -45,8 +46,10 @@ describe('ChatbotService', () => {
     $transaction: jest.Mock;
   };
   let nodeEnv: string;
+  let widgetPages: { invalidate: jest.Mock };
 
   beforeEach(async () => {
+    widgetPages = { invalidate: jest.fn() };
     nodeEnv = 'development';
     row = {
       id: 'bot-1',
@@ -94,6 +97,7 @@ describe('ChatbotService', () => {
       providers: [
         ChatbotService,
         { provide: TENANT_PRISMA, useValue: db },
+        { provide: WidgetPageCache, useValue: widgetPages },
         {
           provide: ConfigService,
           useValue: {
@@ -223,6 +227,9 @@ describe('ChatbotService', () => {
         expect.objectContaining({ data: { publishedVersionId: 'ver-1' } }),
       );
       expect(view.hasUnpublishedChanges).toBe(false);
+      expect(widgetPages.invalidate).toHaveBeenCalledWith(
+        'cb_abcdefghijklmnop',
+      );
     });
 
     it('starts at version 1', async () => {
@@ -301,6 +308,10 @@ describe('ChatbotService', () => {
       const view = await service.setAllowedDomains([' Shop.Example.com ']);
 
       expect(view.allowedDomains).toEqual(['shop.example.com']);
+      // The widget page's frame-ancestors change at once (M4-19).
+      expect(widgetPages.invalidate).toHaveBeenCalledWith(
+        'cb_abcdefghijklmnop',
+      );
     });
 
     it('rejects localhost in production', async () => {
@@ -310,6 +321,7 @@ describe('ChatbotService', () => {
         BadRequestException,
       );
       expect(db.chatbot.update).not.toHaveBeenCalled();
+      expect(widgetPages.invalidate).not.toHaveBeenCalled();
     });
   });
 
@@ -342,5 +354,6 @@ describe('ChatbotService', () => {
   it('setStatus switches the bot on or off', async () => {
     const view = await service.setStatus('DISABLED');
     expect(view.status).toBe('DISABLED');
+    expect(widgetPages.invalidate).toHaveBeenCalledWith('cb_abcdefghijklmnop');
   });
 });
