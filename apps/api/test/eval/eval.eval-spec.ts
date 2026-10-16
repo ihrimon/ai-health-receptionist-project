@@ -4,6 +4,12 @@ import { Test } from '@nestjs/testing';
 import { AppModule } from '../../src/app.module';
 import { PrismaService } from '../../src/database/prisma.service';
 import {
+  type CaseMetrics,
+  formatMetrics,
+  pricesFromEnv,
+  summarizeMetrics,
+} from '../../src/eval/eval-metrics';
+import {
   checkCase,
   knownAmounts,
   missedTargets,
@@ -126,6 +132,16 @@ describe('Chat answer quality', () => {
   >();
   /** What the model was sent during the case that is running. */
   let sentToModel: ChatMessage[][] = [];
+  /** Calls and tokens of the case that is running (real model only). */
+  let callStats = { calls: 0, tokensIn: 0, tokensOut: 0 };
+  /** Speed and size of the case that just ran. */
+  let lastMetrics: CaseMetrics = {
+    firstWordMs: null,
+    totalMs: 0,
+    tokensIn: 0,
+    tokensOut: 0,
+    modelCalls: 0,
+  };
 
   const inWorkspace = <T>(
     company: FixtureCompany,
@@ -265,7 +281,24 @@ describe('Chat answer quality', () => {
         tools?: unknown,
       ) => {
         sentToModel.push([...messages]);
-        return streamWith(credentials, messages, tools);
+        callStats.calls += 1;
+        const source = streamWith(credentials, messages, tools);
+        // Add up the tokens the provider reports for each call.
+        return (async function* () {
+          for await (const event of source) {
+            const usage = (
+              event as {
+                type?: string;
+                usage?: { inputTokens: number; outputTokens: number };
+              }
+            ).usage;
+            if (usage) {
+              callStats.tokensIn += usage.inputTokens;
+              callStats.tokensOut += usage.outputTokens;
+            }
+            yield event;
+          }
+        })();
       };
 
       for (const company of COMPANIES) await seed(company);
@@ -282,6 +315,9 @@ describe('Chat answer quality', () => {
     c: EvalCase,
   ): Promise<CaseOutcome> {
     sentToModel = [];
+    callStats = { calls: 0, tokensIn: 0, tokensOut: 0 };
+    const startedAt = Date.now();
+    let firstWordAt: number | null = null;
     const events: ChatStreamEvent[] = [];
     const w = workspaces.get(company.key)!;
     const config = {
@@ -296,6 +332,9 @@ describe('Chat answer quality', () => {
         config,
         { message: c.question, history: [] },
         (event) => {
+          if (event.type === 'delta' && firstWordAt === null) {
+            firstWordAt = Date.now();
+          }
           events.push(event);
           return true;
         },
@@ -310,6 +349,13 @@ describe('Chat answer quality', () => {
       ),
     );
 
+    lastMetrics = {
+      firstWordMs: firstWordAt === null ? null : firstWordAt - startedAt,
+      totalMs: Date.now() - startedAt,
+      tokensIn: callStats.tokensIn,
+      tokensOut: callStats.tokensOut,
+      modelCalls: callStats.calls,
+    };
     const done = events.find((e) => e.type === 'done');
     const calls = sentToModel;
     const lastCall = calls.at(-1) ?? [];
@@ -365,6 +411,7 @@ describe('Chat answer quality', () => {
       const verbose = Boolean(process.env.EVAL_VERBOSE);
       const results: { case: EvalCase; verdict: CaseVerdict }[] = [];
       const lines: string[] = [];
+      const allMetrics: CaseMetrics[] = [];
       for (const company of COMPANIES) {
         const amounts = knownAmounts(company);
         for (const c of company.cases) {
@@ -379,6 +426,7 @@ describe('Chat answer quality', () => {
             await sleep(RETRY_WAIT_MS);
             outcome = await run(company, c);
           }
+          allMetrics.push(lastMetrics);
           if (REAL_MODEL && DELAY_MS) await sleep(DELAY_MS);
           const verdict = checkCase(c, outcome, amounts);
           results.push({ case: c, verdict });
@@ -411,6 +459,14 @@ describe('Chat answer quality', () => {
             `  ${name.padEnd(14)} ${row.passed}/${row.total - row.skipped}${row.skipped ? ` (${row.skipped} skipped)` : ''}`,
         ),
       ];
+      if (REAL_MODEL) {
+        header.push(
+          '',
+          ...formatMetrics(
+            summarizeMetrics(allMetrics, pricesFromEnv(process.env)),
+          ),
+        );
+      }
       console.log([...header, ...lines].join('\n'));
 
       expect(missedTargets(summary)).toEqual([]);
