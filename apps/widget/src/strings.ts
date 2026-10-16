@@ -17,4 +17,12 @@ export const STRINGS = {
   unavailable: "This chat isn't available right now.",
   somethingWrong: "Sorry, something went wrong. Please try again.",
   tooFast: "You're sending messages quickly. Please wait a minute and try again.",
+  quickReplies: "Suggested questions",
+  /** The handoff button's text when the company gave none. */
+  handoff: {
+    email: "Email us",
+    phone: "Call us",
+    whatsapp: "Chat on WhatsApp",
+    url: "Contact us",
+  },
 } as const;

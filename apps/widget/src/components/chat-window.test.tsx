@@ -69,4 +69,37 @@ describe("ChatWindow", () => {
     setup({ showBranding: false });
     expect(screen.queryByText(STRINGS.poweredBy)).toBeNull();
   });
+
+  it("shows the assistant's Markdown formatted and the visitor's text as typed", () => {
+    setup({
+      welcomeMessage: "Hi! I'm **Acme Bot**.",
+      messages: [
+        { id: "1", role: "user", text: "**not bold** <b>x</b>" },
+        { id: "2", role: "assistant", text: "See [our menu](https://acme.test/menu) <img src=x onerror=alert(1)>" },
+      ],
+    });
+    const [welcome, mine, answer] = document.querySelectorAll("[data-role]");
+    expect(welcome.querySelector("strong")?.textContent).toBe("Acme Bot");
+    expect(mine.textContent).toBe("**not bold** <b>x</b>");
+    expect(mine.querySelector("strong, b")).toBeNull();
+    expect(answer.querySelector("a")?.getAttribute("rel")).toBe("noopener noreferrer");
+    expect(answer.querySelector("img")).toBeNull();
+  });
+
+  it("puts the handoff button under the fallback answer it came with", () => {
+    setup({
+      messages: [
+        { id: "1", role: "user", text: "Refund?" },
+        {
+          id: "2",
+          role: "assistant",
+          text: "Sorry, I don't know.",
+          handoff: { kind: "email", value: "help@acme.test", label: "Email support" },
+        },
+      ],
+    });
+    const link = screen.getByRole("link", { name: "Email support" });
+    expect(link.getAttribute("href")).toBe("mailto:help@acme.test");
+    expect(link.previousElementSibling?.textContent).toBe("Sorry, I don't know.");
+  });
 });

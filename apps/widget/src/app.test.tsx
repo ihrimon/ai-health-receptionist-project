@@ -184,6 +184,22 @@ describe("App: streaming chat (M4-3)", () => {
     await waitFor(() => expect((screen.getByRole("button", { name: STRINGS.send }) as HTMLButtonElement).disabled).toBe(false));
   });
 
+  it("shows the streamed Markdown safely, formatted while it streams", async () => {
+    api({
+      send: () =>
+        sseResponse([
+          sse("delta", { text: "We have **free " }),
+          sse("delta", { text: "delivery** <img src=x onerror=alert(1)> [x](javascript:alert(1))" }),
+          sse("done", { conversationId: "c1", answeredBy: "llm" }),
+        ]),
+    });
+    const user = await ready();
+    await user.type(screen.getByLabelText(STRINGS.inputLabel), "Delivery?{Enter}");
+    await waitFor(() => expect(document.querySelector("strong")?.textContent).toBe("free delivery"));
+    expect(document.querySelector("img")).toBeNull();
+    expect(document.querySelector("a")).toBeNull();
+  });
+
   it("still chats when storage is blocked", async () => {
     vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
       throw new DOMException("blocked", "SecurityError");
@@ -195,5 +211,52 @@ describe("App: streaming chat (M4-3)", () => {
     const user = await ready();
     await user.type(screen.getByLabelText(STRINGS.inputLabel), "Hi{Enter}");
     expect(await screen.findByText("We open at 9.")).toBeTruthy();
+  });
+});
+
+describe("App: quick replies and handoff (M4-6)", () => {
+  it("shows the quick replies with the welcome, sends a picked one and then hides them", async () => {
+    const { requests } = api();
+    const user = await ready();
+    const chips = screen.getByRole("group", { name: STRINGS.quickReplies });
+    expect(chips.previousElementSibling?.textContent).toBe(config.welcomeMessage);
+    await user.click(screen.getByRole("button", { name: "Opening hours" }));
+
+    await screen.findByText("We open at 9.");
+    expect(bubbles()[1]).toEqual(["user", "Opening hours"]);
+    expect(requests.find((r) => r.method === "POST" && r.path.endsWith("/messages"))?.body).toEqual({ message: "Opening hours" });
+    expect(screen.queryByRole("group", { name: STRINGS.quickReplies })).toBeNull();
+  });
+
+  it("shows no quick replies for a conversation picked up after a reload", async () => {
+    localStorage.setItem(storageKey, JSON.stringify({ visitorId: "v1", conversation: { conversationId: "c9", conversationToken: "tok9" } }));
+    api({ history: () => json([{ id: "1", role: "user", text: "Earlier", createdAt: "" }]) });
+    await ready();
+    await screen.findByText("Earlier");
+    expect(screen.queryByRole("group", { name: STRINGS.quickReplies })).toBeNull();
+  });
+
+  it("offers the handoff button after a fallback answer", async () => {
+    api({
+      send: () =>
+        sseResponse([
+          sse("delta", { text: "Sorry, I can't help with that." }),
+          sse("handoff", { kind: "whatsapp", value: "+8801700000000", label: null }),
+          sse("done", { conversationId: "c1", answeredBy: "fallback" }),
+        ]),
+    });
+    const user = await ready();
+    await user.type(screen.getByLabelText(STRINGS.inputLabel), "Refund?{Enter}");
+    const link = await screen.findByRole("link", { name: STRINGS.handoff.whatsapp });
+    expect(link.getAttribute("href")).toBe("https://wa.me/8801700000000");
+    expect(link.getAttribute("target")).toBe("_blank");
+  });
+
+  it("offers no handoff after a normal answer", async () => {
+    api();
+    const user = await ready();
+    await user.type(screen.getByLabelText(STRINGS.inputLabel), "Hours?{Enter}");
+    await screen.findByText("We open at 9.");
+    expect(screen.queryByRole("link")).toBeNull();
   });
 });
