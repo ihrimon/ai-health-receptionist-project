@@ -56,6 +56,12 @@ const PROVIDER = process.env.EVAL_PROVIDER;
 const API_KEY = process.env.EVAL_API_KEY;
 const MODEL = process.env.EVAL_MODEL;
 const REAL_MODEL = Boolean(PROVIDER && API_KEY && MODEL);
+// Free tiers allow only a few requests a minute: wait between cases, and
+// wait out a "keys exhausted" answer before trying the case again.
+const DELAY_MS = Number(process.env.EVAL_DELAY_MS ?? 0);
+const RETRIES = Number(process.env.EVAL_RETRIES ?? 3);
+const RETRY_WAIT_MS = 30_000;
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 interface ChatMessage {
   role: string;
@@ -360,7 +366,18 @@ describe('Chat answer quality', () => {
       for (const company of COMPANIES) {
         const amounts = knownAmounts(company);
         for (const c of company.cases) {
-          const outcome = await run(company, c);
+          let outcome = await run(company, c);
+          for (
+            let attempt = 0;
+            REAL_MODEL &&
+            attempt < RETRIES &&
+            outcome.reply.includes('KEYS_EXHAUSTED');
+            attempt++
+          ) {
+            await sleep(RETRY_WAIT_MS);
+            outcome = await run(company, c);
+          }
+          if (REAL_MODEL && DELAY_MS) await sleep(DELAY_MS);
           const verdict = checkCase(c, outcome, amounts);
           results.push({ case: c, verdict });
           if (verbose || !verdict.pass) {
