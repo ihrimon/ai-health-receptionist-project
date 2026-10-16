@@ -12,6 +12,8 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Minified build of apps/widget's loader (build:loader:dashboard).
+    "public/chatbot.js",
   ]),
 ]);
 

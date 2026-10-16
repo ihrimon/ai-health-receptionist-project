@@ -2,9 +2,10 @@ export default () => ({
   nodeEnv: process.env.NODE_ENV ?? 'development',
   apiPort: parseInt(process.env.API_PORT ?? '3001', 10),
   dashboardUrl: process.env.DASHBOARD_URL ?? 'http://localhost:3000',
-  // Script src in the embed snippet (FR-3.1). The early MVP serves the
-  // loader from the dashboard (apps/dashboard/public/chatbot.js); M4's
-  // own widget app can move it with WIDGET_LOADER_URL.
+  // Script src in the embed snippet (FR-3.1). The loader is built from
+  // apps/widget (M4-8); until M4-19 the dashboard serves a copy of it
+  // (public/chatbot.js) that opens its own /w/:publicId page.
+  // WIDGET_LOADER_URL points the snippet at the widget host or a CDN.
   widgetLoaderUrl:
     process.env.WIDGET_LOADER_URL ??
     `${process.env.DASHBOARD_URL ?? 'http://localhost:3000'}/chatbot.js`,

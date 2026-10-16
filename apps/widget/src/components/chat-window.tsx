@@ -33,6 +33,7 @@ export function ChatWindow({
   onSend,
   onClose,
   showBranding = true,
+  focusSignal = 0,
   children,
 }: {
   title: string;
@@ -46,6 +47,8 @@ export function ChatWindow({
   onSend: (text: string) => void;
   onClose?: () => void;
   showBranding?: boolean;
+  /** Changes when the host page opens the panel: the message box takes focus again (M4-10). */
+  focusSignal?: number;
   children?: ComponentChildren;
 }) {
   const endRef = useRef<HTMLDivElement>(null);
@@ -60,7 +63,7 @@ export function ChatWindow({
   // Opening the chat puts the visitor straight into the message box.
   useEffect(() => {
     inputRef.current?.focus({ preventScroll: true });
-  }, []);
+  }, [focusSignal]);
 
   // A clicked quick-reply chip goes away with the first message; focus
   // would fall to the page body, so it moves back to the message box.
