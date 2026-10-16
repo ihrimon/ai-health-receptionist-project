@@ -9,6 +9,7 @@ import {
   NoLlmCredentialsConfiguredError,
 } from '../llm/llm-key-manager';
 import { KnowledgeService } from '../knowledge/knowledge.service';
+import { UsageService } from '../usage/usage.service';
 import { ProductToolsService } from './product-tools.service';
 import { LlmKeysService } from '../llm-keys/llm-keys.service';
 import {
@@ -53,6 +54,7 @@ describe('PreviewChatService', () => {
   };
   const rateLimit = { consume: jest.fn() };
   const products = { hasProducts: jest.fn(), run: jest.fn() };
+  const usage = { record: jest.fn() };
   const conversations = { recordTurn: jest.fn(), recentTurns: jest.fn() };
   let service: PreviewChatService;
   let events: ChatStreamEvent[];
@@ -79,6 +81,7 @@ describe('PreviewChatService', () => {
     knowledge.matchCustomAnswer.mockResolvedValue(null);
     llm.streamWith.mockImplementation(() => llmStream(['30 ', 'days.']));
     products.hasProducts.mockResolvedValue(false);
+    usage.record.mockResolvedValue(undefined);
     conversations.recordTurn.mockResolvedValue('conv-1');
     conversations.recentTurns.mockResolvedValue([]);
     keys.activeCredentials.mockResolvedValue([ownKey]);
@@ -94,6 +97,7 @@ describe('PreviewChatService', () => {
         { provide: LlmKeysService, useValue: keys },
         { provide: ConversationsService, useValue: conversations },
         { provide: ProductToolsService, useValue: products },
+        { provide: UsageService, useValue: usage },
       ],
     }).compile();
     service = moduleRef.get(PreviewChatService);
@@ -206,6 +210,33 @@ describe('PreviewChatService', () => {
         tokensOut: 8,
         latencyMs: expect.any(Number) as number,
       },
+    });
+  });
+
+  describe('usage (M3-11, M3-13)', () => {
+    it('counts a stored answer with its tokens, as a Test chat answer', async () => {
+      await send();
+      expect(usage.record).toHaveBeenCalledWith({
+        preview: true,
+        tokensIn: 120,
+        tokensOut: 8,
+      });
+    });
+
+    it('counts nothing when the visitor got no real answer', async () => {
+      keys.activeCredentials.mockResolvedValue([]);
+      await send();
+      expect(usage.record).not.toHaveBeenCalled();
+    });
+
+    it('still answers when counting fails', async () => {
+      usage.record.mockRejectedValue(new Error('db down'));
+      await send();
+      expect(text()).toBe('30 days.');
+      expect(events.at(-1)).toMatchObject({
+        type: 'done',
+        conversationId: 'conv-1',
+      });
     });
   });
 
