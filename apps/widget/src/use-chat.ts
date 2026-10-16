@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import { ApiError, type Conversation, widgetApi } from "./api";
 import { loadStored, newVisitorId, saveStored } from "./storage";
 import { STRINGS } from "./strings";
-import type { ChatMessage } from "./types";
+import type { ChatMessage, Handoff } from "./types";
 
 let lastId = 0;
 const newId = () => `m${++lastId}`;
@@ -77,11 +77,13 @@ export function useChat(publicId: string) {
     setWaiting(true);
     const answerId = newId();
     let answer = "";
+    let handoff: Handoff | undefined;
+    let streaming = true;
     setMessages((current) => [...current, { id: newId(), role: "user", text: message }]);
 
     const showAnswer = () =>
       setMessages((current) => {
-        const shown = { id: answerId, role: "assistant" as const, text: answer };
+        const shown: ChatMessage = { id: answerId, role: "assistant", text: answer, streaming, handoff };
         return current.some((m) => m.id === answerId)
           ? current.map((m) => (m.id === answerId ? shown : m))
           : [...current, shown];
@@ -94,12 +96,17 @@ export function useChat(publicId: string) {
           answer += event.text;
           setWaiting(false);
           showAnswer();
+        } else if (event.type === "handoff") {
+          // Only after a fallback answer, when the company set a way to reach them.
+          handoff = { kind: event.kind, value: event.value, label: event.label };
         } else if (event.type === "error") {
           throw new ApiError(event.message, 200);
         }
-        // `handoff` waits for its button (M4-6); `done` needs nothing yet.
       });
       if (!answer) throw new ApiError("The chat gave no answer", 200);
+      // Complete: the end is no longer cut mid-mark, and the handoff shows.
+      streaming = false;
+      showAnswer();
     } catch (err) {
       if (isGone(err)) forget();
       // A broken answer is not stored, so none of it stays on screen.

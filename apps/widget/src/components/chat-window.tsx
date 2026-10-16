@@ -1,8 +1,10 @@
-import type { ComponentChildren } from "preact";
+import { type ComponentChildren, Fragment } from "preact";
 import { useEffect, useRef } from "preact/hooks";
+import { Markdown } from "../markdown";
 import { STRINGS } from "../strings";
 import type { Brand } from "../theme";
 import type { ChatMessage } from "../types";
+import { HandoffButton } from "./handoff-button";
 import { CloseIcon } from "./icons";
 import { MessageBubble } from "./message-bubble";
 import { MessageInput } from "./message-input";
@@ -10,8 +12,10 @@ import { TypingIndicator } from "./typing-indicator";
 
 /**
  * The whole chat window, with no state of its own: the page owns the
- * messages and the connection (M4-3). `children` goes under the messages
- * (quick replies, the handoff button or the rating prompt).
+ * messages and the connection (M4-3). The assistant's texts, the welcome
+ * too, are shown as sanitized Markdown (M4-5), and a fallback answer gets
+ * its handoff button under it (M4-6). `children` goes under the messages
+ * (the quick replies or the rating prompt).
  */
 export function ChatWindow({
   title,
@@ -63,12 +67,15 @@ export function ChatWindow({
 
       <div class="flex-1 space-y-3 overflow-y-auto p-4 text-sm" aria-live="polite">
         <MessageBubble role="assistant" brand={brand}>
-          {welcomeMessage}
+          <Markdown text={welcomeMessage} />
         </MessageBubble>
         {messages.map((m) => (
-          <MessageBubble key={m.id} role={m.role} brand={brand}>
-            {m.text}
-          </MessageBubble>
+          <Fragment key={m.id}>
+            <MessageBubble role={m.role} brand={brand}>
+              {m.role === "assistant" ? <Markdown text={m.text} streaming={m.streaming} /> : m.text}
+            </MessageBubble>
+            {m.handoff && <HandoffButton handoff={m.handoff} brand={brand} />}
+          </Fragment>
         ))}
         {typing && <TypingIndicator />}
         {children}

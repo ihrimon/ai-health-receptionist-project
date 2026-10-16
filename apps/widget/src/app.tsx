@@ -2,6 +2,7 @@ import type { PublicChatConfig } from "@brainstack/shared";
 import { useEffect, useState } from "preact/hooks";
 import { widgetApi } from "./api";
 import { ChatWindow } from "./components/chat-window";
+import { QuickReplies } from "./components/quick-replies";
 import { STRINGS } from "./strings";
 import { brandFor } from "./theme";
 import { useChat } from "./use-chat";
@@ -47,11 +48,14 @@ export function App({ publicId }: { publicId: string | null }) {
 
 /**
  * The chat with the published look: header title, welcome message, brand
- * color and the branding line. Quick replies are in `config` for their
- * chips (M4-6); the launcher's color and side belong to the loader.
+ * color and the branding line, and the quick-reply chips under the welcome
+ * until the visitor's first message (M4-6). The launcher's color and side
+ * belong to the loader.
  */
 function Chat({ publicId, config }: { publicId: string; config: PublicChatConfig }) {
   const chat = useChat(publicId);
+  const brand = brandFor(config.primaryColor);
+  const send = (text: string) => void chat.send(text);
   return (
     <ChatWindow
       title={config.headerTitle}
@@ -59,9 +63,13 @@ function Chat({ publicId, config }: { publicId: string; config: PublicChatConfig
       messages={chat.messages}
       typing={chat.waiting}
       busy={chat.busy}
-      brand={brandFor(config.primaryColor)}
+      brand={brand}
       showBranding={config.showBranding}
-      onSend={(text) => void chat.send(text)}
-    />
+      onSend={send}
+    >
+      {!chat.messages.length && !chat.busy && (
+        <QuickReplies replies={config.quickReplies} brand={brand} onPick={send} />
+      )}
+    </ChatWindow>
   );
 }

@@ -1,9 +1,18 @@
+import type { ChatStreamEvent } from "@brainstack/shared";
+
+/** The company's "contact us" way after a fallback answer (D-4 `behavior.handoff`). */
+export type Handoff = Omit<Extract<ChatStreamEvent, { type: "handoff" }>, "type">;
+
 /** One bubble in the chat window. */
 export interface ChatMessage {
   id: string;
   role: "user" | "assistant";
-  /** Plain text for now; the sanitized Markdown view (M4-5) reads the same field. */
+  /** The visitor's plain text, or the assistant's Markdown (shown sanitized, M4-5). */
   text: string;
+  /** The answer is still streaming in, so its end may be cut mid-mark. */
+  streaming?: boolean;
+  /** A fallback answer's handoff button (M4-6). */
+  handoff?: Handoff;
 }
 
 /**
