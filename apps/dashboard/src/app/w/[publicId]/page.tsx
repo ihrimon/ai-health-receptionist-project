@@ -12,7 +12,10 @@ import {
 } from "@/lib/preview-chat";
 import { cn } from "@/lib/utils";
 import {
+  loadStoredChat,
   newVisitorId,
+  saveStoredChat,
+  type StoredChat,
   textOn,
   WIDGET_MESSAGES,
   widgetApi,
@@ -78,14 +81,45 @@ function ChatWindow({
   const [messages, setMessages] = useState<PreviewMessage[]>([]);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
-  const [visitorId] = useState(newVisitorId);
-  const [conversationId, setConversationId] = useState<string | null>(null);
+  // The conversation lives on the server; this is only the way back to it.
+  const chatRef = useRef<StoredChat | null>(null);
   const endRef = useRef<HTMLDivElement>(null);
   const brand = { background: config.primaryColor, color: textOn(config.primaryColor) };
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ block: "nearest" });
   }, [messages, sending]);
+
+  // A reloaded page picks the conversation up again.
+  useEffect(() => {
+    const stored = loadStoredChat(publicId);
+    if (!stored) return;
+    chatRef.current = stored;
+    widgetApi.history(stored).then(
+      (rows) =>
+        setMessages(rows.map((r) => ({ role: r.role, text: r.text }))),
+      () => {
+        // An expired or unknown conversation: start a new one on send.
+        chatRef.current = null;
+        saveStoredChat(publicId, null);
+      },
+    );
+  }, [publicId]);
+
+  /** The open conversation, or a new one. */
+  async function conversation(): Promise<StoredChat> {
+    if (chatRef.current) return chatRef.current;
+    const visitorId = loadStoredChat(publicId)?.visitorId ?? newVisitorId();
+    const started = await widgetApi.startConversation(
+      publicId,
+      visitorId,
+      document.referrer || undefined,
+    );
+    const chat = { visitorId, ...started };
+    chatRef.current = chat;
+    saveStoredChat(publicId, chat);
+    return chat;
+  }
 
   async function send(text: string) {
     const message = text.trim();
@@ -105,11 +139,8 @@ function ChatWindow({
     };
     try {
       let text = "";
-      await widgetApi.send(
-        publicId,
-        message,
-        { visitorId, conversationId },
-        (event) => {
+      const chat = await conversation();
+      await widgetApi.send(chat, message, (event) => {
           if (event.type === "delta") {
             text += event.text;
             showAnswer(text);
@@ -117,15 +148,17 @@ function ChatWindow({
           } else if (event.type === "handoff") {
             handoff = event;
             showAnswer(text);
-          } else if (event.type === "done") {
-            setConversationId(event.conversationId);
           } else if (event.type === "error") {
             throw new Error(event.message);
           }
-        },
-      );
+      });
     } catch (err) {
       const status = (err as { status?: number }).status;
+      if (status === 401 || status === 404) {
+        // The conversation is gone or expired: the next message starts anew.
+        chatRef.current = null;
+        saveStoredChat(publicId, null);
+      }
       // A broken answer is not stored, so none of it stays on screen.
       setMessages((current) => [
         ...(started ? current.slice(0, -1) : current),
