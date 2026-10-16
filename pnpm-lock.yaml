@@ -254,6 +254,9 @@ importers:
         specifier: ^11.0.1
         version: 11.0.1
     devDependencies:
+      '@brainstack/shared':
+        specifier: workspace:*
+        version: link:../../packages/shared
       '@eslint/js':
         specifier: ^9.39.5
         version: 9.39.5

@@ -18,6 +18,3 @@ export function textOn(hex: string): "#000000" | "#ffffff" {
 export function brandFor(primaryColor: string): Brand {
   return { background: primaryColor, color: textOn(primaryColor) };
 }
-
-/** Used until the published config arrives (M4-4). */
-export const DEFAULT_PRIMARY_COLOR = "#2563eb";

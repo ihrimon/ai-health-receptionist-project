@@ -7,7 +7,7 @@ export interface ChatMessage {
 }
 
 /**
- * Same limit as the API's chat message (`PREVIEW_CHAT_LIMITS.messageChars`
- * in @brainstack/shared), copied so zod stays out of the widget bundle.
+ * Same limit as the public chat API (`PUBLIC_CHAT_SIZES.messageChars` in
+ * @brainstack/shared), copied so zod stays out of the widget bundle.
  */
-export const MESSAGE_MAX_CHARS = 2000;
+export const MESSAGE_MAX_CHARS = 1000;
