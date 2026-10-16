@@ -9,6 +9,7 @@ import {
   NoLlmCredentialsConfiguredError,
 } from '../llm/llm-key-manager';
 import { KnowledgeService } from '../knowledge/knowledge.service';
+import { ProductToolsService } from './product-tools.service';
 import { LlmKeysService } from '../llm-keys/llm-keys.service';
 import {
   KEYS_EXHAUSTED_REPLY,
@@ -51,6 +52,7 @@ describe('PreviewChatService', () => {
     model: 'gpt',
   };
   const rateLimit = { consume: jest.fn() };
+  const products = { hasProducts: jest.fn(), run: jest.fn() };
   const conversations = { recordTurn: jest.fn(), recentTurns: jest.fn() };
   let service: PreviewChatService;
   let events: ChatStreamEvent[];
@@ -76,6 +78,7 @@ describe('PreviewChatService', () => {
     knowledge.embedQuery.mockResolvedValue([0.1, 0.2]);
     knowledge.matchCustomAnswer.mockResolvedValue(null);
     llm.streamWith.mockImplementation(() => llmStream(['30 ', 'days.']));
+    products.hasProducts.mockResolvedValue(false);
     conversations.recordTurn.mockResolvedValue('conv-1');
     conversations.recentTurns.mockResolvedValue([]);
     keys.activeCredentials.mockResolvedValue([ownKey]);
@@ -90,6 +93,7 @@ describe('PreviewChatService', () => {
         { provide: RateLimitService, useValue: rateLimit },
         { provide: LlmKeysService, useValue: keys },
         { provide: ConversationsService, useValue: conversations },
+        { provide: ProductToolsService, useValue: products },
       ],
     }).compile();
     service = moduleRef.get(PreviewChatService);
@@ -213,6 +217,122 @@ describe('PreviewChatService', () => {
       type: 'done',
       conversationId: null,
       answeredBy: 'llm',
+    });
+  });
+
+  describe('product tools (M3-8)', () => {
+    const toolCall = {
+      type: 'done',
+      message: {
+        role: 'assistant',
+        content: null,
+        tool_calls: [
+          {
+            id: 'call_1',
+            type: 'function',
+            function: {
+              name: 'search_products',
+              arguments: '{"query":"trail shoe"}',
+            },
+          },
+        ],
+      },
+      credentialId: 'key-1',
+      model: 'gpt',
+      usage: { inputTokens: 50, outputTokens: 5 },
+    };
+    /** First call asks for the tool, the second answers from its result. */
+    const toolThenAnswer = (answer: string) => {
+      let calls = 0;
+      llm.streamWith.mockImplementation(() => {
+        calls += 1;
+        return calls === 1 ? oneEvent(toolCall) : llmStream([answer]);
+      });
+    };
+    async function* oneEvent(event: unknown): AsyncGenerator<unknown> {
+      await Promise.resolve();
+      yield event;
+    }
+
+    beforeEach(() => {
+      products.hasProducts.mockResolvedValue(true);
+      products.run.mockResolvedValue({
+        content:
+          '{"count":1,"products":[{"name":"Trail shoe","price":"49.90 USD"}]}',
+        products: [{ id: 'p1', name: 'Trail shoe' }],
+      });
+    });
+
+    it('offers the tools, runs the call on the server and answers from the result', async () => {
+      knowledge.search.mockResolvedValue([]);
+      toolThenAnswer('The Trail shoe costs 49.90 USD.');
+
+      await service.send(
+        'user-1',
+        { message: 'How much is the trail shoe?', history: [] },
+        emit,
+      );
+
+      expect(products.run).toHaveBeenCalledWith(
+        'bot-1',
+        'search_products',
+        '{"query":"trail shoe"}',
+      );
+      const [first, second] = llm.streamWith.mock.calls as unknown[][];
+      expect((first[2] as unknown[]).length).toBe(2);
+      // The tool's JSON went back to the model as a tool message.
+      expect(JSON.stringify(second[1])).toContain('49.90 USD');
+      expect(JSON.stringify(second[1])).toContain('call_1');
+      expect(text()).toBe('The Trail shoe costs 49.90 USD.');
+      expect(events.at(-1)).toMatchObject({ type: 'done', answeredBy: 'llm' });
+      // Tokens of both rounds are added up.
+      expect(conversations.recordTurn).toHaveBeenCalledWith(
+        expect.objectContaining({
+          answer: expect.objectContaining({
+            tokensIn: 170,
+            sources: [
+              { title: 'Product: Trail shoe', page: null, similarity: 1 },
+            ],
+          }) as object,
+        }),
+      );
+    });
+
+    it('sends the fallback instead of text that no knowledge or product backs', async () => {
+      knowledge.search.mockResolvedValue([]);
+      llm.streamWith.mockImplementation(() =>
+        llmStream(['It costs about 20 dollars.']),
+      );
+
+      await service.send(
+        'user-1',
+        { message: 'How much is the moon rock?', history: [] },
+        emit,
+      );
+
+      expect(text()).toBe(config.behavior.fallbackMessage);
+      expect(text()).not.toContain('20 dollars');
+      expect(events.at(-1)).toMatchObject({ answeredBy: 'fallback' });
+    });
+
+    it('does not offer tools to a chatbot without products', async () => {
+      products.hasProducts.mockResolvedValue(false);
+      await send();
+      const [[, , tools]] = llm.streamWith.mock.calls as unknown[][];
+      expect(tools).toBeUndefined();
+    });
+
+    it('takes the tools away after three rounds so the model has to answer', async () => {
+      llm.streamWith.mockImplementation(
+        (_credentials: unknown, _messages: unknown, tools: unknown) =>
+          tools ? oneEvent(toolCall) : llmStream(['Here is what I found.']),
+      );
+
+      await send();
+
+      expect(llm.streamWith).toHaveBeenCalledTimes(4);
+      expect(products.run).toHaveBeenCalledTimes(3);
+      expect(text()).toBe('Here is what I found.');
     });
   });
 

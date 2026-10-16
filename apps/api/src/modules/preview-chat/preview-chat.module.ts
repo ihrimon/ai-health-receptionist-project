@@ -5,6 +5,7 @@ import { KnowledgeModule } from '../knowledge/knowledge.module';
 import { LlmKeysModule } from '../llm-keys/llm-keys.module';
 import { LlmModule } from '../llm/llm.module';
 import { PreviewChatController } from './preview-chat.controller';
+import { ProductToolsService } from './product-tools.service';
 import { PreviewChatService } from './preview-chat.service';
 
 /** Dashboard "Test chat" over the workspace's knowledge (M3-13, M3-14). */
@@ -17,7 +18,7 @@ import { PreviewChatService } from './preview-chat.service';
     LlmKeysModule,
   ],
   controllers: [PreviewChatController],
-  providers: [PreviewChatService],
+  providers: [PreviewChatService, ProductToolsService],
   exports: [PreviewChatService],
 })
 export class PreviewChatModule {}

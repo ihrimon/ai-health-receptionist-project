@@ -30,6 +30,27 @@ export interface KnowledgeMatch {
   keywordHit: boolean;
 }
 
+/** A product as the chat tools see it (M3-8). Money is text, never a float. */
+export interface ProductHit {
+  id: string;
+  name: string;
+  description: string | null;
+  price: string | null;
+  compareAtPrice: string | null;
+  currency: string;
+  stockStatus: 'IN_STOCK' | 'OUT_OF_STOCK' | 'PREORDER' | 'UNKNOWN';
+  category: string | null;
+  url: string | null;
+  attributes: unknown;
+}
+
+export interface ProductFilter {
+  query: string;
+  category?: string;
+  maxPrice?: number;
+  inStockOnly?: boolean;
+}
+
 /** A custom answer whose trigger question is close to the visitor's. */
 export interface CustomAnswerMatch {
   id: string;
@@ -154,6 +175,97 @@ export class KnowledgeService {
           ${toVectorLiteral(chunk.embedding)}::vector, ${model}
         )`;
     }
+  }
+
+  /**
+   * The active products of one chatbot that best match `filter` (M3-8):
+   * the same meaning + keyword search as the knowledge chunks, merged by
+   * rank, after the structured filters. Raw SQL, so the workspace is added
+   * by hand.
+   */
+  async searchProducts(
+    chatbotId: string,
+    filter: ProductFilter,
+    limit: number,
+  ): Promise<ProductHit[]> {
+    const { workspaceId } = requireTenant();
+    const vector = toVectorLiteral(await this.embedding.embed(filter.query));
+    const keywords = keywordQuery(filter.query);
+    const category = filter.category ?? null;
+    const maxPrice = filter.maxPrice ?? null;
+    const inStockOnly = filter.inStockOnly ?? false;
+    const candidates = Math.max(limit * 4, MIN_CANDIDATES);
+
+    const rows = await this.db.$queryRaw<
+      (Omit<ProductHit, 'price' | 'compareAtPrice'> & {
+        price: string | null;
+        compareAtPrice: string | null;
+      })[]
+    >`
+      WITH eligible AS (
+        SELECT * FROM products
+        WHERE workspace_id = ${workspaceId}::uuid AND chatbot_id = ${chatbotId}::uuid
+          AND is_active
+          AND (${category}::text IS NULL OR lower(category) = lower(${category}::text))
+          AND (${maxPrice}::numeric IS NULL OR price <= ${maxPrice}::numeric)
+          AND (NOT ${inStockOnly}::boolean OR stock_status <> 'OUT_OF_STOCK')
+      ),
+      meaning AS (
+        SELECT id, ROW_NUMBER() OVER (ORDER BY embedding <=> ${vector}::vector) AS rank
+        FROM eligible
+        WHERE embedding IS NOT NULL AND embedding_model = ${this.embedding.modelName}
+        ORDER BY embedding <=> ${vector}::vector
+        LIMIT ${candidates}
+      ),
+      keyword AS (
+        SELECT e.id, ROW_NUMBER() OVER (
+          ORDER BY ts_rank_cd(
+            to_tsvector('english', e.name || ' ' || coalesce(e.category, '') || ' ' || coalesce(e.description, '')),
+            q.query) DESC
+        ) AS rank
+        FROM eligible e,
+             to_tsquery('english', ${keywords ?? ''}::text) AS q(query)
+        WHERE to_tsvector('english', e.name || ' ' || coalesce(e.category, '') || ' ' || coalesce(e.description, '')) @@ q.query
+        LIMIT ${candidates}
+      ),
+      fused AS (
+        SELECT id, SUM(1.0 / (${RRF_K}::int + rank)) AS score
+        FROM (SELECT id, rank FROM meaning UNION ALL SELECT id, rank FROM keyword) ranked
+        GROUP BY id
+      )
+      SELECT p.id::text AS id, p.name, p.description, p.price::text AS price,
+             p.compare_at_price::text AS "compareAtPrice", p.currency,
+             p.stock_status::text AS "stockStatus", p.category, p.url, p.attributes
+      FROM fused f
+      JOIN products p ON p.id = f.id
+      WHERE p.workspace_id = ${workspaceId}::uuid AND p.chatbot_id = ${chatbotId}::uuid
+      ORDER BY f.score DESC, p.id
+      LIMIT ${limit}`;
+    return rows;
+  }
+
+  /** One active product of this chatbot, or null. */
+  async getProduct(
+    chatbotId: string,
+    productId: string,
+  ): Promise<ProductHit | null> {
+    const row = await this.db.product.findFirst({
+      where: { id: productId, chatbotId, isActive: true },
+    });
+    if (!row) return null;
+    return {
+      id: row.id,
+      name: row.name,
+      description: row.description,
+      price: row.price === null ? null : row.price.toFixed(2),
+      compareAtPrice:
+        row.compareAtPrice === null ? null : row.compareAtPrice.toFixed(2),
+      currency: row.currency,
+      stockStatus: row.stockStatus,
+      category: row.category,
+      url: row.url,
+      attributes: row.attributes,
+    };
   }
 
   /** The question as a vector, to share between searches. */

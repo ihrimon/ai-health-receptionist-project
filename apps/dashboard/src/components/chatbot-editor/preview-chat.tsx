@@ -69,6 +69,7 @@ export function PreviewChat({
       await sendPreviewMessage(message, conversationId, (event) => {
         if (event.type === "sources") {
           sources = event.sources;
+          if (started) showAnswer(text);
         } else if (event.type === "delta") {
           text += event.text;
           showAnswer(text);

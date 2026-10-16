@@ -45,7 +45,7 @@ function chatEvents(res: { text: string; headers: Record<string, unknown> }) {
     reply: events
       .map((e) => (e.type === 'delta' ? (e.text ?? '') : ''))
       .join(''),
-    sources: events.find((e) => e.type === 'sources')?.sources ?? [],
+    sources: events.filter((e) => e.type === 'sources').at(-1)?.sources ?? [],
     done: events.find((e) => e.type === 'done'),
     conversationId:
       events.find((e) => e.type === 'done')?.conversationId ?? null,
@@ -71,21 +71,46 @@ describe('Tenant isolation (M1-25)', () => {
   const fakeLlm = {
     streamWith: jest.fn(async function* (
       credentials: { id: string }[],
-      messages: unknown[],
+      messages: { role: string; content?: string | null }[],
+      tools?: unknown[],
     ) {
       await Promise.resolve();
-      yield { type: 'text', text: 'stub ' };
-      yield { type: 'text', text: 'answer' };
-      yield {
+      const done = (message: object) => ({
         type: 'done',
-        message: {
-          role: 'assistant',
-          content: messages.length ? 'stub answer' : '',
-        },
+        message,
         credentialId: credentials[0].id,
         model: 'stub-model',
         usage: { inputTokens: 100, outputTokens: 7 },
-      };
+      });
+      const toolResult = messages.find((m) => m.role === 'tool');
+      const asked =
+        [...messages].reverse().find((m) => m.role === 'user')?.content ?? '';
+      // A question naming ZORBIX makes the model look the product up.
+      if (tools?.length && !toolResult && asked.includes('ZORBIX')) {
+        yield done({
+          role: 'assistant',
+          content: null,
+          tool_calls: [
+            {
+              id: 'call_1',
+              type: 'function',
+              function: {
+                name: 'search_products',
+                arguments: JSON.stringify({ query: 'Zorbix' }),
+              },
+            },
+          ],
+        });
+        return;
+      }
+      const content = toolResult
+        ? `From the catalog: ${toolResult.content}`
+        : messages.length
+          ? 'stub answer'
+          : '';
+      yield { type: 'text', text: content.slice(0, 5) };
+      yield { type: 'text', text: content.slice(5) };
+      yield done({ role: 'assistant', content });
     }),
     verify: jest.fn(() => Promise.resolve()),
   };
@@ -1135,6 +1160,79 @@ describe('Tenant isolation (M1-25)', () => {
       });
 
       await as(cookies.ownerA).delete(`/v1/custom-answers/${id}`).expect(204);
+    });
+
+    it("answers a product question from the caller's own products, with exact prices, and never another workspace's (M3-8)", async () => {
+      const make = async (cookie: string, price: string) =>
+        (
+          (
+            await as(cookie)
+              .post('/v1/products')
+              .send({ name: 'Zorbix lamp', price, sku: `ZB-${price}` })
+              .expect(201)
+          ).body as { id: string }
+        ).id;
+      const idA = await make(cookies.ownerA, '19.50');
+      const idB = await make(cookies.ownerB, '88.00');
+      try {
+        const res = await as(cookies.ownerA)
+          .post('/v1/chatbot/preview/messages')
+          .send({ message: 'How much is the ZORBIX lamp?' })
+          .expect(200);
+        const out = chatEvents(res);
+        expect(out.reply).toContain('19.50 USD');
+        expect(out.reply).not.toContain('88.00');
+        expect(out.done).toMatchObject({ answeredBy: 'llm' });
+        expect(out.sources.map((x) => x.title)).toContain(
+          'Product: Zorbix lamp',
+        );
+
+        const other = await as(cookies.ownerB)
+          .post('/v1/chatbot/preview/messages')
+          .send({ message: 'How much is the ZORBIX lamp?' })
+          .expect(200);
+        const otherOut = chatEvents(other);
+        expect(otherOut.reply).toContain('88.00 USD');
+        expect(otherOut.reply).not.toContain('19.50');
+
+        const stored = await prisma.message.findFirstOrThrow({
+          where: {
+            conversationId: out.conversationId as string,
+            role: 'ASSISTANT',
+          },
+        });
+        expect(stored).toMatchObject({ workspaceId: ids.a, tokensIn: 200 });
+      } finally {
+        await as(cookies.ownerA).delete(`/v1/products/${idA}`).expect(204);
+        await as(cookies.ownerB).delete(`/v1/products/${idB}`).expect(204);
+      }
+    });
+
+    it("is a 404, not another workspace's product, when a product id from elsewhere is looked up (M3-8)", async () => {
+      const created = await as(cookies.ownerB)
+        .post('/v1/products')
+        .send({ name: 'Hidden item', price: '5.00', sku: 'HID-1' })
+        .expect(201);
+      const productId = (created.body as { id: string }).id;
+      try {
+        const knowledge = app.get(KnowledgeService);
+        await expect(
+          inWorkspace(ids.a, () => knowledge.getProduct(ids.botA, productId)),
+        ).resolves.toBeNull();
+        await expect(
+          inWorkspace(ids.a, () =>
+            knowledge.searchProducts(ids.botA, { query: 'Hidden item' }, 5),
+          ),
+        ).resolves.toEqual([]);
+        const own = await inWorkspace(ids.b, () =>
+          knowledge.getProduct(ids.botB, productId),
+        );
+        expect(own?.price).toBe('5.00');
+      } finally {
+        await as(cookies.ownerB)
+          .delete(`/v1/products/${productId}`)
+          .expect(204);
+      }
     });
 
     it('answers with the configured fallback, without the model, when nothing relevant is found (M3-10)', async () => {
