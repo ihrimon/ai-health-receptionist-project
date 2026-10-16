@@ -77,8 +77,10 @@ async function* stubStream(
     model: credential.model,
   });
   const lookedUp = messages.some((m) => m.role === 'tool');
-  const asked =
-    [...messages].reverse().find((m) => m.role === 'user')?.content ?? '';
+  // The visitor's text arrives wrapped in <visitor_message> tags.
+  const asked = (
+    [...messages].reverse().find((m) => m.role === 'user')?.content ?? ''
+  ).replace(/<\/?visitor_message>/g, '');
   if (tools?.length && !lookedUp) {
     yield done({
       role: 'assistant',

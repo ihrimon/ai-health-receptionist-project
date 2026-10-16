@@ -83,8 +83,9 @@ describe('Tenant isolation (M1-25)', () => {
         usage: { inputTokens: 100, outputTokens: 7 },
       });
       const toolResult = messages.find((m) => m.role === 'tool');
-      const asked =
-        [...messages].reverse().find((m) => m.role === 'user')?.content ?? '';
+      const asked = (
+        [...messages].reverse().find((m) => m.role === 'user')?.content ?? ''
+      ).replace(/<\/?visitor_message>/g, '');
       // A question naming ZORBIX makes the model look the product up.
       if (tools?.length && !toolResult && asked.includes('ZORBIX')) {
         yield done({
