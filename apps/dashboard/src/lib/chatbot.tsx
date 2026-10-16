@@ -33,6 +33,8 @@ interface ChatbotValue {
   /** Resets the draft to the live config. */
   discardDraft: () => Promise<void>;
   setStatus: (status: ChatbotView["status"]) => Promise<void>;
+  /** Replaces the embed allow-list; applies at once, no publish needed. */
+  setAllowedDomains: (domains: string[]) => Promise<void>;
   /** Reloads, e.g. after knowledge changed what publishing needs. */
   refresh: () => Promise<void>;
 }
@@ -91,6 +93,8 @@ export function ChatbotProvider({ children }: { children: ReactNode }) {
     publish: () => write("/chatbot/publish", "POST"),
     discardDraft: () => write("/chatbot/discard-draft", "POST"),
     setStatus: (status) => write("/chatbot/status", "PATCH", { status }),
+    setAllowedDomains: (domains) =>
+      write("/chatbot/allowed-domains", "PUT", { domains }),
     refresh: async () => setChatbot(await load()),
   };
 
