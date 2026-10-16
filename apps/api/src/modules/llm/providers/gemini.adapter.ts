@@ -5,6 +5,7 @@ import {
   type Content,
   type FunctionDeclaration,
   type FunctionDeclarationSchema,
+  type GenerationConfig,
   type Part,
   type Tool,
 } from '@google/generative-ai';
@@ -61,6 +62,75 @@ export function toGeminiTools(tools: ChatCompletionTool[]): Tool[] {
 }
 
 /**
+ * Flash models "think" before answering by default, which adds seconds
+ * before the first word. A website chat answers short questions from the
+ * text it is given, so thinking is turned down where the model allows it:
+ * 2.5 Flash takes a zero budget, Gemini 3+ Flash a "minimal" level. Other
+ * models (Pro can't switch thinking off) keep Google's default. The SDK's
+ * types predate these fields; it sends generationConfig as given.
+ */
+export function thinkingConfigFor(
+  model: string,
+): Record<string, unknown> | undefined {
+  if (/^gemini-2\.5-flash/.test(model)) return { thinkingBudget: 0 };
+  if (/^gemini-([3-9]|\d{2,})(\.\d+)?-flash/.test(model)) {
+    return { thinkingLevel: 'minimal' };
+  }
+  return undefined;
+}
+
+/**
+ * Models that answered 400 to a thinking setting: asked again without it,
+ * and from then on never sent it (per process).
+ */
+const noThinkingConfig = new Set<string>();
+
+function geminiModel(
+  apiKey: string,
+  model: string,
+  messages: AdapterCompleteParams['messages'],
+  tools: AdapterCompleteParams['tools'],
+  thinkingConfig: Record<string, unknown> | undefined,
+) {
+  const { systemInstruction } = toGeminiContents(messages);
+  return new GoogleGenerativeAI(apiKey).getGenerativeModel({
+    model,
+    ...(tools?.length ? { tools: toGeminiTools(tools) } : {}),
+    ...(thinkingConfig
+      ? { generationConfig: { thinkingConfig } as GenerationConfig }
+      : {}),
+    systemInstruction,
+  });
+}
+
+/**
+ * Runs the request with the model's thinking setting; if Gemini rejects
+ * that setting (400), runs it once more without, so a model that doesn't
+ * know it still answers instead of failing over to another key.
+ */
+export async function withThinkingFallback<T>(
+  model: string,
+  request: (thinking: Record<string, unknown> | undefined) => Promise<T>,
+): Promise<T> {
+  const thinking = noThinkingConfig.has(model)
+    ? undefined
+    : thinkingConfigFor(model);
+  if (!thinking) return request(undefined);
+  try {
+    return await request(thinking);
+  } catch (err) {
+    if (!(err instanceof GoogleGenerativeAIFetchError) || err.status !== 400) {
+      throw err;
+    }
+    // Remembered only when the plain request works: a 400 for a bad key
+    // fails both ways and says nothing about the model.
+    const result = await request(undefined);
+    noThinkingConfig.add(model);
+    return result;
+  }
+}
+
+/**
  * Gemini's API has its own shape — `contents` with role "user"/"model"
  * instead of "user"/"assistant", a separate `systemInstruction` instead
  * of a system-role message, function calls as `functionCall` parts
@@ -76,22 +146,17 @@ export class GeminiAdapter implements LlmProviderAdapter {
     messages,
     tools,
   }: AdapterCompleteParams): Promise<AdapterCompleteResult> {
-    const client = new GoogleGenerativeAI(apiKey);
-    const { systemInstruction, contents } = toGeminiContents(messages);
-    const generativeModel = client.getGenerativeModel({
-      model,
-      ...(tools?.length ? { tools: toGeminiTools(tools) } : {}),
-      systemInstruction,
-    });
-
+    const { contents } = toGeminiContents(messages);
     // Unlike the other three adapters, this SDK has no generous built-in
     // default to override — an unset timeout here means no timeout at
     // all, so this is the only thing standing between a hung request and
     // LlmChatClient's cross-credential rotation never getting a chance
     // to run within the same turn.
-    const result = await generativeModel.generateContent(
-      { contents },
-      { timeout: LLM_REQUEST_TIMEOUT_MS },
+    const result = await withThinkingFallback(model, (thinking) =>
+      geminiModel(apiKey, model, messages, tools, thinking).generateContent(
+        { contents },
+        { timeout: LLM_REQUEST_TIMEOUT_MS },
+      ),
     );
 
     const meta = result.response.usageMetadata;
@@ -112,17 +177,18 @@ export class GeminiAdapter implements LlmProviderAdapter {
     messages,
     tools,
   }: AdapterCompleteParams): AsyncGenerator<AdapterStreamEvent> {
-    const client = new GoogleGenerativeAI(apiKey);
-    const { systemInstruction, contents } = toGeminiContents(messages);
-    const generativeModel = client.getGenerativeModel({
-      model,
-      ...(tools?.length ? { tools: toGeminiTools(tools) } : {}),
-      systemInstruction,
-    });
-
-    const result = await generativeModel.generateContentStream(
-      { contents },
-      { timeout: LLM_REQUEST_TIMEOUT_MS },
+    const { contents } = toGeminiContents(messages);
+    const result = await withThinkingFallback(model, (thinking) =>
+      geminiModel(
+        apiKey,
+        model,
+        messages,
+        tools,
+        thinking,
+      ).generateContentStream(
+        { contents },
+        { timeout: LLM_REQUEST_TIMEOUT_MS },
+      ),
     );
     for await (const chunk of result.stream) {
       const text = chunk.text();
