@@ -1,0 +1,12 @@
+{
+  "moduleFileExtensions": ["js", "json", "ts"],
+  "rootDir": ".",
+  "testEnvironment": "<rootDir>/eval/eval-environment.js",
+  "testRegex": ".eval-spec.ts$",
+  "transform": {
+    "^.+\\.(t|j)s$": "ts-jest"
+  },
+  "globalSetup": "<rootDir>/integration/global-setup.ts",
+  "setupFiles": ["<rootDir>/integration/setup-env.ts"],
+  "testTimeout": 3600000
+}

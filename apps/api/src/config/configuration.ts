@@ -68,14 +68,14 @@ export default () => ({
   knowledge: {
     embeddingModel:
       process.env.KNOWLEDGE_EMBEDDING_MODEL ?? 'Xenova/all-MiniLM-L6-v2',
-    topK: parseInt(process.env.KNOWLEDGE_TOP_K ?? '3', 10),
+    topK: parseInt(process.env.KNOWLEDGE_TOP_K ?? '5', 10),
     // A chunk counts as relevant to a question when it matches one of its
     // words or its cosine similarity is at least this (M3-10).
     minSimilarity: parseFloat(process.env.KNOWLEDGE_MIN_SIMILARITY ?? '0.3'),
     // A question this close to a custom answer's trigger question gets
     // that answer as it is (M3-6).
     customAnswerThreshold: parseFloat(
-      process.env.KNOWLEDGE_CUSTOM_ANSWER_THRESHOLD ?? '0.8',
+      process.env.KNOWLEDGE_CUSTOM_ANSWER_THRESHOLD ?? '0.7',
     ),
   },
 

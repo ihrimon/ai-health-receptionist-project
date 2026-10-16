@@ -9,6 +9,7 @@ describe('isSmallTalk', () => {
     'Thank you so much',
     'ok',
     'What can you do?',
+    'What can you help me with?',
     'bye',
   ])('treats "%s" as small talk', (message) => {
     expect(isSmallTalk(message)).toBe(true);
