@@ -30,6 +30,14 @@ export interface KnowledgeMatch {
   keywordHit: boolean;
 }
 
+/** A custom answer whose trigger question is close to the visitor's. */
+export interface CustomAnswerMatch {
+  id: string;
+  triggerQuestion: string;
+  answer: string;
+  similarity: number;
+}
+
 /**
  * A chunk is worth giving to the model when it shares a word with the
  * question or is close enough in meaning (M3-10). Exported for tests.
@@ -53,6 +61,7 @@ export function isRelevant(
 export class KnowledgeService {
   private readonly topK: number;
   private readonly minSimilarity: number;
+  private readonly customAnswerThreshold: number;
 
   constructor(
     private readonly embedding: EmbeddingService,
@@ -61,6 +70,8 @@ export class KnowledgeService {
   ) {
     this.topK = config.get<number>('knowledge.topK') ?? 3;
     this.minSimilarity = config.get<number>('knowledge.minSimilarity') ?? 0.3;
+    this.customAnswerThreshold =
+      config.get<number>('knowledge.customAnswerThreshold') ?? 0.8;
   }
 
   /**
@@ -145,6 +156,42 @@ export class KnowledgeService {
     }
   }
 
+  /** The question as a vector, to share between searches. */
+  embedQuery(query: string): Promise<number[]> {
+    return this.embedding.embed(query);
+  }
+
+  /**
+   * The active custom answer whose trigger question is closest to
+   * `query`, if it is close enough to answer as written (M3-6). Only
+   * answers embedded with the current model are compared, so a model
+   * change can't make old vectors match by accident. Raw SQL, so the
+   * workspace is added by hand.
+   */
+  async matchCustomAnswer(
+    chatbotId: string,
+    query: string,
+    vector?: number[],
+  ): Promise<CustomAnswerMatch | null> {
+    const { workspaceId } = requireTenant();
+    const literal = toVectorLiteral(
+      vector ?? (await this.embedding.embed(query)),
+    );
+    const rows = await this.db.$queryRaw<CustomAnswerMatch[]>`
+      SELECT id::text AS id, trigger_question AS "triggerQuestion", answer,
+             1 - (embedding <=> ${literal}::vector) AS similarity
+      FROM custom_answers
+      WHERE workspace_id = ${workspaceId}::uuid AND chatbot_id = ${chatbotId}::uuid
+        AND is_active AND embedding IS NOT NULL
+        AND embedding_model = ${this.embedding.modelName}
+      ORDER BY embedding <=> ${literal}::vector
+      LIMIT 1`;
+    const best = rows[0];
+    return best && Number(best.similarity) >= this.customAnswerThreshold
+      ? { ...best, similarity: Number(best.similarity) }
+      : null;
+  }
+
   /**
    * The chunks of one chatbot that best answer `query` (M3-7): a meaning
    * search (pgvector) and a keyword search (Postgres full-text) run
@@ -161,9 +208,12 @@ export class KnowledgeService {
     query: string,
     topK = this.topK,
     onlyRelevant = true,
+    queryVector?: number[],
   ): Promise<KnowledgeMatch[]> {
     const { workspaceId } = requireTenant();
-    const vector = toVectorLiteral(await this.embedding.embed(query));
+    const vector = toVectorLiteral(
+      queryVector ?? (await this.embedding.embed(query)),
+    );
     const keywords = keywordQuery(query);
     const candidates = Math.max(topK * 4, MIN_CANDIDATES);
 

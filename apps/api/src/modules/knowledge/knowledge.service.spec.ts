@@ -170,4 +170,51 @@ describe('KnowledgeService', () => {
       );
     });
   });
+
+  describe('matchCustomAnswer (M3-6)', () => {
+    const row = {
+      id: 'ca-1',
+      triggerQuestion: 'Do you open on Eid?',
+      answer: 'We are closed on Eid.',
+    };
+
+    it('returns the closest active answer when it is close enough', async () => {
+      db.$queryRaw.mockResolvedValue([{ ...row, similarity: 0.93 }]);
+
+      await expect(
+        inTenant(() => service.matchCustomAnswer('bot-1', 'open on eid?')),
+      ).resolves.toEqual({ ...row, similarity: 0.93 });
+
+      const [call] = db.$queryRaw.mock.calls as unknown[][];
+      const sql = sqlOf(call);
+      expect(sql).toContain('workspace_id = ?::uuid AND chatbot_id = ?::uuid');
+      expect(sql).toContain('is_active');
+      expect(sql).toContain('embedding_model = ?');
+      expect(call.slice(1)).toContain('ws-1');
+      expect(call.slice(1)).toContain('bot-1');
+    });
+
+    it('is null when the closest answer is below the threshold', async () => {
+      db.$queryRaw.mockResolvedValue([{ ...row, similarity: 0.55 }]);
+      await expect(
+        inTenant(() => service.matchCustomAnswer('bot-1', 'something else')),
+      ).resolves.toBeNull();
+    });
+
+    it('is null when the chatbot has no custom answers', async () => {
+      db.$queryRaw.mockResolvedValue([]);
+      await expect(
+        inTenant(() => service.matchCustomAnswer('bot-1', 'anything')),
+      ).resolves.toBeNull();
+    });
+
+    it('uses a vector it is given instead of embedding again', async () => {
+      db.$queryRaw.mockResolvedValue([]);
+      await inTenant(() =>
+        service.matchCustomAnswer('bot-1', 'anything', [0.7, 0.8]),
+      );
+      const [call] = db.$queryRaw.mock.calls as unknown[][];
+      expect(call.slice(1)).toContain('[0.7,0.8]');
+    });
+  });
 });

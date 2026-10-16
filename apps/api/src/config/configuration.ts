@@ -72,6 +72,11 @@ export default () => ({
     // A chunk counts as relevant to a question when it matches one of its
     // words or its cosine similarity is at least this (M3-10).
     minSimilarity: parseFloat(process.env.KNOWLEDGE_MIN_SIMILARITY ?? '0.3'),
+    // A question this close to a custom answer's trigger question gets
+    // that answer as it is (M3-6).
+    customAnswerThreshold: parseFloat(
+      process.env.KNOWLEDGE_CUSTOM_ANSWER_THRESHOLD ?? '0.8',
+    ),
   },
 
   // Transactional email, sent via a plain Gmail account (SMTP through

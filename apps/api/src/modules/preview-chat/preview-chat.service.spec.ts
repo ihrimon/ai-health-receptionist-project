@@ -37,7 +37,11 @@ async function* llmStream(
 describe('PreviewChatService', () => {
   const config = defaultChatbotConfig('Rina Shop');
   const chatbot = { draft: jest.fn() };
-  const knowledge = { search: jest.fn() };
+  const knowledge = {
+    search: jest.fn(),
+    embedQuery: jest.fn(),
+    matchCustomAnswer: jest.fn(),
+  };
   const llm = { streamWith: jest.fn() };
   const keys = { activeCredentials: jest.fn(), markUsed: jest.fn() };
   const ownKey = {
@@ -69,6 +73,8 @@ describe('PreviewChatService', () => {
         keywordHit: true,
       },
     ]);
+    knowledge.embedQuery.mockResolvedValue([0.1, 0.2]);
+    knowledge.matchCustomAnswer.mockResolvedValue(null);
     llm.streamWith.mockImplementation(() => llmStream(['30 ', 'days.']));
     conversations.recordTurn.mockResolvedValue('conv-1');
     conversations.recentTurns.mockResolvedValue([]);
@@ -108,7 +114,15 @@ describe('PreviewChatService', () => {
       { type: 'delta', text: 'days.' },
       { type: 'done', conversationId: 'conv-1', answeredBy: 'llm' },
     ]);
-    expect(knowledge.search).toHaveBeenCalledWith('bot-1', 'Can I return it?');
+    // The question is embedded once and shared by both searches.
+    expect(knowledge.embedQuery).toHaveBeenCalledTimes(1);
+    expect(knowledge.search).toHaveBeenCalledWith(
+      'bot-1',
+      'Can I return it?',
+      undefined,
+      true,
+      [0.1, 0.2],
+    );
     const [[credentials, messages]] = llm.streamWith.mock.calls as unknown[][];
     expect(credentials).toEqual([ownKey]);
     expect(JSON.stringify(messages)).toContain('30 days.');
@@ -199,6 +213,73 @@ describe('PreviewChatService', () => {
       type: 'done',
       conversationId: null,
       answeredBy: 'llm',
+    });
+  });
+
+  describe('custom answers (M3-6)', () => {
+    const match = {
+      id: 'ca-1',
+      triggerQuestion: 'Do you open on Eid?',
+      answer: 'We are closed on Eid.',
+      similarity: 0.9123,
+    };
+
+    it('answers as written, without the model or the knowledge search', async () => {
+      knowledge.matchCustomAnswer.mockResolvedValue(match);
+      await send();
+
+      expect(events).toEqual([
+        {
+          type: 'sources',
+          sources: [
+            { title: 'Do you open on Eid?', page: null, similarity: 0.91 },
+          ],
+        },
+        { type: 'delta', text: 'We are closed on Eid.' },
+        { type: 'done', conversationId: 'conv-1', answeredBy: 'custom_answer' },
+      ]);
+      expect(llm.streamWith).not.toHaveBeenCalled();
+      expect(knowledge.search).not.toHaveBeenCalled();
+      expect(knowledge.matchCustomAnswer).toHaveBeenCalledWith(
+        'bot-1',
+        'Can I return it?',
+        [0.1, 0.2],
+      );
+      expect(conversations.recordTurn).toHaveBeenCalledWith(
+        expect.objectContaining({
+          answer: expect.objectContaining({
+            answeredBy: 'custom_answer',
+            content: 'We are closed on Eid.',
+            model: null,
+          }) as object,
+        }),
+      );
+    });
+
+    it('goes on to the knowledge and the model when no custom answer is close enough', async () => {
+      await send();
+      expect(knowledge.search).toHaveBeenCalled();
+      expect(llm.streamWith).toHaveBeenCalled();
+    });
+
+    it("keeps a custom answer's source out of what visitors get", async () => {
+      knowledge.matchCustomAnswer.mockResolvedValue(match);
+      await service.answer(
+        'bot-1',
+        config,
+        { message: 'Do you open on Eid?', history: [] },
+        emit,
+        {
+          isPreview: false,
+          visitorId: 'visitor_1234',
+          versionId: 'ver-1',
+          includeSources: false,
+          noCredentialsReply: NO_CREDENTIALS_REPLY,
+          keysExhaustedReply: KEYS_EXHAUSTED_REPLY,
+        },
+      );
+      expect(events.some((e) => e.type === 'sources')).toBe(false);
+      expect(text()).toBe('We are closed on Eid.');
     });
   });
 

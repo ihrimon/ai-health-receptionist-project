@@ -1083,6 +1083,60 @@ describe('Tenant isolation (M1-25)', () => {
       });
     });
 
+    it('answers a matching custom answer as written, without the model, and never across workspaces (M3-6)', async () => {
+      const created = await as(cookies.ownerA)
+        .post('/v1/custom-answers')
+        .send({
+          triggerQuestion: 'Do you deliver on public holidays?',
+          answer: 'Yes, until 6pm, with a small holiday fee.',
+        })
+        .expect(201);
+      const id = (created.body as { id: string }).id;
+      await waitUntil(
+        'the custom answer embedding',
+        async () =>
+          (
+            await prisma.customAnswer.findUniqueOrThrow({
+              where: { id },
+              select: { embeddingModel: true },
+            })
+          ).embeddingModel,
+      );
+      const calls = fakeLlm.streamWith.mock.calls.length;
+
+      const res = await as(cookies.ownerA)
+        .post('/v1/chatbot/preview/messages')
+        .send({ message: 'Do you deliver on public holidays?' })
+        .expect(200);
+      const out = chatEvents(res);
+      expect(out.reply).toBe('Yes, until 6pm, with a small holiday fee.');
+      expect(out.done).toMatchObject({ answeredBy: 'custom_answer' });
+      expect(fakeLlm.streamWith.mock.calls.length).toBe(calls);
+      const stored = await prisma.message.findFirstOrThrow({
+        where: {
+          conversationId: out.conversationId as string,
+          role: 'ASSISTANT',
+        },
+      });
+      expect(stored).toMatchObject({
+        workspaceId: ids.a,
+        answeredBy: 'custom_answer',
+        model: null,
+      });
+
+      // The same question in another workspace never finds it.
+      const other = await as(cookies.ownerB)
+        .post('/v1/chatbot/preview/messages')
+        .send({ message: 'Do you deliver on public holidays?' })
+        .expect(200);
+      expect(chatEvents(other).reply).not.toContain('holiday fee');
+      expect(chatEvents(other).done).not.toMatchObject({
+        answeredBy: 'custom_answer',
+      });
+
+      await as(cookies.ownerA).delete(`/v1/custom-answers/${id}`).expect(204);
+    });
+
     it('answers with the configured fallback, without the model, when nothing relevant is found (M3-10)', async () => {
       const calls = fakeLlm.streamWith.mock.calls.length;
       const res = await as(cookies.ownerA)
