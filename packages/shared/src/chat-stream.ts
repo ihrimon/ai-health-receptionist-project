@@ -25,7 +25,7 @@ export type ChatStreamEvent =
   | {
       type: 'done';
       conversationId: string | null;
-      answeredBy: 'llm' | 'fallback';
+      answeredBy: 'llm' | 'custom_answer' | 'fallback';
     }
   /** The stream broke after it started; the partial answer is not stored. */
   | { type: 'error'; message: string };

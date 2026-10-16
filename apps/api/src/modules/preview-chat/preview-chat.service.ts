@@ -116,6 +116,36 @@ export class PreviewChatService {
       return;
     }
     const startedAt = Date.now();
+    const vector = await this.knowledge.embedQuery(request.message);
+
+    // A custom answer that matches wins, as written, without the model (M3-6).
+    const custom = await this.knowledge.matchCustomAnswer(
+      botId,
+      request.message,
+      vector,
+    );
+    if (custom) {
+      const sources = [
+        {
+          title: custom.triggerQuestion,
+          page: null,
+          similarity: Math.round(custom.similarity * 100) / 100,
+        },
+      ];
+      if (context.includeSources) emit({ type: 'sources', sources });
+      if (!emit({ type: 'delta', text: custom.answer })) return;
+      const conversationId = await this.store(botId, request, context, {
+        content: custom.answer,
+        sources,
+        answeredBy: 'custom_answer',
+        model: null,
+        tokensIn: null,
+        tokensOut: null,
+        latencyMs: Date.now() - startedAt,
+      });
+      emit({ type: 'done', conversationId, answeredBy: 'custom_answer' });
+      return;
+    }
 
     const history = request.conversationId
       ? await this.conversations.recentTurns(
@@ -128,7 +158,13 @@ export class PreviewChatService {
           PREVIEW_CHAT_LIMITS.historyTurns,
         )
       : [];
-    const matches = await this.knowledge.search(botId, request.message);
+    const matches = await this.knowledge.search(
+      botId,
+      request.message,
+      undefined,
+      true,
+      vector,
+    );
     const sources = matches.map(toSource);
     if (context.includeSources) emit({ type: 'sources', sources });
 
