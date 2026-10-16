@@ -4,6 +4,8 @@
  */
 export const STRINGS = {
   closeChat: "Close chat",
+  /** The scrollable list of messages, for screen readers. */
+  conversation: "Conversation",
   inputLabel: "Your message",
   inputPlaceholder: "Type a message…",
   send: "Send",

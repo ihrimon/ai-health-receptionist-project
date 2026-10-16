@@ -226,6 +226,8 @@ describe("App: quick replies and handoff (M4-6)", () => {
     expect(bubbles()[1]).toEqual(["user", "Opening hours"]);
     expect(requests.find((r) => r.method === "POST" && r.path.endsWith("/messages"))?.body).toEqual({ message: "Opening hours" });
     expect(screen.queryByRole("group", { name: STRINGS.quickReplies })).toBeNull();
+    // The clicked chip is gone; the keyboard carries on in the message box (M4-7).
+    expect(document.activeElement).toBe(screen.getByLabelText(STRINGS.inputLabel));
   });
 
   it("shows no quick replies for a conversation picked up after a reload", async () => {
