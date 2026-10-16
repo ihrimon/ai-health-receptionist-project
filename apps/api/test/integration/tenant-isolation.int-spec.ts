@@ -494,11 +494,52 @@ describe('Tenant isolation (M1-25)', () => {
       const b = await botB();
       expect(b.status).toBe('ENABLED');
       expect(b.allowedDomains).toEqual([]);
+      // B reads its own (empty) list, never A's.
+      const readB = await as(cookies.ownerB).get('/v1/chatbot').expect(200);
+      expect((readB.body as ChatbotBody).allowedDomains).toEqual([]);
 
       await as(cookies.ownerA)
         .patch('/v1/chatbot/status')
         .send({ status: 'ENABLED' })
         .expect(200);
+    });
+
+    it("B replacing its allowed domains leaves A's list alone (M4-13)", async () => {
+      const res = await as(cookies.ownerB)
+        .put('/v1/chatbot/allowed-domains')
+        .send({
+          domains: ['https://b-shop.example.net/', 'b-shop.example.net'],
+        })
+        .expect(200);
+      // Scheme and trailing slash stripped, duplicates dropped.
+      expect((res.body as ChatbotBody).allowedDomains).toEqual([
+        'b-shop.example.net',
+      ]);
+
+      const a = await prisma.chatbot.findUniqueOrThrow({
+        where: { id: ids.botA },
+      });
+      expect(a.allowedDomains).toEqual(['shop.example.com', '*.example.com']);
+
+      await as(cookies.ownerB)
+        .put('/v1/chatbot/allowed-domains')
+        .send({ domains: [] })
+        .expect(200);
+    });
+
+    it('rejects a bad allowed domain with details and saves nothing (400)', async () => {
+      const res = await as(cookies.ownerA)
+        .put('/v1/chatbot/allowed-domains')
+        .send({ domains: ['ok.example.com', 'shop.example.com/checkout'] })
+        .expect(400);
+      expect(res.body).toMatchObject({
+        code: 'VALIDATION_FAILED',
+        details: [{ domain: 'shop.example.com/checkout' }],
+      });
+      const a = await prisma.chatbot.findUniqueOrThrow({
+        where: { id: ids.botA },
+      });
+      expect(a.allowedDomains).toEqual(['shop.example.com', '*.example.com']);
     });
 
     it('discarding the draft brings back the live config', async () => {
@@ -527,6 +568,10 @@ describe('Tenant isolation (M1-25)', () => {
       await as(cookies.viewerA)
         .patch('/v1/chatbot/status')
         .send({ status: 'DISABLED' })
+        .expect(403);
+      await as(cookies.viewerA)
+        .put('/v1/chatbot/allowed-domains')
+        .send({ domains: ['evil.example.com'] })
         .expect(403);
     });
   });

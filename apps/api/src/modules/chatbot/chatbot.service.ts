@@ -1,5 +1,6 @@
 import {
   type ChatbotConfig,
+  checkAllowedDomains,
   chatbotConfigSchema,
   configPublishProblems,
   type PublishProblem,
@@ -15,7 +16,6 @@ import { ConfigService } from '@nestjs/config';
 import { ChatbotStatus, Prisma } from '../../generated/prisma/client';
 import { requireTenant } from '../../tenancy/tenant-context';
 import { TENANT_PRISMA, type TenantPrisma } from '../../tenancy/tenant-prisma';
-import { checkAllowedDomains } from './allowed-domains';
 import { sameJson } from './same-json';
 
 const WITH_PUBLISHED = {

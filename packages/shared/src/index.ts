@@ -1,3 +1,4 @@
+export * from './allowed-domains';
 export * from './chatbot-config';
 export * from './knowledge';
 export * from './products';
