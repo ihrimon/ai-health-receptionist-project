@@ -23,6 +23,7 @@ import {
   type ProductCursor,
 } from '../products/product-cursor';
 import { leadsCsv } from './lead-csv';
+import { LeadNotifyQueue } from './lead-notify.queue';
 
 /** The most rows one CSV export holds; narrow the dates for more. */
 export const LEAD_EXPORT_MAX = 10_000;
@@ -85,14 +86,18 @@ function configQuestions(
  */
 @Injectable()
 export class LeadsService {
-  constructor(@Inject(TENANT_PRISMA) private readonly db: TenantPrisma) {}
+  constructor(
+    @Inject(TENANT_PRISMA) private readonly db: TenantPrisma,
+    private readonly notifyQueue: LeadNotifyQueue,
+  ) {}
 
   /**
    * Saves a lead for the current workspace; the capture_lead tool (M5-4)
    * calls this. A conversation has at most one lead: capturing again in
    * the same chat fills in the new fields and answers instead of adding a
    * second row. The source page is copied from the conversation so it
-   * outlives a deleted chat.
+   * outlives a deleted chat. A new lead queues one email to the
+   * workspace owners (M5-6); filling in an existing lead doesn't.
    */
   async create(input: CreateLead, retried = false): Promise<LeadSummary> {
     const { chatbotId, conversationId, ...fieldsIn } = input;
@@ -150,6 +155,9 @@ export class LeadsService {
             },
             select: LEAD_SELECT,
           });
+      if (!existing) {
+        await this.notifyQueue.enqueue(requireTenant().workspaceId, row.id);
+      }
       const labels = await this.questionLabels([row.chatbotId]);
       return this.toSummary(row, labels);
     } catch (err) {
@@ -163,6 +171,16 @@ export class LeadsService {
       }
       throw err;
     }
+  }
+
+  /** One lead of the current workspace with its question texts, or null. */
+  async summary(id: string): Promise<LeadSummary | null> {
+    const row = await this.db.lead.findFirst({
+      where: { id },
+      select: LEAD_SELECT,
+    });
+    if (!row) return null;
+    return this.toSummary(row, await this.questionLabels([row.chatbotId]));
   }
 
   /** Newest first, `limit` per page; `nextCursor` is null on the last page. */

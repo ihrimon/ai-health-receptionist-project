@@ -41,6 +41,15 @@ export default () => ({
     ),
   },
 
+  // New-lead email to the workspace owners (M5-6). The job waits this long
+  // after a lead is first saved, so details the visitor gives a moment
+  // later (the email after the name) are in the same, single email.
+  leads: {
+    notifyDelaySeconds: parseFloat(
+      process.env.LEAD_NOTIFY_DELAY_SECONDS ?? '60',
+    ),
+  },
+
   // LLM API key(s) + model are no longer read from env — they're managed
   // at runtime via the admin Settings page (llm_credentials table,
   // LlmCredentialsService/LlmKeyManager) so they can be edited without a

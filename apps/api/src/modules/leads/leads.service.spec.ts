@@ -5,6 +5,7 @@ import { Prisma } from '../../generated/prisma/client';
 import { runWithTenant } from '../../tenancy/tenant-context';
 import { TENANT_PRISMA } from '../../tenancy/tenant-prisma';
 import { encodeCursor } from '../products/product-cursor';
+import { LeadNotifyQueue } from './lead-notify.queue';
 import { LeadsService } from './leads.service';
 
 const BOT = '11111111-1111-4111-8111-111111111111';
@@ -51,8 +52,10 @@ describe('LeadsService', () => {
       update: jest.fn(),
       findMany: jest.fn(),
       deleteMany: jest.fn(),
+      findFirst: jest.fn(),
     },
   };
+  const notifyQueue = { enqueue: jest.fn() };
   let service: LeadsService;
 
   const row = (id: string, at: string, extra: object = {}) => ({
@@ -91,7 +94,11 @@ describe('LeadsService', () => {
       },
     ]);
     const moduleRef = await Test.createTestingModule({
-      providers: [LeadsService, { provide: TENANT_PRISMA, useValue: db }],
+      providers: [
+        LeadsService,
+        { provide: TENANT_PRISMA, useValue: db },
+        { provide: LeadNotifyQueue, useValue: notifyQueue },
+      ],
     }).compile();
     service = moduleRef.get(LeadsService);
   });
@@ -146,6 +153,8 @@ describe('LeadsService', () => {
         { questionId: 'city', question: 'Which city?', answer: 'Dhaka' },
       ]);
       expect(lead.createdAt).toBe('2026-10-17T10:00:00.000Z');
+      // A new lead queues the owners' email (M5-6) for its workspace.
+      expect(notifyQueue.enqueue).toHaveBeenCalledWith('ws-1', 'lead-1');
     });
 
     it('fills in the same lead when the chat already has one', async () => {
@@ -175,6 +184,8 @@ describe('LeadsService', () => {
           },
         }),
       );
+      // Filling in an existing lead sends no second email (M5-6).
+      expect(notifyQueue.enqueue).not.toHaveBeenCalled();
     });
 
     it('merges into the other capture when two race in one chat', async () => {
@@ -200,6 +211,7 @@ describe('LeadsService', () => {
       });
       expect(lead.id).toBe('lead-1');
       expect(db.lead.update).toHaveBeenCalledTimes(1);
+      expect(notifyQueue.enqueue).not.toHaveBeenCalled();
     });
 
     it("is a 404 for a chatbot or conversation it can't see, a 400 for an empty lead", async () => {

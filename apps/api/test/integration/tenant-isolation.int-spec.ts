@@ -17,6 +17,11 @@ import { LlmChatClient } from '../../src/modules/llm/llm-chat.client';
 import { ConversationTokenService } from '../../src/modules/public-chat/conversation-token.service';
 import { EmbeddingService } from '../../src/modules/knowledge/embedding.service';
 import { KnowledgeService } from '../../src/modules/knowledge/knowledge.service';
+import {
+  EmailService,
+  type OutgoingEmail,
+} from '../../src/modules/email/email.service';
+import { LeadNotifyProcessor } from '../../src/modules/leads/lead-notify.processor';
 import { LeadsService } from '../../src/modules/leads/leads.service';
 import { LeadToolService } from '../../src/modules/preview-chat/lead-tool.service';
 import { WorkspacesService } from '../../src/modules/workspaces/workspaces.service';
@@ -120,6 +125,16 @@ describe('Tenant isolation (M1-25)', () => {
     verify: jest.fn(() => Promise.resolve()),
   };
 
+  // No real email: every email the app sends (new-lead emails, M5-6) is
+  // recorded here instead.
+  const sentEmails: OutgoingEmail[] = [];
+  const fakeEmail = {
+    send: jest.fn((message: OutgoingEmail) => {
+      sentEmails.push(message);
+      return Promise.resolve(true);
+    }),
+  };
+
   // Workspace A: owner + viewer. Workspace B: owner. A2: second workspace
   // of A's owner, for the switch test.
   const ids = { a: '', a2: '', b: '', botA: '', botB: '' };
@@ -208,6 +223,8 @@ describe('Tenant isolation (M1-25)', () => {
       .useValue(fakeEmbeddingService)
       .overrideProvider(LlmChatClient)
       .useValue(fakeLlm)
+      .overrideProvider(EmailService)
+      .useValue(fakeEmail)
       .compile();
     app = moduleRef.createNestApplication<NestExpressApplication>();
     configureApp(app);
@@ -2508,6 +2525,132 @@ describe('Tenant isolation (M1-25)', () => {
       expect(a.items).toEqual([
         expect.objectContaining({ id: lead.a, conversationId: null }),
       ]);
+    });
+  });
+
+  describe('New-lead emails (M5-6)', () => {
+    const word = `kumquat${run}`;
+    const sentFor = (name: string) =>
+      sentEmails.filter((m) => m.html.includes(name));
+
+    async function seedChat(
+      workspaceId: string,
+      chatbotId: string,
+      isPreview = false,
+    ): Promise<string> {
+      const created = await inWorkspace(workspaceId, () =>
+        db.conversation.create({
+          data: {
+            workspaceId,
+            chatbotId,
+            visitorId: `v-notify-${run}`,
+            isPreview,
+            originUrl: 'https://shop.example/<b>checkout</b>',
+          },
+          select: { id: true },
+        }),
+      );
+      return created.id;
+    }
+
+    const notifiedAt = async (id: string) =>
+      (await prisma.lead.findUniqueOrThrow({ where: { id } })).notifiedAt;
+
+    beforeAll(async () => {
+      // Only owners with a confirmed address get the email.
+      await prisma.user.updateMany({
+        where: { id: { in: [users.ownerA, users.ownerB, users.viewerA] } },
+        data: { emailVerifiedAt: new Date() },
+      });
+    });
+
+    it("emails only workspace A's owners, once, for workspace A's lead", async () => {
+      const leads = app.get(LeadsService);
+      const chatA = await seedChat(ids.a, ids.botA);
+      const chatB = await seedChat(ids.b, ids.botB);
+      const leadA = await inWorkspace(ids.a, () =>
+        leads.create({
+          chatbotId: ids.botA,
+          conversationId: chatA,
+          name: `<i>Ana</i> ${word}-a`,
+          email: `ana-notify-${run}@example.test`,
+        }),
+      );
+      const leadB = await inWorkspace(ids.b, () =>
+        leads.create({
+          chatbotId: ids.botB,
+          conversationId: chatB,
+          name: `Bob ${word}-b`,
+        }),
+      );
+
+      // The pg-boss worker in the app sends them (the delay is 0 in tests).
+      await waitUntil('lead A notified', () => notifiedAt(leadA.id));
+      await waitUntil('lead B notified', () => notifiedAt(leadB.id));
+      const toA = sentFor(`${word}-a`);
+      expect(toA).toHaveLength(1);
+      expect(toA[0].to).toEqual([email('owner-a')]);
+      expect(toA[0].html).toContain(`&lt;i&gt;Ana&lt;/i&gt; ${word}-a`);
+      expect(toA[0].html).toContain('shop.example/&lt;b&gt;checkout&lt;/b&gt;');
+      expect(toA[0].html).toContain(`/app/conversations/${chatA}`);
+      const toB = sentFor(`${word}-b`);
+      expect(toB).toHaveLength(1);
+      expect(toB[0].to).toEqual([email('owner-b')]);
+
+      // More details in the same chat fill in the lead; no second email.
+      await inWorkspace(ids.a, () =>
+        leads.create({
+          chatbotId: ids.botA,
+          conversationId: chatA,
+          phone: '+8801711000000',
+        }),
+      );
+      await expect(
+        app.get(LeadNotifyProcessor).process({
+          data: { workspaceId: ids.a, leadId: leadA.id },
+          retryCount: 0,
+        }),
+      ).resolves.toBe('already-notified');
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+      expect(sentFor(`${word}-a`)).toHaveLength(1);
+    });
+
+    it("a job naming workspace A can't email about workspace B's lead", async () => {
+      // Saved directly, so no job was queued for it.
+      const leadB = await prisma.lead.create({
+        data: {
+          workspaceId: ids.b,
+          chatbotId: ids.botB,
+          name: `Forged ${word}`,
+        },
+      });
+      await expect(
+        app.get(LeadNotifyProcessor).process({
+          data: { workspaceId: ids.a, leadId: leadB.id },
+          retryCount: 0,
+        }),
+      ).resolves.toBe('skipped');
+      expect(sentFor(`Forged ${word}`)).toHaveLength(0);
+      expect(await notifiedAt(leadB.id)).toBeNull();
+    });
+
+    it('never emails about a Test chat (preview) lead', async () => {
+      const preview = await seedChat(ids.a, ids.botA, true);
+      const lead = await prisma.lead.create({
+        data: {
+          workspaceId: ids.a,
+          chatbotId: ids.botA,
+          conversationId: preview,
+          name: `Preview ${word}`,
+        },
+      });
+      await expect(
+        app.get(LeadNotifyProcessor).process({
+          data: { workspaceId: ids.a, leadId: lead.id },
+          retryCount: 0,
+        }),
+      ).resolves.toBe('skipped');
+      expect(sentFor(`Preview ${word}`)).toHaveLength(0);
     });
   });
 
