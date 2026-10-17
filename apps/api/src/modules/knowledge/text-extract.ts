@@ -14,6 +14,23 @@ const DOCX =
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
 
 /**
+ * PDF limits (M7-29). The 10 MB upload cap bounds the size, not the work: a
+ * small file can hold thousands of pages or a very slow-to-render page tree.
+ */
+export const PDF_MAX_PAGES = 500;
+export const PDF_MAX_EXTRACT_MS = 30_000;
+
+export interface PdfLimits {
+  maxPages: number;
+  timeoutMs: number;
+}
+
+const DEFAULT_PDF_LIMITS: PdfLimits = {
+  maxPages: PDF_MAX_PAGES,
+  timeoutMs: PDF_MAX_EXTRACT_MS,
+};
+
+/**
  * Extracts the text of an uploaded document (M2-11). The MIME type is the
  * one the upload check stored (M2-10), not the browser's. Failures the
  * company can fix are IngestErrors with a readable message.
@@ -21,10 +38,11 @@ const DOCX =
 export async function extractDocumentText(
   file: Buffer,
   mimeType: string,
+  pdfLimits: PdfLimits = DEFAULT_PDF_LIMITS,
 ): Promise<ExtractedPage[]> {
   const pages =
     mimeType === PDF
-      ? await extractPdf(file)
+      ? await extractPdf(file, pdfLimits)
       : mimeType === DOCX
         ? await extractDocx(file)
         : [{ text: decodeText(file) }];
@@ -40,18 +58,47 @@ export async function extractDocumentText(
   return withText;
 }
 
-async function extractPdf(file: Buffer): Promise<ExtractedPage[]> {
-  let text: string[];
+async function extractPdf(
+  file: Buffer,
+  limits: PdfLimits,
+): Promise<ExtractedPage[]> {
+  // pdf.js may keep a reference to the buffer it's given, so it gets a copy.
+  const loading = getDocumentProxy(new Uint8Array(file));
+  let timer: NodeJS.Timeout | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () =>
+        reject(
+          new IngestError(
+            'This PDF took too long to read. Try a smaller or simpler file.',
+          ),
+        ),
+      limits.timeoutMs,
+    );
+  });
+  // If the timer wins, the extraction keeps running in the background; its
+  // late result or error must not become an unhandled rejection.
+  const work = (async () => {
+    const pdf = await loading;
+    if (pdf.numPages > limits.maxPages) {
+      throw new IngestError(
+        `This PDF has ${pdf.numPages} pages; the limit is ${limits.maxPages}. Split it into smaller files.`,
+      );
+    }
+    return extractPdfText(pdf, { mergePages: false });
+  })();
+  work.catch(() => undefined);
   try {
-    // pdf.js may keep a reference to the buffer it's given, so it gets a copy.
-    const pdf = await getDocumentProxy(new Uint8Array(file));
-    ({ text } = await extractPdfText(pdf, { mergePages: false }));
-  } catch {
+    const { text } = await Promise.race([work, timeout]);
+    return text.map((pageText, i) => ({ page: i + 1, text: pageText }));
+  } catch (err) {
+    if (err instanceof IngestError) throw err;
     throw new IngestError(
       "This PDF couldn't be read. It may be damaged or password-protected.",
     );
+  } finally {
+    clearTimeout(timer);
   }
-  return text.map((pageText, i) => ({ page: i + 1, text: pageText }));
 }
 
 async function extractDocx(file: Buffer): Promise<ExtractedPage[]> {

@@ -18,6 +18,7 @@ import { RateLimitService } from '../../rate-limit/rate-limit.service';
 import { WorkspacesService } from '../workspaces/workspaces.service';
 import { runAsSystem } from '../../tenancy/tenant-context';
 import { WorkspaceAccessService } from '../../tenancy/workspace-access.service';
+import { PasswordResetQueue } from './password-reset.queue';
 import { resetPasswordMessage, verifyEmailMessage } from './auth-emails';
 import { AuthContext } from './auth-context';
 import { RESET_PASSWORD_TTL_MS, VERIFY_EMAIL_TTL_MS } from './auth.constants';
@@ -65,6 +66,7 @@ export class AuthService {
     private readonly email: EmailService,
     private readonly config: ConfigService,
     private readonly access: WorkspaceAccessService,
+    private readonly resetQueue: PasswordResetQueue,
   ) {}
 
   /**
@@ -224,6 +226,17 @@ export class AuthService {
       },
     );
 
+    // Known or not, the answer is the same and equally fast: the lookup,
+    // the token and the mail all happen in the queued job (M7-24).
+    await this.resetQueue.enqueue(email);
+  }
+
+  /**
+   * The queued half of forgotPassword (M7-24). Users and email tokens are
+   * platform tables (no workspace), so this needs no tenant context. A send
+   * that throws is retried by the queue.
+   */
+  async sendPasswordReset(email: string): Promise<void> {
     const user = await this.prisma.user.findUnique({ where: { email } });
     if (!user) return;
 
@@ -232,7 +245,7 @@ export class AuthService {
       EmailTokenType.RESET_PASSWORD,
       RESET_PASSWORD_TTL_MS,
     );
-    await this.sendBestEffort(
+    await this.email.send(
       resetPasswordMessage(
         user.email,
         user.name,

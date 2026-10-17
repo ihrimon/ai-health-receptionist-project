@@ -1,6 +1,6 @@
 import JSZip from 'jszip';
 import { IngestError } from './ingest-error';
-import { extractDocumentText } from './text-extract';
+import { extractDocumentText, PDF_MAX_PAGES } from './text-extract';
 
 /** A minimal one-font PDF with one line of text per page. */
 function pdfWithPages(...lines: string[]): Buffer {
@@ -67,6 +67,38 @@ describe('extractDocumentText', () => {
       },
       { page: 2, text: expect.stringContaining('Shipping is free') as unknown },
     ]);
+  });
+
+  it('rejects a PDF with too many pages, with a clear message (M7-29)', async () => {
+    const many = pdfWithPages(
+      ...Array.from({ length: 12 }, (_, i) => `Page ${i + 1}`),
+    );
+    await expect(
+      extractDocumentText(many, 'application/pdf', {
+        maxPages: 10,
+        timeoutMs: 30_000,
+      }),
+    ).rejects.toThrow(
+      new IngestError(
+        'This PDF has 12 pages; the limit is 10. Split it into smaller files.',
+      ),
+    );
+    // Exactly at the limit still works.
+    await expect(
+      extractDocumentText(many, 'application/pdf', {
+        maxPages: 12,
+        timeoutMs: 30_000,
+      }),
+    ).resolves.toHaveLength(12);
+  });
+
+  it('applies the default page limit', async () => {
+    const tooMany = pdfWithPages(
+      ...Array.from({ length: PDF_MAX_PAGES + 1 }, () => 'x'),
+    );
+    await expect(
+      extractDocumentText(tooMany, 'application/pdf'),
+    ).rejects.toThrow(`the limit is ${PDF_MAX_PAGES}`);
   });
 
   it('reads a Word document', async () => {

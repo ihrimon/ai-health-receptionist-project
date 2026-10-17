@@ -1,5 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { apiFetch, ApiError } from "./api";
+import {
+  apiFetch,
+  ApiError,
+  clearDashboardSession,
+  clearedDashboardSessionCookie,
+  dashboardSessionCookie,
+  markDashboardSession,
+} from "./api";
 
 const headersOf = (mock: ReturnType<typeof vi.fn>) =>
   (mock.mock.calls[0][1] as RequestInit).headers as Record<string, string>;
@@ -53,5 +60,43 @@ describe("apiFetch", () => {
       status: 409,
       message: "A chatbot can have at most 25 FAQs",
     });
+  });
+});
+
+describe("dashboard session marker cookie (M7-30)", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  const stubPage = (protocol: string) => {
+    const doc = { cookie: "" };
+    vi.stubGlobal("document", doc);
+    vi.stubGlobal("location", { protocol });
+    return doc;
+  };
+
+  it("is Secure on an https page", () => {
+    const doc = stubPage("https:");
+    markDashboardSession();
+    expect(doc.cookie).toMatch(/^dash_session=1; path=\//);
+    expect(doc.cookie).toMatch(/; secure$/);
+    clearDashboardSession();
+    expect(doc.cookie).toMatch(/^dash_session=;.*max-age=0.*; secure$/);
+  });
+
+  it("is not Secure on http://localhost, so it still works in dev", () => {
+    const doc = stubPage("http:");
+    markDashboardSession();
+    expect(doc.cookie).toContain("dash_session=1");
+    expect(doc.cookie).not.toMatch(/secure/i);
+    clearDashboardSession();
+    expect(doc.cookie).not.toMatch(/secure/i);
+  });
+
+  it("builds the same cookie otherwise (lax, 7 days)", () => {
+    expect(dashboardSessionCookie(true)).toBe(
+      `dash_session=1; path=/; max-age=${7 * 24 * 60 * 60}; samesite=lax; secure`,
+    );
+    expect(clearedDashboardSessionCookie(false)).toBe(
+      "dash_session=; path=/; max-age=0; samesite=lax",
+    );
   });
 });

@@ -12,6 +12,7 @@ import { EmailService } from '../email/email.service';
 import { WorkspacesService } from '../workspaces/workspaces.service';
 import { WorkspaceAccessService } from '../../tenancy/workspace-access.service';
 import { AuthService } from './auth.service';
+import { PasswordResetQueue } from './password-reset.queue';
 import { hashPassword } from './secrets';
 import { SessionsService } from './sessions.service';
 
@@ -34,6 +35,7 @@ describe('AuthService', () => {
   let workspaces: { createWithOwner: jest.Mock };
   let rateLimit: { consume: jest.Mock };
   let email: { send: jest.Mock };
+  let resetQueue: { enqueue: jest.Mock };
 
   const meta = { ipAddress: '1.2.3.4', userAgent: 'jest' };
   const issued = { token: 'raw-session', expiresAt: new Date() };
@@ -74,6 +76,7 @@ describe('AuthService', () => {
     workspaces = { createWithOwner: jest.fn() };
     rateLimit = { consume: jest.fn() };
     email = { send: jest.fn() };
+    resetQueue = { enqueue: jest.fn().mockResolvedValue(undefined) };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -83,6 +86,7 @@ describe('AuthService', () => {
         { provide: WorkspacesService, useValue: workspaces },
         { provide: RateLimitService, useValue: rateLimit },
         { provide: EmailService, useValue: email },
+        { provide: PasswordResetQueue, useValue: resetQueue },
         { provide: WorkspaceAccessService, useValue: {} },
         {
           provide: ConfigService,
@@ -233,12 +237,56 @@ describe('AuthService', () => {
   });
 
   describe('forgotPassword', () => {
-    it('does nothing visible for an unknown email', async () => {
+    it('only queues the job, with no lookup, token or mail in the request (M7-24)', async () => {
       await expect(
         service.forgotPassword('who@example.com', meta),
       ).resolves.toBeUndefined();
+      expect(resetQueue.enqueue).toHaveBeenCalledWith('who@example.com');
+      expect(prisma.user.findUnique).not.toHaveBeenCalled();
       expect(prisma.emailToken.create).not.toHaveBeenCalled();
       expect(email.send).not.toHaveBeenCalled();
+    });
+
+    it('does the same work for an address that has an account', async () => {
+      prisma.user.findUnique.mockResolvedValue({
+        id: 'u1',
+        email: 'rina@example.com',
+        name: 'Rina',
+      });
+      await service.forgotPassword('rina@example.com', meta);
+      expect(resetQueue.enqueue).toHaveBeenCalledWith('rina@example.com');
+      expect(prisma.user.findUnique).not.toHaveBeenCalled();
+      expect(email.send).not.toHaveBeenCalled();
+    });
+
+    it('is rate limited before anything is queued', async () => {
+      rateLimit.consume.mockRejectedValueOnce(new Error('limited'));
+      await expect(
+        service.forgotPassword('who@example.com', meta),
+      ).rejects.toThrow('limited');
+      expect(resetQueue.enqueue).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('sendPasswordReset (queued half)', () => {
+    it('does nothing for an unknown email', async () => {
+      await expect(
+        service.sendPasswordReset('who@example.com'),
+      ).resolves.toBeUndefined();
+      expect(prisma.emailToken.create).not.toHaveBeenCalled();
+      expect(email.send).not.toHaveBeenCalled();
+    });
+
+    it('lets a send failure through so the queue retries', async () => {
+      prisma.user.findUnique.mockResolvedValue({
+        id: 'u1',
+        email: 'rina@example.com',
+        name: 'Rina',
+      });
+      email.send.mockRejectedValueOnce(new Error('SMTP down'));
+      await expect(
+        service.sendPasswordReset('rina@example.com'),
+      ).rejects.toThrow('SMTP down');
     });
 
     it('replaces earlier reset tokens and emails a fresh link', async () => {
@@ -248,7 +296,7 @@ describe('AuthService', () => {
         name: 'Rina',
       });
 
-      await service.forgotPassword('rina@example.com', meta);
+      await service.sendPasswordReset('rina@example.com');
 
       expect(prisma.emailToken.updateMany).toHaveBeenCalledWith({
         where: {
