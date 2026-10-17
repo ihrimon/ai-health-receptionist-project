@@ -37,6 +37,7 @@ describe('PublicChatService', () => {
     start: jest.fn(),
     find: jest.fn(),
     messages: jest.fn(),
+    rate: jest.fn(),
   };
   const tokens = { sign: jest.fn(), verify: jest.fn() };
   let service: PublicChatService;
@@ -291,6 +292,44 @@ describe('PublicChatService', () => {
         UnauthorizedException,
       );
       expect(conversations.messages).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('rating (M5-7)', () => {
+    const rate = (token: string | null = 'signed-token') =>
+      service.rate(CONVERSATION, token, { rating: 5 });
+
+    it("saves the stars in the conversation's own workspace", async () => {
+      let tenant: unknown;
+      conversations.rate.mockImplementation(() => {
+        tenant = currentTenant();
+        return Promise.resolve(true);
+      });
+
+      await rate();
+
+      expect(tenant).toMatchObject({ workspaceId: 'ws-1' });
+      expect(conversations.rate).toHaveBeenCalledWith(CONVERSATION, 'bot-1', 5);
+      expect(rateLimit.consume).toHaveBeenCalledWith({
+        key: `public:rating:${CONVERSATION}`,
+        ...PUBLIC_CHAT_LIMITS.ratingPerConversationMinute,
+      });
+    });
+
+    it("is a 401 without a valid token or with another conversation's", async () => {
+      tokens.verify.mockReturnValue(null);
+      await expect(rate(null)).rejects.toThrow(UnauthorizedException);
+      tokens.verify.mockReturnValue({
+        conversationId: '9c3a2f10-0000-4000-8000-000000000000',
+        chatbotId: 'bot-1',
+      });
+      await expect(rate()).rejects.toThrow(UnauthorizedException);
+      expect(conversations.rate).not.toHaveBeenCalled();
+    });
+
+    it('is a 404 when the conversation is not this chatbot’s', async () => {
+      conversations.rate.mockResolvedValue(false);
+      await expect(rate()).rejects.toThrow(NotFoundException);
     });
   });
 });

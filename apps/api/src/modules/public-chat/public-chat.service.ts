@@ -7,6 +7,7 @@ import {
   type PublicConversationRequest,
   type PublicMessageRequest,
   type PublicMessageView,
+  type PublicRatingRequest,
 } from '@brainstack/shared';
 import {
   Injectable,
@@ -39,6 +40,8 @@ export const PUBLIC_CHAT_LIMITS = {
   perIpMinute: { limit: 60, windowSeconds: 60 },
   perIpHour: { limit: 200, windowSeconds: 3600 },
   perBotMinute: { limit: 600, windowSeconds: 60 },
+  /** Changing the stars a few times is fine; more is a script. */
+  ratingPerConversationMinute: { limit: 10, windowSeconds: 60 },
 };
 
 // Visitors don't manage keys: the dashboard wording would confuse them.
@@ -202,6 +205,24 @@ export class PublicChatService {
         createdAt: m.createdAt.toISOString(),
       }));
     });
+  }
+
+  /** The visitor's 1–5 stars for their own conversation (FR-4.6, M5-7). */
+  async rate(
+    conversationId: string,
+    token: string | null,
+    request: PublicRatingRequest,
+  ): Promise<void> {
+    const claims = this.authorize(conversationId, token);
+    const bot = await this.liveBot({ id: claims.chatbotId });
+    await this.rateLimit.consume({
+      key: `public:rating:${conversationId}`,
+      ...PUBLIC_CHAT_LIMITS.ratingPerConversationMinute,
+    });
+    const rated = await this.inBotWorkspace(bot, () =>
+      this.conversations.rate(conversationId, bot.id, request.rating),
+    );
+    if (!rated) throw new NotFoundException('Conversation not found');
   }
 
   /**

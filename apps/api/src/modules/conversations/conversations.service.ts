@@ -68,6 +68,23 @@ export class ConversationsService {
     });
   }
 
+  /**
+   * Saves the visitor's 1–5 stars on a live conversation of this chatbot
+   * (FR-4.6, M5-7); a later rating replaces the earlier one. False when
+   * there is no such conversation.
+   */
+  async rate(
+    conversationId: string,
+    chatbotId: string,
+    rating: number,
+  ): Promise<boolean> {
+    const rated = await this.db.conversation.updateMany({
+      where: { id: conversationId, chatbotId, isPreview: false },
+      data: { rating },
+    });
+    return rated.count === 1;
+  }
+
   /** What a visitor sees again after a reload, oldest first. */
   async messages(
     conversationId: string,

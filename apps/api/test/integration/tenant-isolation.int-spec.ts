@@ -13,6 +13,7 @@ import { WorkspaceRole } from '../../src/generated/prisma/client';
 import { SESSION_COOKIE } from '../../src/modules/auth/auth.constants';
 import { SessionsService } from '../../src/modules/auth/sessions.service';
 import { LlmChatClient } from '../../src/modules/llm/llm-chat.client';
+import { ConversationTokenService } from '../../src/modules/public-chat/conversation-token.service';
 import { EmbeddingService } from '../../src/modules/knowledge/embedding.service';
 import { KnowledgeService } from '../../src/modules/knowledge/knowledge.service';
 import { WorkspacesService } from '../../src/modules/workspaces/workspaces.service';
@@ -1450,6 +1451,14 @@ describe('Tenant isolation (M1-25)', () => {
         );
         return token ? req.set('Authorization', `Bearer ${token}`) : req;
       },
+      rate: (rating: unknown) => {
+        const req = request(http)
+          .post(`/v1/public/conversations/${id}/rating`)
+          .set('X-Requested-With', 'fetch');
+        return (token ? req.set('Authorization', `Bearer ${token}`) : req).send(
+          { rating },
+        );
+      },
     });
     const started = async (visitorId?: string) => {
       const res = await api(await publicIdOf(ids.botA))
@@ -1588,6 +1597,88 @@ describe('Tenant isolation (M1-25)', () => {
         where: { conversationId: two.conversationId },
       });
       expect(count).toBe(0);
+    });
+
+    /**
+     * A stored conversation with the token the API would have issued for
+     * it; starting real ones would hit the per-IP limit on new chats.
+     */
+    const seededChat = async (workspaceId: string, chatbotId: string) => {
+      const { id } = await inWorkspace(workspaceId, () =>
+        db.conversation.create({
+          data: {
+            workspaceId,
+            chatbotId,
+            visitorId: 'visitor_rate1234',
+            messageCount: 2,
+          },
+          select: { id: true },
+        }),
+      );
+      return {
+        conversationId: id,
+        conversationToken: app
+          .get(ConversationTokenService)
+          .sign({ conversationId: id, chatbotId }),
+      };
+    };
+
+    it('saves the visitor rating on their conversation, shown in the inbox (M5-7)', async () => {
+      const { conversationId, conversationToken } = await seededChat(
+        ids.a,
+        ids.botA,
+      );
+      const chat = conversation(conversationId, conversationToken);
+      await chat.rate(2).expect(204);
+      // A later rating replaces the earlier one.
+      await chat.rate(5).expect(204);
+
+      const stored = await prisma.conversation.findUniqueOrThrow({
+        where: { id: conversationId },
+        select: { rating: true },
+      });
+      expect(stored.rating).toBe(5);
+      const detail = await as(cookies.ownerA)
+        .get(`/v1/conversations/${conversationId}`)
+        .expect(200);
+      expect(detail.body).toMatchObject({ rating: 5 });
+
+      for (const bad of [0, 6, 3.5, '4', null]) {
+        await chat.rate(bad).expect(400);
+      }
+    });
+
+    it("a visitor can rate only their own conversation, never another's or another workspace's (M5-7)", async () => {
+      const one = await seededChat(ids.a, ids.botA);
+      const two = await seededChat(ids.a, ids.botA);
+      // B's chatbot isn't published; its conversation exists all the same.
+      const b = await seededChat(ids.b, ids.botB);
+      const bConversation = { id: b.conversationId };
+
+      await conversation(one.conversationId).rate(1).expect(401);
+      await conversation(one.conversationId, 'garbage.token')
+        .rate(1)
+        .expect(401);
+      await conversation(two.conversationId, one.conversationToken)
+        .rate(1)
+        .expect(401);
+      await conversation(bConversation.id, one.conversationToken)
+        .rate(1)
+        .expect(401);
+      // Even B's own token: B's chatbot isn't live, so there is nothing to rate.
+      await conversation(b.conversationId, b.conversationToken)
+        .rate(1)
+        .expect(404);
+
+      const ratings = await prisma.conversation.findMany({
+        where: {
+          id: {
+            in: [one.conversationId, two.conversationId, bConversation.id],
+          },
+        },
+        select: { rating: true },
+      });
+      expect(ratings.map((r) => r.rating)).toEqual([null, null, null]);
     });
 
     it('the old message endpoint is gone', async () => {
@@ -2055,6 +2146,60 @@ describe('Tenant isolation (M1-25)', () => {
         .get(`/v1/conversations/${randomUUID()}`)
         .expect(404);
       await as(cookies.ownerA).get('/v1/conversations/not-a-uuid').expect(400);
+    });
+
+    it("deleting another workspace's or a preview conversation is a 404 and keeps it (M5-3)", async () => {
+      await as(cookies.ownerB)
+        .delete(`/v1/conversations/${convo.a}`)
+        .expect(404);
+      await as(cookies.ownerA)
+        .delete(`/v1/conversations/${convo.b}`)
+        .expect(404);
+      await as(cookies.ownerA)
+        .delete(`/v1/conversations/${convo.aPreview}`)
+        .expect(404);
+      await as(cookies.ownerA)
+        .delete(`/v1/conversations/${randomUUID()}`)
+        .expect(404);
+      await as(cookies.ownerA)
+        .delete('/v1/conversations/not-a-uuid')
+        .expect(400);
+      // A viewer may read conversations but not delete them.
+      await as(cookies.viewerA)
+        .delete(`/v1/conversations/${convo.a}`)
+        .expect(403);
+      await request(http)
+        .delete(`/v1/conversations/${convo.a}`)
+        .set('X-Requested-With', 'fetch')
+        .expect(401);
+
+      const kept = await prisma.conversation.count({
+        where: { id: { in: [convo.a, convo.b, convo.aPreview] } },
+      });
+      expect(kept).toBe(3);
+      expect(
+        await prisma.message.count({ where: { conversationId: convo.b } }),
+      ).toBe(2);
+    });
+
+    it('the owner deletes their conversation with all its messages (M5-3)', async () => {
+      const doomed = await seed(ids.a, ids.botA);
+      await as(cookies.ownerA)
+        .delete(`/v1/conversations/${doomed}`)
+        .expect(204);
+
+      expect(
+        await prisma.conversation.findUnique({ where: { id: doomed } }),
+      ).toBeNull();
+      expect(
+        await prisma.message.count({ where: { conversationId: doomed } }),
+      ).toBe(0);
+      await as(cookies.ownerA).get(`/v1/conversations/${doomed}`).expect(404);
+      await as(cookies.ownerA)
+        .delete(`/v1/conversations/${doomed}`)
+        .expect(404);
+      // B's conversation is untouched.
+      await as(cookies.ownerB).get(`/v1/conversations/${convo.b}`).expect(200);
     });
 
     it('needs a session (401)', async () => {

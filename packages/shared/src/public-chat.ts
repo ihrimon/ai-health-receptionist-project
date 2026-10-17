@@ -40,6 +40,12 @@ export const publicMessageRequestSchema = z.strictObject({
 });
 export type PublicMessageRequest = z.output<typeof publicMessageRequestSchema>;
 
+/** POST /v1/public/conversations/:id/rating: the visitor's 1–5 stars (FR-4.6, M5-7). */
+export const publicRatingRequestSchema = z.strictObject({
+  rating: z.number().int().min(1).max(5),
+});
+export type PublicRatingRequest = z.output<typeof publicRatingRequestSchema>;
+
 /** GET /v1/public/conversations/:id/messages: what a reload shows again. */
 export interface PublicMessageView {
   id: string;

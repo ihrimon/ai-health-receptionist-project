@@ -59,7 +59,13 @@ describe('conversationListQuerySchema', () => {
 });
 
 describe('ConversationInboxService', () => {
-  const db = { conversation: { findMany: jest.fn(), findFirst: jest.fn() } };
+  const db = {
+    conversation: {
+      findMany: jest.fn(),
+      findFirst: jest.fn(),
+      deleteMany: jest.fn(),
+    },
+  };
   let service: ConversationInboxService;
 
   const row = (id: string, at: string, extra: object = {}) => ({
@@ -248,6 +254,19 @@ describe('ConversationInboxService', () => {
   it('a conversation it cannot see is a 404', async () => {
     db.conversation.findFirst.mockResolvedValue(null);
     await expect(service.detail('c-x')).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
+  });
+
+  it('deletes a live conversation; one it cannot see is a 404 (M5-3)', async () => {
+    db.conversation.deleteMany.mockResolvedValueOnce({ count: 1 });
+    await service.remove('c-1');
+    expect(db.conversation.deleteMany).toHaveBeenCalledWith({
+      where: { id: 'c-1', isPreview: false },
+    });
+
+    db.conversation.deleteMany.mockResolvedValueOnce({ count: 0 });
+    await expect(service.remove('c-x')).rejects.toBeInstanceOf(
       NotFoundException,
     );
   });
