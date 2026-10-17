@@ -14,12 +14,13 @@ const TITLES: { prefix: string; title: string }[] = [
   { prefix: "/app/leads", title: "Leads" },
   { prefix: "/app/unanswered", title: "Unanswered questions" },
   { prefix: "/app/settings", title: "Settings" },
+  { prefix: "/admin/workspaces", title: "Workspaces" },
   { prefix: "/admin/conversations", title: "Conversations" },
   { prefix: "/admin/settings", title: "Settings" },
 ];
 
 function titleFor(pathname: string): string {
-  if (pathname === "/admin") return "Overview";
+  if (pathname === "/admin") return "Workspaces";
   if (pathname === "/app") return "Home";
   return TITLES.find((t) => pathname.startsWith(t.prefix))?.title ?? "Dashboard";
 }

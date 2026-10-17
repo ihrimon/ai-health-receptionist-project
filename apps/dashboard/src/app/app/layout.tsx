@@ -3,6 +3,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Toaster } from "@/components/ui/toast";
 import { SiteHeader } from "@/components/site-header";
 import { WorkspaceSidebar } from "@/components/workspace-sidebar";
+import { WorkspaceSuspendedGate } from "@/components/workspace-suspended-gate";
 import { ChatbotProvider } from "@/lib/chatbot";
 import { SessionProvider } from "@/lib/session";
 
@@ -22,6 +23,7 @@ function LoadingShell() {
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   return (
     <SessionProvider fallback={<LoadingShell />}>
+      <WorkspaceSuspendedGate>
       <ChatbotProvider>
         <SidebarProvider>
           <WorkspaceSidebar />
@@ -34,6 +36,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
           <Toaster />
         </SidebarProvider>
       </ChatbotProvider>
+      </WorkspaceSuspendedGate>
     </SessionProvider>
   );
 }
