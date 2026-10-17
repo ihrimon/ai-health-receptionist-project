@@ -2,14 +2,19 @@ import { Module } from '@nestjs/common';
 import { ChatbotModule } from '../chatbot/chatbot.module';
 import { ConversationsModule } from '../conversations/conversations.module';
 import { KnowledgeModule } from '../knowledge/knowledge.module';
+import { LeadsModule } from '../leads/leads.module';
 import { LlmKeysModule } from '../llm-keys/llm-keys.module';
 import { LlmModule } from '../llm/llm.module';
 import { UsageModule } from '../usage/usage.module';
+import { LeadToolService } from './lead-tool.service';
 import { PreviewChatController } from './preview-chat.controller';
 import { ProductToolsService } from './product-tools.service';
 import { PreviewChatService } from './preview-chat.service';
 
-/** Dashboard "Test chat" over the workspace's knowledge (M3-13, M3-14). */
+/**
+ * Dashboard "Test chat" over the workspace's knowledge (M3-13, M3-14),
+ * with the product tools (M3-8) and capture_lead (M5-4).
+ */
 @Module({
   imports: [
     ConversationsModule,
@@ -18,9 +23,10 @@ import { PreviewChatService } from './preview-chat.service';
     KnowledgeModule,
     LlmKeysModule,
     UsageModule,
+    LeadsModule,
   ],
   controllers: [PreviewChatController],
-  providers: [PreviewChatService, ProductToolsService],
+  providers: [PreviewChatService, ProductToolsService, LeadToolService],
   exports: [PreviewChatService],
 })
 export class PreviewChatModule {}

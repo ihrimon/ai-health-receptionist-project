@@ -1,5 +1,6 @@
 import { HeadObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { defaultChatbotConfig } from '@brainstack/shared';
+import { NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { NestExpressApplication } from '@nestjs/platform-express';
 import { Test } from '@nestjs/testing';
@@ -13,8 +14,16 @@ import { WorkspaceRole } from '../../src/generated/prisma/client';
 import { SESSION_COOKIE } from '../../src/modules/auth/auth.constants';
 import { SessionsService } from '../../src/modules/auth/sessions.service';
 import { LlmChatClient } from '../../src/modules/llm/llm-chat.client';
+import { ConversationTokenService } from '../../src/modules/public-chat/conversation-token.service';
 import { EmbeddingService } from '../../src/modules/knowledge/embedding.service';
 import { KnowledgeService } from '../../src/modules/knowledge/knowledge.service';
+import {
+  EmailService,
+  type OutgoingEmail,
+} from '../../src/modules/email/email.service';
+import { LeadNotifyProcessor } from '../../src/modules/leads/lead-notify.processor';
+import { LeadsService } from '../../src/modules/leads/leads.service';
+import { LeadToolService } from '../../src/modules/preview-chat/lead-tool.service';
 import { WorkspacesService } from '../../src/modules/workspaces/workspaces.service';
 import { S3_CLIENT } from '../../src/storage/storage.service';
 import { runWithTenant } from '../../src/tenancy/tenant-context';
@@ -116,6 +125,16 @@ describe('Tenant isolation (M1-25)', () => {
     verify: jest.fn(() => Promise.resolve()),
   };
 
+  // No real email: every email the app sends (new-lead emails, M5-6) is
+  // recorded here instead.
+  const sentEmails: OutgoingEmail[] = [];
+  const fakeEmail = {
+    send: jest.fn((message: OutgoingEmail) => {
+      sentEmails.push(message);
+      return Promise.resolve(true);
+    }),
+  };
+
   // Workspace A: owner + viewer. Workspace B: owner. A2: second workspace
   // of A's owner, for the switch test.
   const ids = { a: '', a2: '', b: '', botA: '', botB: '' };
@@ -204,6 +223,8 @@ describe('Tenant isolation (M1-25)', () => {
       .useValue(fakeEmbeddingService)
       .overrideProvider(LlmChatClient)
       .useValue(fakeLlm)
+      .overrideProvider(EmailService)
+      .useValue(fakeEmail)
       .compile();
     app = moduleRef.createNestApplication<NestExpressApplication>();
     configureApp(app);
@@ -1450,6 +1471,14 @@ describe('Tenant isolation (M1-25)', () => {
         );
         return token ? req.set('Authorization', `Bearer ${token}`) : req;
       },
+      rate: (rating: unknown) => {
+        const req = request(http)
+          .post(`/v1/public/conversations/${id}/rating`)
+          .set('X-Requested-With', 'fetch');
+        return (token ? req.set('Authorization', `Bearer ${token}`) : req).send(
+          { rating },
+        );
+      },
     });
     const started = async (visitorId?: string) => {
       const res = await api(await publicIdOf(ids.botA))
@@ -1588,6 +1617,88 @@ describe('Tenant isolation (M1-25)', () => {
         where: { conversationId: two.conversationId },
       });
       expect(count).toBe(0);
+    });
+
+    /**
+     * A stored conversation with the token the API would have issued for
+     * it; starting real ones would hit the per-IP limit on new chats.
+     */
+    const seededChat = async (workspaceId: string, chatbotId: string) => {
+      const { id } = await inWorkspace(workspaceId, () =>
+        db.conversation.create({
+          data: {
+            workspaceId,
+            chatbotId,
+            visitorId: 'visitor_rate1234',
+            messageCount: 2,
+          },
+          select: { id: true },
+        }),
+      );
+      return {
+        conversationId: id,
+        conversationToken: app
+          .get(ConversationTokenService)
+          .sign({ conversationId: id, chatbotId }),
+      };
+    };
+
+    it('saves the visitor rating on their conversation, shown in the inbox (M5-7)', async () => {
+      const { conversationId, conversationToken } = await seededChat(
+        ids.a,
+        ids.botA,
+      );
+      const chat = conversation(conversationId, conversationToken);
+      await chat.rate(2).expect(204);
+      // A later rating replaces the earlier one.
+      await chat.rate(5).expect(204);
+
+      const stored = await prisma.conversation.findUniqueOrThrow({
+        where: { id: conversationId },
+        select: { rating: true },
+      });
+      expect(stored.rating).toBe(5);
+      const detail = await as(cookies.ownerA)
+        .get(`/v1/conversations/${conversationId}`)
+        .expect(200);
+      expect(detail.body).toMatchObject({ rating: 5 });
+
+      for (const bad of [0, 6, 3.5, '4', null]) {
+        await chat.rate(bad).expect(400);
+      }
+    });
+
+    it("a visitor can rate only their own conversation, never another's or another workspace's (M5-7)", async () => {
+      const one = await seededChat(ids.a, ids.botA);
+      const two = await seededChat(ids.a, ids.botA);
+      // B's chatbot isn't published; its conversation exists all the same.
+      const b = await seededChat(ids.b, ids.botB);
+      const bConversation = { id: b.conversationId };
+
+      await conversation(one.conversationId).rate(1).expect(401);
+      await conversation(one.conversationId, 'garbage.token')
+        .rate(1)
+        .expect(401);
+      await conversation(two.conversationId, one.conversationToken)
+        .rate(1)
+        .expect(401);
+      await conversation(bConversation.id, one.conversationToken)
+        .rate(1)
+        .expect(401);
+      // Even B's own token: B's chatbot isn't live, so there is nothing to rate.
+      await conversation(b.conversationId, b.conversationToken)
+        .rate(1)
+        .expect(404);
+
+      const ratings = await prisma.conversation.findMany({
+        where: {
+          id: {
+            in: [one.conversationId, two.conversationId, bConversation.id],
+          },
+        },
+        select: { rating: true },
+      });
+      expect(ratings.map((r) => r.rating)).toEqual([null, null, null]);
     });
 
     it('the old message endpoint is gone', async () => {
@@ -1905,6 +2016,1088 @@ describe('Tenant isolation (M1-25)', () => {
         );
         await upload(cookies.viewerA, 'name', 'Shoe').expect(403);
       });
+    });
+  });
+
+  describe('Conversation inbox (M5-1, M5-2)', () => {
+    // A word only these seeded chats contain, so other tests' chats don't matter.
+    const word = `kumquat${run}`;
+    const convo = { a: '', aOld: '', aPreview: '', aEmpty: '', b: '' };
+
+    /** A stored conversation with one visitor turn and one answer. */
+    async function seed(
+      workspaceId: string,
+      chatbotId: string,
+      opts: {
+        text?: string;
+        startedAt?: Date;
+        rating?: number;
+        isPreview?: boolean;
+        empty?: boolean;
+      } = {},
+    ): Promise<string> {
+      const at = opts.startedAt ?? new Date();
+      const created = await inWorkspace(workspaceId, () =>
+        db.conversation.create({
+          data: {
+            workspaceId,
+            chatbotId,
+            visitorId: `v-${run}`,
+            isPreview: opts.isPreview ?? false,
+            originUrl: 'https://shop.example/products/wallet',
+            rating: opts.rating ?? null,
+            messageCount: opts.empty ? 0 : 2,
+            startedAt: at,
+            lastMessageAt: at,
+            messages: opts.empty
+              ? undefined
+              : {
+                  create: [
+                    {
+                      workspaceId,
+                      role: 'USER',
+                      content: opts.text ?? `Do you sell ${word}?`,
+                      createdAt: at,
+                    },
+                    {
+                      workspaceId,
+                      role: 'ASSISTANT',
+                      content: 'Yes, fresh every week.',
+                      sources: [
+                        { title: 'Fruit FAQ', page: null, similarity: 0.8 },
+                      ],
+                      answeredBy: 'llm',
+                      createdAt: new Date(at.getTime() + 1),
+                    },
+                  ],
+                },
+          },
+          select: { id: true },
+        }),
+      );
+      return created.id;
+    }
+
+    type Page = { items: { id: string }[]; nextCursor: string | null };
+    const list = async (cookie: string, query = '') =>
+      (await as(cookie).get(`/v1/conversations?q=${word}${query}`).expect(200))
+        .body as Page;
+
+    beforeAll(async () => {
+      convo.a = await seed(ids.a, ids.botA, { rating: 4 });
+      convo.aOld = await seed(ids.a, ids.botA, {
+        startedAt: new Date('2026-01-05T10:00:00Z'),
+      });
+      convo.aPreview = await seed(ids.a, ids.botA, { isPreview: true });
+      convo.aEmpty = await seed(ids.a, ids.botA, { empty: true });
+      convo.b = await seed(ids.b, ids.botB, { rating: 4 });
+    });
+
+    it("lists only the caller's live conversations, newest first", async () => {
+      const a = await list(cookies.ownerA);
+      expect(a.items.map((c) => c.id)).toEqual([convo.a, convo.aOld]);
+      const b = await list(cookies.ownerB);
+      expect(b.items.map((c) => c.id)).toEqual([convo.b]);
+
+      // Without a search, A's whole inbox still never has B's chat.
+      const all = (
+        await as(cookies.ownerA).get('/v1/conversations?limit=100').expect(200)
+      ).body as Page;
+      const allIds = all.items.map((c) => c.id);
+      expect(allIds).toContain(convo.a);
+      expect(allIds).not.toContain(convo.b);
+      expect(allIds).not.toContain(convo.aPreview);
+      expect(allIds).not.toContain(convo.aEmpty);
+    });
+
+    it('filters by date, rating and chatbot, and pages with a cursor', async () => {
+      const ids1 = async (query: string) =>
+        (await list(cookies.ownerA, query)).items.map((c) => c.id);
+      expect(await ids1('&from=2026-01-01&to=2026-01-05')).toEqual([
+        convo.aOld,
+      ]);
+      expect(await ids1('&rating=4')).toEqual([convo.a]);
+      expect(await ids1('&rating=none')).toEqual([convo.aOld]);
+      expect(await ids1(`&chatbotId=${ids.botA}`)).toHaveLength(2);
+      // B's chatbot ID finds nothing for A, not B's conversations.
+      expect(await ids1(`&chatbotId=${ids.botB}`)).toEqual([]);
+
+      const first = await list(cookies.ownerA, '&limit=1');
+      expect(first.items.map((c) => c.id)).toEqual([convo.a]);
+      const second = await list(
+        cookies.ownerA,
+        `&limit=1&cursor=${first.nextCursor}`,
+      );
+      expect(second).toEqual({
+        items: [expect.objectContaining({ id: convo.aOld })],
+        nextCursor: null,
+      });
+
+      await as(cookies.ownerA).get('/v1/conversations?rating=9').expect(400);
+      await as(cookies.ownerA).get('/v1/conversations?cursor=bad').expect(400);
+    });
+
+    it('opens the transcript with sources and origin URL; a viewer can too', async () => {
+      const res = await as(cookies.viewerA)
+        .get(`/v1/conversations/${convo.a}`)
+        .expect(200);
+      expect(res.body).toMatchObject({
+        id: convo.a,
+        originUrl: 'https://shop.example/products/wallet',
+        rating: 4,
+        messages: [
+          { role: 'user', text: `Do you sell ${word}?`, sources: [] },
+          {
+            role: 'assistant',
+            answeredBy: 'llm',
+            sources: [{ title: 'Fruit FAQ', page: null, similarity: 0.8 }],
+          },
+        ],
+      });
+    });
+
+    it("another workspace's conversation is a 404, and so is a preview one", async () => {
+      await as(cookies.ownerB).get(`/v1/conversations/${convo.a}`).expect(404);
+      await as(cookies.ownerA).get(`/v1/conversations/${convo.b}`).expect(404);
+      await as(cookies.ownerA)
+        .get(`/v1/conversations/${convo.aPreview}`)
+        .expect(404);
+      await as(cookies.ownerA)
+        .get(`/v1/conversations/${randomUUID()}`)
+        .expect(404);
+      await as(cookies.ownerA).get('/v1/conversations/not-a-uuid').expect(400);
+    });
+
+    it("deleting another workspace's or a preview conversation is a 404 and keeps it (M5-3)", async () => {
+      await as(cookies.ownerB)
+        .delete(`/v1/conversations/${convo.a}`)
+        .expect(404);
+      await as(cookies.ownerA)
+        .delete(`/v1/conversations/${convo.b}`)
+        .expect(404);
+      await as(cookies.ownerA)
+        .delete(`/v1/conversations/${convo.aPreview}`)
+        .expect(404);
+      await as(cookies.ownerA)
+        .delete(`/v1/conversations/${randomUUID()}`)
+        .expect(404);
+      await as(cookies.ownerA)
+        .delete('/v1/conversations/not-a-uuid')
+        .expect(400);
+      // A viewer may read conversations but not delete them.
+      await as(cookies.viewerA)
+        .delete(`/v1/conversations/${convo.a}`)
+        .expect(403);
+      await request(http)
+        .delete(`/v1/conversations/${convo.a}`)
+        .set('X-Requested-With', 'fetch')
+        .expect(401);
+
+      const kept = await prisma.conversation.count({
+        where: { id: { in: [convo.a, convo.b, convo.aPreview] } },
+      });
+      expect(kept).toBe(3);
+      expect(
+        await prisma.message.count({ where: { conversationId: convo.b } }),
+      ).toBe(2);
+    });
+
+    it('the owner deletes their conversation with all its messages (M5-3)', async () => {
+      const doomed = await seed(ids.a, ids.botA);
+      await as(cookies.ownerA)
+        .delete(`/v1/conversations/${doomed}`)
+        .expect(204);
+
+      expect(
+        await prisma.conversation.findUnique({ where: { id: doomed } }),
+      ).toBeNull();
+      expect(
+        await prisma.message.count({ where: { conversationId: doomed } }),
+      ).toBe(0);
+      await as(cookies.ownerA).get(`/v1/conversations/${doomed}`).expect(404);
+      await as(cookies.ownerA)
+        .delete(`/v1/conversations/${doomed}`)
+        .expect(404);
+      // B's conversation is untouched.
+      await as(cookies.ownerB).get(`/v1/conversations/${convo.b}`).expect(200);
+    });
+
+    it('needs a session (401)', async () => {
+      await request(http).get('/v1/conversations').expect(401);
+      await request(http).get(`/v1/conversations/${convo.a}`).expect(401);
+    });
+  });
+
+  describe('Leads (M5-5)', () => {
+    const word = `quince${run}`;
+    const lead = { a: '', aOld: '', b: '' };
+    const convo = { a: '', b: '' };
+
+    async function seedConversation(
+      workspaceId: string,
+      chatbotId: string,
+    ): Promise<string> {
+      const created = await inWorkspace(workspaceId, () =>
+        db.conversation.create({
+          data: {
+            workspaceId,
+            chatbotId,
+            visitorId: `v-${run}`,
+            originUrl: 'https://shop.example/pricing',
+            messageCount: 1,
+            messages: {
+              create: [
+                { workspaceId, role: 'USER', content: `Hi, ${word} here` },
+              ],
+            },
+          },
+          select: { id: true },
+        }),
+      );
+      return created.id;
+    }
+
+    type LeadPage = {
+      items: { id: string; conversationId: string | null; name: string }[];
+      nextCursor: string | null;
+    };
+    const list = async (cookie: string, query = '') =>
+      (await as(cookie).get(`/v1/leads?q=${word}${query}`).expect(200))
+        .body as LeadPage;
+
+    beforeAll(async () => {
+      const leads = app.get(LeadsService);
+      convo.a = await seedConversation(ids.a, ids.botA);
+      convo.b = await seedConversation(ids.b, ids.botB);
+      lead.a = (
+        await inWorkspace(ids.a, () =>
+          leads.create({
+            chatbotId: ids.botA,
+            conversationId: convo.a,
+            name: `Ana ${word}`,
+            email: `ana-${run}@example.test`,
+          }),
+        )
+      ).id;
+      lead.aOld = (
+        await inWorkspace(ids.a, () =>
+          leads.create({ chatbotId: ids.botA, name: `=HYPERLINK ${word}` }),
+        )
+      ).id;
+      await prisma.lead.update({
+        where: { id: lead.aOld },
+        data: { createdAt: new Date('2026-01-05T10:00:00Z') },
+      });
+      lead.b = (
+        await inWorkspace(ids.b, () =>
+          leads.create({
+            chatbotId: ids.botB,
+            conversationId: convo.b,
+            name: `Bob ${word}`,
+          }),
+        )
+      ).id;
+    });
+
+    it("lists only the caller's leads, newest first; a viewer can too", async () => {
+      const a = await list(cookies.viewerA);
+      expect(a.items.map((l) => l.id)).toEqual([lead.a, lead.aOld]);
+      expect(a.items[0]).toMatchObject({
+        conversationId: convo.a,
+        sourceUrl: 'https://shop.example/pricing',
+      });
+      const b = await list(cookies.ownerB);
+      expect(b.items.map((l) => l.id)).toEqual([lead.b]);
+
+      const all = (
+        await as(cookies.ownerA).get('/v1/leads?limit=100').expect(200)
+      ).body as LeadPage;
+      expect(all.items.map((l) => l.id)).not.toContain(lead.b);
+    });
+
+    it('filters by date and pages with a cursor', async () => {
+      const ids1 = async (query: string) =>
+        (await list(cookies.ownerA, query)).items.map((l) => l.id);
+      expect(await ids1('&from=2026-01-01&to=2026-01-05')).toEqual([lead.aOld]);
+      expect(await ids1(`&chatbotId=${ids.botB}`)).toEqual([]);
+
+      const first = await list(cookies.ownerA, '&limit=1');
+      expect(first.items.map((l) => l.id)).toEqual([lead.a]);
+      const second = await list(
+        cookies.ownerA,
+        `&limit=1&cursor=${first.nextCursor}`,
+      );
+      expect(second.items.map((l) => l.id)).toEqual([lead.aOld]);
+      expect(second.nextCursor).toBeNull();
+
+      await as(cookies.ownerA).get('/v1/leads?cursor=bad').expect(400);
+      await as(cookies.ownerA).get('/v1/leads?from=nope').expect(400);
+    });
+
+    it("exports only the caller's leads as formula-safe CSV; owners and admins only", async () => {
+      const res = await as(cookies.ownerA)
+        .get(`/v1/leads/export.csv?q=${word}`)
+        .expect(200);
+      expect(String(res.headers['content-type'])).toContain('text/csv');
+      expect(String(res.headers['content-disposition'])).toMatch(
+        /^attachment; filename="leads-\d{4}-\d{2}-\d{2}\.csv"$/,
+      );
+      const lines = res.text
+        .replace(/^\uFEFF/, '')
+        .trimEnd()
+        .split('\r\n');
+      expect(lines).toHaveLength(3);
+      expect(lines[1]).toContain(`Ana ${word}`);
+      expect(lines[2]).toContain(`'=HYPERLINK ${word}`);
+      expect(res.text).not.toContain(`Bob ${word}`);
+
+      const b = await as(cookies.ownerB)
+        .get(`/v1/leads/export.csv?q=${word}`)
+        .expect(200);
+      expect(b.text).toContain(`Bob ${word}`);
+      expect(b.text).not.toContain(`Ana ${word}`);
+
+      await as(cookies.viewerA).get('/v1/leads/export.csv').expect(403);
+      await request(http).get('/v1/leads/export.csv').expect(401);
+      await request(http).get('/v1/leads').expect(401);
+    });
+
+    it("can't attach a lead to another workspace's chatbot or conversation", async () => {
+      const leads = app.get(LeadsService);
+      await expect(
+        inWorkspace(ids.b, () =>
+          leads.create({ chatbotId: ids.botA, name: 'Mallory' }),
+        ),
+      ).rejects.toBeInstanceOf(NotFoundException);
+      await expect(
+        inWorkspace(ids.b, () =>
+          leads.create({
+            chatbotId: ids.botB,
+            conversationId: convo.a,
+            name: 'Mallory',
+          }),
+        ),
+      ).rejects.toBeInstanceOf(NotFoundException);
+      expect(await prisma.lead.count({ where: { name: 'Mallory' } })).toBe(0);
+    });
+
+    it('a second capture in the same chat fills in the same lead', async () => {
+      const leads = app.get(LeadsService);
+      const again = await inWorkspace(ids.a, () =>
+        leads.create({
+          chatbotId: ids.botA,
+          conversationId: convo.a,
+          phone: '+8801711000000',
+        }),
+      );
+      expect(again).toMatchObject({
+        id: lead.a,
+        name: `Ana ${word}`,
+        phone: '+8801711000000',
+      });
+      expect(
+        await prisma.lead.count({ where: { conversationId: convo.a } }),
+      ).toBe(1);
+    });
+
+    it('the inbox marks and filters chats with a lead (hasLead)', async () => {
+      type Inbox = { items: { id: string; leadId: string | null }[] };
+      const inbox = async (cookie: string, query: string) =>
+        (
+          (
+            await as(cookie)
+              .get(`/v1/conversations?q=${word}${query}`)
+              .expect(200)
+          ).body as Inbox
+        ).items;
+      expect(await inbox(cookies.ownerA, '&hasLead=true')).toEqual([
+        expect.objectContaining({ id: convo.a, leadId: lead.a }),
+      ]);
+      expect(await inbox(cookies.ownerA, '&hasLead=false')).toEqual([]);
+      expect(await inbox(cookies.ownerB, '&hasLead=true')).toEqual([
+        expect.objectContaining({ id: convo.b, leadId: lead.b }),
+      ]);
+      await as(cookies.ownerA).get('/v1/conversations?hasLead=yes').expect(400);
+    });
+
+    it("capture_lead (M5-4) saves to its own workspace's chat and can't reach another workspace's", async () => {
+      const tool = app.get(LeadToolService);
+      const base = defaultChatbotConfig('Iso Shop');
+      const config = {
+        ...base,
+        behavior: {
+          ...base.behavior,
+          questionsToAsk: [
+            {
+              id: 'q-size',
+              question: 'Which size?',
+              field: 'custom' as const,
+              required: false,
+              askWhen: 'before_recommendation' as const,
+            },
+          ],
+        },
+      };
+      const args = JSON.stringify({
+        name: 'Mallory Tool',
+        answers: [{ question_id: 'q-size', answer: '42' }],
+      });
+
+      // Workspace B's chat pointing at A's conversation, or at A's chatbot.
+      for (const target of [
+        { chatbotId: ids.botB, conversationId: convo.a },
+        { chatbotId: ids.botA, conversationId: convo.a },
+      ]) {
+        const run = await inWorkspace(ids.b, () =>
+          tool.run({ ...target, isPreview: false, config }, args),
+        );
+        expect(run.accepted).toBe(false);
+      }
+      expect(await prisma.lead.count({ where: { name: 'Mallory Tool' } })).toBe(
+        0,
+      );
+      expect(await prisma.lead.findUnique({ where: { id: lead.a } })).toEqual(
+        expect.objectContaining({ name: `Ana ${word}`, answers: {} }),
+      );
+
+      // A preview chat saves nothing; A's own live chat saves the lead.
+      const own = await seedConversation(ids.a, ids.botA);
+      const preview = await inWorkspace(ids.a, () =>
+        tool.run(
+          { chatbotId: ids.botA, conversationId: own, isPreview: true, config },
+          args,
+        ),
+      );
+      expect(preview.accepted).toBe(true);
+      expect(await prisma.lead.count({ where: { conversationId: own } })).toBe(
+        0,
+      );
+      const saved = await inWorkspace(ids.a, () =>
+        tool.run(
+          {
+            chatbotId: ids.botA,
+            conversationId: own,
+            isPreview: false,
+            config,
+          },
+          args,
+        ),
+      );
+      expect(saved.accepted).toBe(true);
+      expect(
+        await prisma.lead.findFirst({ where: { conversationId: own } }),
+      ).toEqual(
+        expect.objectContaining({
+          workspaceId: ids.a,
+          chatbotId: ids.botA,
+          name: 'Mallory Tool',
+          answers: { 'q-size': '42' },
+          sourceUrl: 'https://shop.example/pricing',
+        }),
+      );
+    });
+
+    it("deleting another workspace's lead is a 404 and keeps it; the owner deletes their own", async () => {
+      await as(cookies.ownerB).delete(`/v1/leads/${lead.a}`).expect(404);
+      await as(cookies.ownerA).delete(`/v1/leads/${lead.b}`).expect(404);
+      await as(cookies.viewerA).delete(`/v1/leads/${lead.aOld}`).expect(403);
+      await as(cookies.ownerA).delete('/v1/leads/not-a-uuid').expect(400);
+      expect(
+        await prisma.lead.count({ where: { id: { in: [lead.a, lead.b] } } }),
+      ).toBe(2);
+
+      await as(cookies.ownerA).delete(`/v1/leads/${lead.aOld}`).expect(204);
+      expect(
+        await prisma.lead.findUnique({ where: { id: lead.aOld } }),
+      ).toBeNull();
+    });
+
+    it('deleting the conversation keeps its lead and clears the link', async () => {
+      await as(cookies.ownerA)
+        .delete(`/v1/conversations/${convo.a}`)
+        .expect(204);
+      const kept = await prisma.lead.findUniqueOrThrow({
+        where: { id: lead.a },
+      });
+      expect(kept.conversationId).toBeNull();
+      expect(kept.sourceUrl).toBe('https://shop.example/pricing');
+      const a = await list(cookies.ownerA);
+      expect(a.items).toEqual([
+        expect.objectContaining({ id: lead.a, conversationId: null }),
+      ]);
+    });
+  });
+
+  describe('New-lead emails (M5-6)', () => {
+    const word = `kumquat${run}`;
+    const sentFor = (name: string) =>
+      sentEmails.filter((m) => m.html.includes(name));
+
+    async function seedChat(
+      workspaceId: string,
+      chatbotId: string,
+      isPreview = false,
+    ): Promise<string> {
+      const created = await inWorkspace(workspaceId, () =>
+        db.conversation.create({
+          data: {
+            workspaceId,
+            chatbotId,
+            visitorId: `v-notify-${run}`,
+            isPreview,
+            originUrl: 'https://shop.example/<b>checkout</b>',
+          },
+          select: { id: true },
+        }),
+      );
+      return created.id;
+    }
+
+    const notifiedAt = async (id: string) =>
+      (await prisma.lead.findUniqueOrThrow({ where: { id } })).notifiedAt;
+
+    beforeAll(async () => {
+      // Only owners with a confirmed address get the email.
+      await prisma.user.updateMany({
+        where: { id: { in: [users.ownerA, users.ownerB, users.viewerA] } },
+        data: { emailVerifiedAt: new Date() },
+      });
+    });
+
+    it("emails only workspace A's owners, once, for workspace A's lead", async () => {
+      const leads = app.get(LeadsService);
+      const chatA = await seedChat(ids.a, ids.botA);
+      const chatB = await seedChat(ids.b, ids.botB);
+      const leadA = await inWorkspace(ids.a, () =>
+        leads.create({
+          chatbotId: ids.botA,
+          conversationId: chatA,
+          name: `<i>Ana</i> ${word}-a`,
+          email: `ana-notify-${run}@example.test`,
+        }),
+      );
+      const leadB = await inWorkspace(ids.b, () =>
+        leads.create({
+          chatbotId: ids.botB,
+          conversationId: chatB,
+          name: `Bob ${word}-b`,
+        }),
+      );
+
+      // The pg-boss worker in the app sends them (the delay is 0 in tests).
+      await waitUntil('lead A notified', () => notifiedAt(leadA.id));
+      await waitUntil('lead B notified', () => notifiedAt(leadB.id));
+      const toA = sentFor(`${word}-a`);
+      expect(toA).toHaveLength(1);
+      expect(toA[0].to).toEqual([email('owner-a')]);
+      expect(toA[0].html).toContain(`&lt;i&gt;Ana&lt;/i&gt; ${word}-a`);
+      expect(toA[0].html).toContain('shop.example/&lt;b&gt;checkout&lt;/b&gt;');
+      expect(toA[0].html).toContain(`/app/conversations/${chatA}`);
+      const toB = sentFor(`${word}-b`);
+      expect(toB).toHaveLength(1);
+      expect(toB[0].to).toEqual([email('owner-b')]);
+
+      // More details in the same chat fill in the lead; no second email.
+      await inWorkspace(ids.a, () =>
+        leads.create({
+          chatbotId: ids.botA,
+          conversationId: chatA,
+          phone: '+8801711000000',
+        }),
+      );
+      await expect(
+        app.get(LeadNotifyProcessor).process({
+          data: { workspaceId: ids.a, leadId: leadA.id },
+          retryCount: 0,
+        }),
+      ).resolves.toBe('already-notified');
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+      expect(sentFor(`${word}-a`)).toHaveLength(1);
+    });
+
+    it("a job naming workspace A can't email about workspace B's lead", async () => {
+      // Saved directly, so no job was queued for it.
+      const leadB = await prisma.lead.create({
+        data: {
+          workspaceId: ids.b,
+          chatbotId: ids.botB,
+          name: `Forged ${word}`,
+        },
+      });
+      await expect(
+        app.get(LeadNotifyProcessor).process({
+          data: { workspaceId: ids.a, leadId: leadB.id },
+          retryCount: 0,
+        }),
+      ).resolves.toBe('skipped');
+      expect(sentFor(`Forged ${word}`)).toHaveLength(0);
+      expect(await notifiedAt(leadB.id)).toBeNull();
+    });
+
+    it('never emails about a Test chat (preview) lead', async () => {
+      const preview = await seedChat(ids.a, ids.botA, true);
+      const lead = await prisma.lead.create({
+        data: {
+          workspaceId: ids.a,
+          chatbotId: ids.botA,
+          conversationId: preview,
+          name: `Preview ${word}`,
+        },
+      });
+      await expect(
+        app.get(LeadNotifyProcessor).process({
+          data: { workspaceId: ids.a, leadId: lead.id },
+          retryCount: 0,
+        }),
+      ).resolves.toBe('skipped');
+      expect(sentFor(`Preview ${word}`)).toHaveLength(0);
+    });
+  });
+
+  describe('Analytics overview (M5-8)', () => {
+    // Days no other test writes on, so the counts below are exact.
+    const day = (iso: string) => new Date(`2025-03-${iso}Z`);
+
+    /** A conversation with one visitor turn and one answer (unless empty). */
+    async function seedChat(
+      workspaceId: string,
+      chatbotId: string,
+      at: Date,
+      opts: {
+        rating?: number;
+        isPreview?: boolean;
+        empty?: boolean;
+        answeredBy?: string;
+      } = {},
+    ): Promise<string> {
+      const created = await inWorkspace(workspaceId, () =>
+        db.conversation.create({
+          data: {
+            workspaceId,
+            chatbotId,
+            visitorId: `v-${run}`,
+            isPreview: opts.isPreview ?? false,
+            rating: opts.rating ?? null,
+            messageCount: opts.empty ? 0 : 2,
+            startedAt: at,
+            lastMessageAt: at,
+            messages: opts.empty
+              ? undefined
+              : {
+                  create: [
+                    { workspaceId, role: 'USER', content: 'Hi', createdAt: at },
+                    {
+                      workspaceId,
+                      role: 'ASSISTANT',
+                      content: 'Hello!',
+                      answeredBy: opts.answeredBy ?? 'llm',
+                      createdAt: new Date(at.getTime() + 1000),
+                    },
+                  ],
+                },
+          },
+          select: { id: true },
+        }),
+      );
+      return created.id;
+    }
+
+    const seedLead = (
+      workspaceId: string,
+      chatbotId: string,
+      createdAt: Date,
+      conversationId?: string,
+    ) =>
+      inWorkspace(workspaceId, () =>
+        db.lead.create({
+          data: {
+            workspaceId,
+            chatbotId,
+            conversationId,
+            name: `Analytics ${run}`,
+            createdAt,
+          },
+        }),
+      );
+
+    type Overview = {
+      conversations: number;
+      messages: number;
+      leads: number;
+      avgRating: number | null;
+      ratings: number;
+      fallbackRate: number | null;
+      timeZone: string;
+      daily: {
+        date: string;
+        conversations: number;
+        messages: number;
+        leads: number;
+        avgRating: number | null;
+      }[];
+    };
+    const overview = async (cookie: string, query: string) =>
+      (await as(cookie).get(`/v1/analytics/overview?${query}`).expect(200))
+        .body as Overview;
+
+    beforeAll(async () => {
+      const first = await seedChat(ids.a, ids.botA, day('01T10:00:00'), {
+        rating: 5,
+      });
+      // 23:30 UTC still belongs to March 1 (UTC day buckets).
+      await seedChat(ids.a, ids.botA, day('01T23:30:00'), {
+        rating: 4,
+        answeredBy: 'fallback',
+      });
+      await seedChat(ids.a, ids.botA, day('03T00:10:00'));
+      // Left out like in the inbox: Test chat and a chat with no messages.
+      await seedChat(ids.a, ids.botA, day('01T12:00:00'), {
+        isPreview: true,
+        rating: 1,
+      });
+      await seedChat(ids.a, ids.botA, day('02T12:00:00'), { empty: true });
+      await seedLead(ids.a, ids.botA, day('01T10:05:00'), first);
+      await seedLead(ids.a, ids.botA, day('02T08:00:00'));
+      // Workspace B, same days: must never show up in A's numbers.
+      const bChat = await seedChat(ids.b, ids.botB, day('02T09:00:00'), {
+        rating: 1,
+        answeredBy: 'fallback',
+      });
+      await seedChat(ids.b, ids.botB, day('01T09:00:00'));
+      await seedLead(ids.b, ids.botB, day('02T09:05:00'), bChat);
+      await seedLead(ids.b, ids.botB, day('01T09:05:00'));
+    });
+
+    it("counts only the caller's live conversations, messages and leads, day by day", async () => {
+      const a = await overview(cookies.ownerA, 'from=2025-03-01&to=2025-03-03');
+      expect(a).toMatchObject({
+        timeZone: 'UTC',
+        conversations: 3,
+        messages: 6,
+        leads: 2,
+        avgRating: 4.5,
+        ratings: 2,
+        fallbackRate: 0.333,
+      });
+      expect(a.daily).toEqual([
+        expect.objectContaining({
+          date: '2025-03-01',
+          conversations: 2,
+          messages: 4,
+          leads: 1,
+          avgRating: 4.5,
+        }),
+        // No conversations on March 2: a zero day, not a missing one.
+        expect.objectContaining({
+          date: '2025-03-02',
+          conversations: 0,
+          messages: 0,
+          leads: 1,
+          avgRating: null,
+        }),
+        expect.objectContaining({
+          date: '2025-03-03',
+          conversations: 1,
+          messages: 2,
+          leads: 0,
+        }),
+      ]);
+
+      const b = await overview(cookies.ownerB, 'from=2025-03-01&to=2025-03-03');
+      expect(b).toMatchObject({
+        conversations: 2,
+        messages: 4,
+        leads: 2,
+        avgRating: 1,
+        fallbackRate: 0.5,
+      });
+    });
+
+    it('a viewer can read it; a one-day range has one zero-filled day', async () => {
+      const a = await overview(
+        cookies.viewerA,
+        'from=2025-03-02&to=2025-03-02',
+      );
+      expect(a).toMatchObject({ conversations: 0, messages: 0, leads: 1 });
+      expect(a.daily).toHaveLength(1);
+    });
+
+    it('rejects a bad range (400) and needs a session (401)', async () => {
+      await as(cookies.ownerA)
+        .get('/v1/analytics/overview?from=2025-03-03&to=2025-03-01')
+        .expect(400);
+      await as(cookies.ownerA)
+        .get('/v1/analytics/overview?workspaceId=' + ids.b)
+        .expect(400);
+      await request(http).get('/v1/analytics/overview').expect(401);
+    });
+  });
+
+  describe('Top questions (M5-9)', () => {
+    // March 2024: no other test writes here.
+    const at = (d: string) => new Date(`2024-03-${d}Z`);
+    type Top = {
+      questions: { count: number; example: string; lastAskedAt: string }[];
+      truncated: boolean;
+    };
+    const top = async (
+      cookie: string,
+      query = 'from=2024-03-01&to=2024-03-03',
+    ) =>
+      (await as(cookie).get(`/v1/analytics/top-questions?${query}`).expect(200))
+        .body as Top;
+
+    async function seedAsk(
+      workspaceId: string,
+      chatbotId: string,
+      when: Date,
+      texts: string[],
+      opts: { isPreview?: boolean } = {},
+    ) {
+      await inWorkspace(workspaceId, () =>
+        db.conversation.create({
+          data: {
+            workspaceId,
+            chatbotId,
+            visitorId: `v-${run}`,
+            isPreview: opts.isPreview ?? false,
+            messageCount: texts.length * 2,
+            startedAt: when,
+            lastMessageAt: when,
+            messages: {
+              create: texts.flatMap((content, i) => [
+                {
+                  workspaceId,
+                  role: 'USER' as const,
+                  content,
+                  createdAt: new Date(when.getTime() + i * 2000),
+                },
+                {
+                  workspaceId,
+                  role: 'ASSISTANT' as const,
+                  content: 'Answer ' + content,
+                  createdAt: new Date(when.getTime() + i * 2000 + 1000),
+                },
+              ]),
+            },
+          },
+        }),
+      );
+    }
+
+    beforeAll(async () => {
+      await seedAsk(ids.a, ids.botA, at('01T10:00:00'), [
+        'What are your opening hours?',
+        'hi',
+      ]);
+      await seedAsk(ids.a, ids.botA, at('02T10:00:00'), [
+        '  what are your OPENING hours  ',
+        'আপনাদের ঠিকানা কী?',
+        'ok',
+      ]);
+      await seedAsk(ids.a, ids.botA, at('03T10:00:00'), [
+        'আপনাদের ঠিকানা কী',
+        'Do you ship abroad?',
+      ]);
+      // Left out: Test chat.
+      await seedAsk(
+        ids.a,
+        ids.botA,
+        at('01T12:00:00'),
+        ['Preview only question'],
+        {
+          isPreview: true,
+        },
+      );
+      // Workspace B asks the same thing many times: must never reach A.
+      for (let i = 0; i < 4; i++) {
+        await seedAsk(ids.b, ids.botB, at('02T11:00:00'), [
+          'What are your opening hours?',
+          'Secret B question',
+        ]);
+      }
+    });
+
+    it("groups identical questions after cleaning, Bangla included, from the caller's workspace only", async () => {
+      const a = await top(cookies.ownerA);
+      expect(a.truncated).toBe(false);
+      expect(a.questions.map((q) => q.count)).toEqual([2, 2, 1]);
+      expect(a.questions.map((q) => q.example)).toEqual([
+        // Most recent wording; the Mar 3 Bangla chat is newer than Mar 2 hours.
+        'আপনাদের ঠিকানা কী',
+        'what are your OPENING hours',
+        'Do you ship abroad?',
+      ]);
+      const text = JSON.stringify(a);
+      expect(text).not.toContain('Secret B');
+      expect(text).not.toContain('Preview only');
+
+      const b = await top(cookies.ownerB);
+      expect(b.questions[0]).toMatchObject({ count: 4 });
+      expect(JSON.stringify(b)).not.toContain('ship abroad');
+    });
+
+    it('honours the range and the limit; a viewer can read it', async () => {
+      const day1 = await top(cookies.viewerA, 'from=2024-03-01&to=2024-03-01');
+      expect(day1.questions).toHaveLength(1);
+      expect(day1.questions[0]).toMatchObject({ count: 1 });
+      const one = await top(
+        cookies.ownerA,
+        'from=2024-03-01&to=2024-03-03&limit=1',
+      );
+      expect(one.questions).toHaveLength(1);
+    });
+
+    it('rejects a bad query (400) and needs a session (401)', async () => {
+      await as(cookies.ownerA)
+        .get('/v1/analytics/top-questions?limit=0')
+        .expect(400);
+      await as(cookies.ownerA)
+        .get('/v1/analytics/top-questions?workspaceId=' + ids.b)
+        .expect(400);
+      await request(http).get('/v1/analytics/top-questions').expect(401);
+    });
+  });
+
+  describe('Unanswered questions (M5-10)', () => {
+    // April 2024: no other test writes here.
+    const at = (d: string) => new Date(`2024-04-${d}Z`);
+    type Unanswered = {
+      questions: {
+        count: number;
+        example: string;
+        lastAskedAt: string;
+        conversationId: string;
+      }[];
+      truncated: boolean;
+    };
+    const unanswered = async (
+      cookie: string,
+      query = 'from=2024-04-01&to=2024-04-03',
+    ) =>
+      (await as(cookie).get(`/v1/analytics/unanswered?${query}`).expect(200))
+        .body as Unanswered;
+
+    /** One chat: each turn is [visitor text, how the bot answered]. */
+    async function seedChat(
+      workspaceId: string,
+      chatbotId: string,
+      when: Date,
+      turns: [string, string][],
+      opts: { isPreview?: boolean } = {},
+    ) {
+      return inWorkspace(workspaceId, () =>
+        db.conversation.create({
+          data: {
+            workspaceId,
+            chatbotId,
+            visitorId: `v-${run}`,
+            isPreview: opts.isPreview ?? false,
+            messageCount: turns.length * 2,
+            startedAt: when,
+            lastMessageAt: when,
+            messages: {
+              create: turns.flatMap(([content, answeredBy], i) => [
+                {
+                  workspaceId,
+                  role: 'USER' as const,
+                  content,
+                  createdAt: new Date(when.getTime() + i * 2000),
+                },
+                {
+                  workspaceId,
+                  role: 'ASSISTANT' as const,
+                  content: 'Reply ' + i,
+                  answeredBy,
+                  createdAt: new Date(when.getTime() + i * 2000 + 1000),
+                },
+              ]),
+            },
+          },
+        }),
+      );
+    }
+
+    let newestHoursChat: string;
+
+    beforeAll(async () => {
+      await seedChat(ids.a, ids.botA, at('01T10:00:00'), [
+        ['What are your opening hours?', 'fallback'],
+        ['hi', 'fallback'],
+        ['Do you ship abroad?', 'llm'],
+      ]);
+      const newest = await seedChat(ids.a, ids.botA, at('02T10:00:00'), [
+        ['  what are your OPENING hours  ', 'fallback'],
+        ['আপনাদের ঠিকানা কী?', 'fallback'],
+      ]);
+      newestHoursChat = newest.id;
+      await seedChat(ids.a, ids.botA, at('03T10:00:00'), [
+        ['আপনাদের ঠিকানা কী', 'fallback'],
+        ['Answered by a custom answer', 'custom_answer'],
+      ]);
+      // Left out: Test chat.
+      await seedChat(
+        ids.a,
+        ids.botA,
+        at('01T12:00:00'),
+        [['Preview only question', 'fallback']],
+        { isPreview: true },
+      );
+      // Workspace B falls back on the same wording many times: must never reach A.
+      for (let i = 0; i < 4; i++) {
+        await seedChat(ids.b, ids.botB, at('02T11:00:00'), [
+          ['What are your opening hours?', 'fallback'],
+          ['Secret B question', 'fallback'],
+        ]);
+      }
+    });
+
+    it("groups the visitor message before each fallback, from the caller's workspace only", async () => {
+      const a = await unanswered(cookies.ownerA);
+      expect(a.truncated).toBe(false);
+      expect(a.questions.map((q) => q.count)).toEqual([2, 2]);
+      expect(a.questions.map((q) => q.example)).toEqual([
+        // Most recent wording first; "hi", answered ones and Test chat are out.
+        'আপনাদের ঠিকানা কী',
+        'what are your OPENING hours',
+      ]);
+      // The link points at the chat of the most recent time.
+      expect(a.questions[1].conversationId).toBe(newestHoursChat);
+      const text = JSON.stringify(a);
+      expect(text).not.toContain('Secret B');
+      expect(text).not.toContain('Preview only');
+      expect(text).not.toContain('ship abroad');
+
+      const b = await unanswered(cookies.ownerB);
+      expect(b.questions[0]).toMatchObject({ count: 4 });
+      expect(JSON.stringify(b)).not.toContain('ঠিকানা');
+      expect(
+        b.questions.some((q) => q.conversationId === newestHoursChat),
+      ).toBe(false);
+    });
+
+    it('honours the range and the limit; a viewer can read it', async () => {
+      const day1 = await unanswered(
+        cookies.viewerA,
+        'from=2024-04-01&to=2024-04-01',
+      );
+      expect(day1.questions).toHaveLength(1);
+      expect(day1.questions[0]).toMatchObject({ count: 1 });
+      const one = await unanswered(
+        cookies.ownerA,
+        'from=2024-04-01&to=2024-04-03&limit=1',
+      );
+      expect(one.questions).toHaveLength(1);
+    });
+
+    it('rejects a bad query (400) and needs a session (401)', async () => {
+      await as(cookies.ownerA)
+        .get('/v1/analytics/unanswered?limit=0')
+        .expect(400);
+      await as(cookies.ownerA)
+        .get('/v1/analytics/unanswered?workspaceId=' + ids.b)
+        .expect(400);
+      await request(http).get('/v1/analytics/unanswered').expect(401);
     });
   });
 

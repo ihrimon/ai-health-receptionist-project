@@ -15,6 +15,7 @@ const config: PublicChatConfig = {
   headerTitle: "Acme Support",
   primaryColor: "#facc15",
   position: "left",
+  launcherIcon: "sparkle",
   quickReplies: [],
   showBranding: true,
 };
@@ -57,7 +58,7 @@ describe("App in the loader's iframe (M4-10)", () => {
     expect(posted()[0]).toEqual({ data: { ns: "brainstack", v: 1, type: "ready" }, target: "*" });
     await waitFor(() => expect(sent("config")).toHaveLength(1));
     expect(sent("config")[0]).toEqual({
-      data: { ns: "brainstack", v: 1, type: "config", primaryColor: "#facc15", textColor: "#000000", position: "left" },
+      data: { ns: "brainstack", v: 1, type: "config", primaryColor: "#facc15", textColor: "#000000", position: "left", launcherIcon: "sparkle" },
       target: HOST,
     });
   });
@@ -100,6 +101,18 @@ describe("App in the loader's iframe (M4-10)", () => {
 
     act(() => deliver(hostMessage("state", true), HOST));
     await waitFor(() => expect(sent("unread").map((m) => m.data.count)).toEqual([1, 0]));
+  });
+
+  it("asks for a rating as soon as the visitor closes the panel after an answer (M5-7)", async () => {
+    const { deliver, finish, user } = await embedded(true);
+    await user.type(screen.getByRole("textbox", { name: STRINGS.inputLabel }), "Hi{Enter}");
+    act(() => finish());
+    await screen.findByText("We open at 9.");
+    // The quiet time is long (30 s): only closing brings the prompt now.
+    expect(screen.queryByRole("region", { name: STRINGS.ratingQuestion })).toBeNull();
+
+    act(() => deliver(hostMessage("state", false), HOST));
+    expect(await screen.findByRole("region", { name: STRINGS.ratingQuestion })).toBeTruthy();
   });
 
   it("doesn't count an answer the visitor watched arrive", async () => {

@@ -16,6 +16,7 @@ import { ConfigService } from '@nestjs/config';
 import { ChatbotStatus, Prisma } from '../../generated/prisma/client';
 import { requireTenant } from '../../tenancy/tenant-context';
 import { TENANT_PRISMA, type TenantPrisma } from '../../tenancy/tenant-prisma';
+import { hostAllowed } from '../widget-page/install-host';
 import { WidgetPageCache } from '../widget-page/widget-page.cache';
 import { sameJson } from './same-json';
 
@@ -29,7 +30,7 @@ const WITH_PUBLISHED = {
 
 type ChatbotRow = Prisma.ChatbotGetPayload<typeof WITH_PUBLISHED>;
 
-/** GET /v1/chatbot (D-2 §2.2). `installVerifiedAt` arrives with M4-14. */
+/** GET /v1/chatbot (D-2 §2.2). */
 export interface ChatbotView {
   id: string;
   publicId: string;
@@ -41,6 +42,12 @@ export interface ChatbotView {
   /** Why publishing would fail right now; empty when it's allowed. */
   publishProblems: PublishProblem[];
   allowedDomains: string[];
+  /**
+   * "Verify installation" (FR-3.5, M4-14): when the widget was first
+   * loaded inside one of the allowed sites, and which one; null until then.
+   */
+  installVerifiedAt: Date | null;
+  installVerifiedHost: string | null;
   embedSnippet: string;
 }
 
@@ -228,9 +235,20 @@ export class ChatbotService {
       );
     }
     const bot = await this.load();
+    // The install was seen on a site that is no longer listed: the widget
+    // can't load there now, so wait for the next load from a listed one.
+    const installGone =
+      bot.installVerifiedHost !== null &&
+      !hostAllowed(bot.installVerifiedHost, check.domains, allowLocalhost);
     const saved = await this.db.chatbot.update({
       where: { id: bot.id },
-      data: { allowedDomains: check.domains },
+      data: {
+        allowedDomains: check.domains,
+        ...(installGone && {
+          installVerifiedAt: null,
+          installVerifiedHost: null,
+        }),
+      },
       ...WITH_PUBLISHED,
     });
     this.widgetPages.invalidate(saved.publicId);
@@ -309,6 +327,8 @@ export class ChatbotService {
       hasUnpublishedChanges: this.hasUnpublishedChanges(bot),
       publishProblems: await this.publishProblems(bot),
       allowedDomains: bot.allowedDomains,
+      installVerifiedAt: bot.installVerifiedAt,
+      installVerifiedHost: bot.installVerifiedHost,
       embedSnippet: `<script src="${loaderUrl}" data-chatbot-id="${bot.publicId}" async></script>`,
     };
   }

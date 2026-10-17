@@ -2,7 +2,8 @@
 
 import { createFaqSchema } from "@brainstack/shared";
 import { ArrowDown, ArrowUp, Pencil, Plus, Search, Trash2 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { prefillQuestion } from "@/lib/analytics";
 import { TextAreaField, TextField } from "@/components/chatbot-editor/fields";
 import { Button } from "@/components/ui/button";
 import {
@@ -31,9 +32,19 @@ export function FaqsTab({
   onChanged,
 }: TabBase & { faqs: Faq[]; max: number }) {
   const [query, setQuery] = useState("");
-  const [editing, setEditing] = useState<Faq | "new" | null>(null);
+  // "Add to knowledge" on the Unanswered page lands here with ?addFaq=question.
+  // Only rendered after the lists load in the browser, so window exists.
+  const [prefill] = useState(() =>
+    canEdit && max > faqs.length ? prefillQuestion(window.location.search) : null,
+  );
+  const [editing, setEditing] = useState<Faq | "new" | null>(prefill ? "new" : null);
   const [deleting, setDeleting] = useState<Faq | null>(null);
   const [moving, setMoving] = useState(false);
+  useEffect(() => {
+    if (window.location.search.includes("addFaq")) {
+      window.history.replaceState(null, "", window.location.pathname);
+    }
+  }, []);
   const limit = limitInfo(faqs.length, max);
   const shown = filterFaqs(faqs, query);
 
@@ -150,6 +161,7 @@ export function FaqsTab({
       {editing && (
         <FaqDialog
           faq={editing === "new" ? null : editing}
+          initialQuestion={editing === "new" ? prefill : null}
           onClose={() => setEditing(null)}
           onSaved={onChanged}
         />
@@ -169,14 +181,16 @@ export function FaqsTab({
 
 function FaqDialog({
   faq,
+  initialQuestion,
   onClose,
   onSaved,
 }: {
   faq: Faq | null;
+  initialQuestion?: string | null;
   onClose: () => void;
   onSaved: () => Promise<void>;
 }) {
-  const [question, setQuestion] = useState(faq?.question ?? "");
+  const [question, setQuestion] = useState(faq?.question ?? initialQuestion ?? "");
   const [answer, setAnswer] = useState(faq?.answer ?? "");
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);

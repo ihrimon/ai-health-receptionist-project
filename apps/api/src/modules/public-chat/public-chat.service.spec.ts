@@ -37,6 +37,7 @@ describe('PublicChatService', () => {
     start: jest.fn(),
     find: jest.fn(),
     messages: jest.fn(),
+    rate: jest.fn(),
   };
   const tokens = { sign: jest.fn(), verify: jest.fn() };
   let service: PublicChatService;
@@ -84,6 +85,35 @@ describe('PublicChatService', () => {
       botName: config.identity.botName,
       welcomeMessage: config.identity.welcomeMessage,
       primaryColor: config.widget.primaryColor,
+      position: config.widget.position,
+      headerTitle: config.widget.headerTitle,
+      launcherIcon: 'chat',
+    });
+  });
+
+  it('sends the chosen launcher icon, and the default for a custom one', async () => {
+    const withIcon = (launcherIcon: typeof config.widget.launcherIcon) => ({
+      ...liveRow,
+      publishedVersion: {
+        id: 'ver-1',
+        config: {
+          ...config,
+          widget: {
+            ...config.widget,
+            launcherIcon,
+            launcherIconUrl:
+              launcherIcon === 'custom' ? 'https://cdn.example/i.png' : null,
+          },
+        },
+      },
+    });
+    prisma.chatbot.findUnique.mockResolvedValueOnce(withIcon('sparkle'));
+    await expect(service.config('cb_abc')).resolves.toMatchObject({
+      launcherIcon: 'sparkle',
+    });
+    prisma.chatbot.findUnique.mockResolvedValueOnce(withIcon('custom'));
+    await expect(service.config('cb_abc')).resolves.toMatchObject({
+      launcherIcon: 'chat',
     });
   });
 
@@ -262,6 +292,44 @@ describe('PublicChatService', () => {
         UnauthorizedException,
       );
       expect(conversations.messages).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('rating (M5-7)', () => {
+    const rate = (token: string | null = 'signed-token') =>
+      service.rate(CONVERSATION, token, { rating: 5 });
+
+    it("saves the stars in the conversation's own workspace", async () => {
+      let tenant: unknown;
+      conversations.rate.mockImplementation(() => {
+        tenant = currentTenant();
+        return Promise.resolve(true);
+      });
+
+      await rate();
+
+      expect(tenant).toMatchObject({ workspaceId: 'ws-1' });
+      expect(conversations.rate).toHaveBeenCalledWith(CONVERSATION, 'bot-1', 5);
+      expect(rateLimit.consume).toHaveBeenCalledWith({
+        key: `public:rating:${CONVERSATION}`,
+        ...PUBLIC_CHAT_LIMITS.ratingPerConversationMinute,
+      });
+    });
+
+    it("is a 401 without a valid token or with another conversation's", async () => {
+      tokens.verify.mockReturnValue(null);
+      await expect(rate(null)).rejects.toThrow(UnauthorizedException);
+      tokens.verify.mockReturnValue({
+        conversationId: '9c3a2f10-0000-4000-8000-000000000000',
+        chatbotId: 'bot-1',
+      });
+      await expect(rate()).rejects.toThrow(UnauthorizedException);
+      expect(conversations.rate).not.toHaveBeenCalled();
+    });
+
+    it('is a 404 when the conversation is not this chatbot’s', async () => {
+      conversations.rate.mockResolvedValue(false);
+      await expect(rate()).rejects.toThrow(NotFoundException);
     });
   });
 });

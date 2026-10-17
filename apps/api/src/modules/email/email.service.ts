@@ -3,7 +3,8 @@ import { ConfigService } from '@nestjs/config';
 import { createTransport, Transporter } from 'nodemailer';
 
 export interface OutgoingEmail {
-  to: string;
+  /** One address, or several on the same email. */
+  to: string | string[];
   subject: string;
   html: string;
 }
@@ -41,16 +42,20 @@ export class EmailService {
     }
   }
 
-  async send({ to, subject, html }: OutgoingEmail): Promise<void> {
+  /**
+   * Resolves true once the email was handed to the mail server, false when
+   * email is disabled (nothing sent); rejects when the send fails.
+   */
+  async send({ to, subject, html }: OutgoingEmail): Promise<boolean> {
     if (!this.transporter) {
       // Without SMTP in development, show the email (with its verify/reset
       // link) in the log so auth flows can still be tested end to end.
       if (!this.isProduction) {
         this.logger.log(
-          `Email disabled, not sent. To: ${to} | ${subject}\n${html}`,
+          `Email disabled, not sent. To: ${[to].flat().join(', ')} | ${subject}\n${html}`,
         );
       }
-      return;
+      return false;
     }
 
     await this.transporter.sendMail({
@@ -59,5 +64,6 @@ export class EmailService {
       subject,
       html,
     });
+    return true;
   }
 }

@@ -40,6 +40,12 @@ export const publicMessageRequestSchema = z.strictObject({
 });
 export type PublicMessageRequest = z.output<typeof publicMessageRequestSchema>;
 
+/** POST /v1/public/conversations/:id/rating: the visitor's 1–5 stars (FR-4.6, M5-7). */
+export const publicRatingRequestSchema = z.strictObject({
+  rating: z.number().int().min(1).max(5),
+});
+export type PublicRatingRequest = z.output<typeof publicRatingRequestSchema>;
+
 /** GET /v1/public/conversations/:id/messages: what a reload shows again. */
 export interface PublicMessageView {
   id: string;
@@ -47,6 +53,10 @@ export interface PublicMessageView {
   text: string;
   createdAt: string;
 }
+
+/** The built-in launcher icons the loader can draw (FR-3.6). */
+export const LAUNCHER_ICONS = ['chat', 'sparkle', 'help'] as const;
+export type LauncherIcon = (typeof LAUNCHER_ICONS)[number];
 
 /** GET /v1/public/chatbots/:publicId/config: what the widget shows. */
 export interface PublicChatConfig {
@@ -56,6 +66,8 @@ export interface PublicChatConfig {
   headerTitle: string;
   primaryColor: string;
   position: 'right' | 'left';
+  /** The launcher button's icon; a 'custom' one shows 'chat' until icon uploads exist. */
+  launcherIcon: LauncherIcon;
   quickReplies: string[];
   showBranding: boolean;
 }

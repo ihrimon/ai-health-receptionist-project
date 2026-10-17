@@ -5,6 +5,8 @@ import {
   bannerState,
   checkDraft,
   hasUnsavedEdits,
+  MAX_QUESTIONS,
+  newQuestion,
   sameJson,
   tabForField,
 } from "./config-form";
@@ -145,5 +147,46 @@ describe("tabForField", () => {
     expect(tabForField("business.contact.email")).toBe("general");
     expect(tabForField("behavior.handoff.value")).toBe("behavior");
     expect(tabForField("widget.quickReplies")).toBe("appearance");
+  });
+});
+
+describe("newQuestion", () => {
+  it("makes a blank custom question with an ID the schema accepts", () => {
+    const question = newQuestion([]);
+    expect(question).toMatchObject({
+      question: "",
+      field: "custom",
+      required: false,
+      askWhen: "before_recommendation",
+    });
+    expect(question.id).toMatch(/^q_[a-z0-9]{6}$/);
+  });
+
+  it("never reuses an existing ID", () => {
+    const first = newQuestion([], () => 0);
+    const rolls = [0, 0, 0.5];
+    const second = newQuestion([first], () => rolls.shift() ?? 0.9);
+    expect(second.id).not.toBe(first.id);
+  });
+
+  it("validates with the shared schema once the question is written", () => {
+    const draft = saved();
+    for (let i = 0; i < MAX_QUESTIONS; i++) {
+      const q = newQuestion(draft.behavior.questionsToAsk);
+      q.question = `Question ${i}?`;
+      draft.behavior.questionsToAsk.push(q);
+    }
+    expect(checkDraft(draft).ok).toBe(true);
+    draft.behavior.questionsToAsk[0].question = " ";
+    const check = checkDraft(draft);
+    expect(check.ok).toBe(false);
+    if (!check.ok) {
+      expect(Object.keys(check.errors)).toEqual([
+        "behavior.questionsToAsk.0.question",
+      ]);
+    }
+    draft.behavior.questionsToAsk[0].question = "Name?";
+    draft.behavior.questionsToAsk.push(newQuestion([]));
+    expect(checkDraft(draft).ok).toBe(false);
   });
 });

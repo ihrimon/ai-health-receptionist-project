@@ -3,6 +3,8 @@ import {
   publicConversationRequestSchema,
   type PublicMessageRequest,
   publicMessageRequestSchema,
+  type PublicRatingRequest,
+  publicRatingRequestSchema,
 } from '@brainstack/shared';
 import {
   Body,
@@ -71,5 +73,17 @@ export class PublicChatController {
   @Get('conversations/:id/messages')
   history(@Param('id', ParseUUIDPipe) id: string, @Req() req: Request) {
     return this.chat.history(id, bearer(req));
+  }
+
+  /** 204; the token must be this conversation's (401 otherwise). */
+  @Post('conversations/:id/rating')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  rate(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Req() req: Request,
+    @Body(new ZodBodyPipe(publicRatingRequestSchema))
+    body: PublicRatingRequest,
+  ) {
+    return this.chat.rate(id, bearer(req), body);
   }
 }

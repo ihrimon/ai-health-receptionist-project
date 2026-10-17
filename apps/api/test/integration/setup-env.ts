@@ -14,3 +14,6 @@ process.env.S3_CREATE_BUCKET = 'true';
 // Background jobs (pg-boss) live in the test database; poll often so
 // tests that wait for indexing finish quickly.
 process.env.QUEUE_POLLING_INTERVAL_SECONDS = '0.5';
+
+// New-lead emails (M5-6) go out without the usual wait.
+process.env.LEAD_NOTIFY_DELAY_SECONDS = '0';

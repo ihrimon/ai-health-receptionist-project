@@ -1,4 +1,4 @@
-import { Controller, Get, Param, Res } from '@nestjs/common';
+import { Controller, Get, Headers, Param, Query, Res } from '@nestjs/common';
 import type { Response } from 'express';
 import { Public } from '../auth/auth-context';
 import { WidgetFiles } from './widget-files';
@@ -19,7 +19,9 @@ const ASSET_FILE = /^[A-Za-z0-9_-][A-Za-z0-9_.-]*$/;
  *
  * - `GET /w/:publicId`: the page, with `frame-ancestors` from that
  *   chatbot's allowed domains; 404 page for an unknown, unpublished or
- *   switched-off chatbot.
+ *   switched-off chatbot. The first load framed by an allowed site
+ *   (`Referer`, else the loader's `?host=`) is recorded as the install
+ *   (M4-14).
  * - `GET /w/assets/:file`: the page's hashed JS and CSS, cached for a year.
  * - `GET /chatbot.js`: the embed loader; built without `VITE_WIDGET_URL`,
  *   it opens the page on the origin it was loaded from, this one.
@@ -35,13 +37,22 @@ export class WidgetPageController {
   @Get('w/:publicId')
   async page(
     @Param('publicId') publicId: string,
+    @Query('host') hostParam: unknown,
+    @Headers('referer') referer: string | undefined,
+    @Headers('sec-fetch-dest') fetchDest: string | undefined,
     @Res() res: Response,
   ): Promise<void> {
-    const ancestors = await this.pages.frameAncestorsFor(publicId);
-    if (ancestors === null) {
+    const page = await this.pages.pageFor(publicId);
+    if (page === null) {
       res.status(404).set(NOT_FOUND_HEADERS).send(NOT_FOUND_PAGE);
       return;
     }
+    // "Verify installation" (M4-14): the first load inside an allowed site.
+    await this.pages.recordInstall(publicId, page, {
+      referer,
+      hostParam,
+      fetchDest,
+    });
     const html = await this.files.page();
     if (html === null) {
       res
@@ -50,7 +61,7 @@ export class WidgetPageController {
         .send(NOT_FOUND_PAGE);
       return;
     }
-    res.status(200).set(widgetPageHeaders(ancestors)).send(html);
+    res.status(200).set(widgetPageHeaders(page.ancestors)).send(html);
   }
 
   @Get('w/assets/:file')

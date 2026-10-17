@@ -8,9 +8,13 @@ import * as path from 'path';
  * here on purpose.
  *
  * knowledge.service.ts adds workspace_id to every knowledge_chunks query;
- * the integration suite proves it (M2-12).
+ * the integration suite proves it (M2-12). analytics.service.ts adds it to
+ * every table its day-grouping queries read (M5-8), proven the same way.
  */
-const ALLOWED = new Set(['modules/knowledge/knowledge.service.ts']);
+const ALLOWED = new Set([
+  'modules/knowledge/knowledge.service.ts',
+  'modules/analytics/analytics.service.ts',
+]);
 
 // A call such as .$queryRaw`…` or .$executeRawUnsafe(…), not a mention in
 // a comment.

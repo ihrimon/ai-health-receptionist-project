@@ -162,4 +162,20 @@ describe('ConversationsService', () => {
       );
     });
   });
+
+  describe('rate (M5-7)', () => {
+    it("saves the stars on this chatbot's live conversation only", async () => {
+      db.conversation.updateMany.mockResolvedValueOnce({ count: 1 });
+      await expect(service.rate('conv-1', 'bot-1', 4)).resolves.toBe(true);
+      expect(db.conversation.updateMany).toHaveBeenCalledWith({
+        where: { id: 'conv-1', chatbotId: 'bot-1', isPreview: false },
+        data: { rating: 4 },
+      });
+    });
+
+    it('is false when there is no such conversation', async () => {
+      db.conversation.updateMany.mockResolvedValueOnce({ count: 0 });
+      await expect(service.rate('conv-x', 'bot-1', 4)).resolves.toBe(false);
+    });
+  });
 });

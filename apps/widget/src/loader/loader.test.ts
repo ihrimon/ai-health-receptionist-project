@@ -53,7 +53,7 @@ describe("widgetBaseFrom / bottomFrom", () => {
 describe("mountLoader (M4-9)", () => {
   it("adds a launcher and a hidden chat iframe for the chatbot, on the widget's origin", () => {
     const loader = mount();
-    expect(loader.frame.src).toBe(`${WIDGET}/w/cb_123`);
+    expect(loader.frame.src).toBe(`${WIDGET}/w/cb_123?host=${encodeURIComponent(location.origin)}`);
     expect(loader.frame.title).toBe("Chat");
     expect(loader.button.getAttribute("aria-label")).toBe("Open chat");
     expect(loader.button.getAttribute("aria-expanded")).toBe("false");
@@ -63,7 +63,7 @@ describe("mountLoader (M4-9)", () => {
 
   it("opens the chat on a configured widget URL", () => {
     const loader = mount({ "data-chatbot-id": "cb 1" }, "https://api.example");
-    expect(loader.frame.src).toBe("https://api.example/w/cb%201");
+    expect(loader.frame.src).toBe(`https://api.example/w/cb%201?host=${encodeURIComponent(location.origin)}`);
     expect(loader.widgetOrigin).toBe("https://api.example");
   });
 
@@ -155,6 +155,22 @@ describe("loader ↔ chat window messages (M4-10)", () => {
     expect(wrap.style.getPropertyValue("--bg")).toBe("#FDE047");
     expect(wrap.style.getPropertyValue("--fg")).toBe("#000000");
     expect(wrap.classList.contains("left")).toBe(true);
+  });
+
+  it("draws the chosen launcher icon, the default one without it, and the close icon while open", () => {
+    const loader = mount();
+    const icon = () => loader.button.querySelector("[data-icon]")!.getAttribute("data-icon");
+    expect(icon()).toBe("chat");
+    fromWidget(loader, { type: "config", primaryColor: "#0F766E", textColor: "#ffffff", position: "right", launcherIcon: "sparkle" });
+    expect(icon()).toBe("sparkle");
+    expect(loader.button.querySelector("svg")).not.toBeNull();
+    loader.setOpen(true);
+    expect(icon()).toBe("close");
+    loader.setOpen(false);
+    expect(icon()).toBe("sparkle");
+    // An older chat window sends no icon: back to the default.
+    fromWidget(loader, { type: "config", primaryColor: "#0F766E", textColor: "#ffffff", position: "right" });
+    expect(icon()).toBe("chat");
   });
 
   it("closes on the chat window's close (its button or Escape) and opens on open", () => {

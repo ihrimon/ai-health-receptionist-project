@@ -29,7 +29,7 @@ interface Counts {
 /**
  * "Let's get your assistant live" (D-3 §3.1, M2-17): steps tick themselves
  * from real data. Once everything possible today is done, it collapses to
- * a short "you're live" card (stats arrive with conversations, M5).
+ * a short "you're live" card; the overview stats (M5-8) sit below it.
  */
 export function OnboardingChecklist() {
   const { me } = useSession();
@@ -72,6 +72,7 @@ export function OnboardingChecklist() {
     productCount: counts.products,
     published: chatbot.publishedVersion !== null,
     aiKeyReady,
+    installed: chatbot.installVerifiedAt !== null,
   });
   const progress = onboardingProgress(steps);
   const reasons = chatbot.publishProblems.map((p) => p.message);
@@ -100,7 +101,7 @@ export function OnboardingChecklist() {
               <Link href="/app/settings/install" className="underline underline-offset-4">
                 Add it to your website
               </Link>
-              . Conversation stats are coming soon.
+              . Your numbers are below.
             </p>
           </div>
         </CardContent>

@@ -1,13 +1,5 @@
+import { escapeHtml } from '../../common/escape-html';
 import { OutgoingEmail } from '../email/email.service';
-
-function escapeHtml(text: string): string {
-  return text
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-}
 
 function layout(name: string, intro: string, link: string, action: string) {
   return `

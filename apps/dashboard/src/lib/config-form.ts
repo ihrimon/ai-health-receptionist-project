@@ -2,6 +2,7 @@ import {
   type ChatbotConfig,
   chatbotConfigSchema,
   type PublishProblem,
+  type QuestionToAsk,
 } from "@brainstack/shared";
 
 /**
@@ -131,4 +132,32 @@ export function tabForField(path: string): EditorTab {
   if (path.startsWith("behavior.")) return "behavior";
   if (path.startsWith("widget.")) return "appearance";
   return "general";
+}
+
+/** D-4: at most five questions to ask per chatbot (the schema enforces it). */
+export const MAX_QUESTIONS = 5;
+
+/**
+ * A new question to ask (M5-4), with a short random ID that none of the
+ * existing questions use. The ID keys the lead's answers, so it never
+ * changes after the question is created.
+ */
+export function newQuestion(
+  existing: QuestionToAsk[],
+  random: () => number = Math.random,
+): QuestionToAsk {
+  const taken = new Set(existing.map((q) => q.id));
+  let id: string;
+  do {
+    id = `q_${Math.floor(random() * 36 ** 6)
+      .toString(36)
+      .padStart(6, "0")}`;
+  } while (taken.has(id));
+  return {
+    id,
+    question: "",
+    field: "custom",
+    required: false,
+    askWhen: "before_recommendation",
+  };
 }
