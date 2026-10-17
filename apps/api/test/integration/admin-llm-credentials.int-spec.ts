@@ -160,11 +160,13 @@ describe('Platform LLM credentials (M6-13)', () => {
     expect(createdBody.maskedKey).toBe('••••••••1234');
     expect(JSON.stringify(createdBody)).not.toContain('SECRET');
 
-    // The key really is stored (the chat pipeline needs it); only the API hides it.
+    // The key is stored encrypted, never as plain text (M7-2).
     const stored = await prisma.llmCredential.findUniqueOrThrow({
       where: { id: createdBody.id },
     });
-    expect(stored.apiKey).toBe(SECRET);
+    expect(stored.apiKey).not.toBe(SECRET);
+    expect(stored.apiKey).not.toContain(SECRET);
+    expect(stored.apiKey.startsWith('v1:')).toBe(true);
 
     const list = await admin.get(BASE).expect(200);
     expect(JSON.stringify(list.body)).not.toContain(SECRET);

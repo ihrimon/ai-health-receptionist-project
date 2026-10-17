@@ -1,5 +1,11 @@
 import { BadRequestException } from '@nestjs/common';
-import { checkDocumentFile, titleFromFileName } from './document-file';
+import JSZip from 'jszip';
+import {
+  checkDocumentFile,
+  DOCX_MAX_ENTRIES,
+  titleFromFileName,
+  zipDeclaredSize,
+} from './document-file';
 
 const PDF = Buffer.from('%PDF-1.7\n1 0 obj\n<<>>\nendobj\n%%EOF');
 // The start of a real .docx: the zip signature, then the part names.
@@ -75,5 +81,50 @@ describe('titleFromFileName', () => {
       'Return policy',
     );
     expect(titleFromFileName('.pdf')).toBe('Untitled document');
+  });
+});
+
+describe('docx zip bombs (M7-2)', () => {
+  const MIME =
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+
+  async function docx(extraFiles = 0): Promise<Buffer> {
+    const zip = new JSZip();
+    zip.file('[Content_Types].xml', '<Types/>');
+    zip.file('word/document.xml', '<w:document>Hello</w:document>');
+    for (let i = 0; i < extraFiles; i++) zip.file(`media/${i}.txt`, 'x');
+    return zip.generateAsync({ type: 'nodebuffer' });
+  }
+
+  /** Rewrites the declared uncompressed size of every central entry. */
+  function declareSize(file: Buffer, size: number): Buffer {
+    const copy = Buffer.from(file);
+    for (let i = 0; i < copy.length - 4; i++) {
+      if (copy.readUInt32LE(i) === 0x02014b50) copy.writeUInt32LE(size, i + 24);
+    }
+    return copy;
+  }
+
+  it('accepts a real, small document', async () => {
+    const file = await docx();
+    expect(zipDeclaredSize(file)).toEqual({
+      entries: 3,
+      bytes: expect.any(Number) as number,
+    });
+    expect(checkDocumentFile('a.docx', MIME, file).extension).toBe('docx');
+  });
+
+  it('rejects a zip that declares gigabytes of content', async () => {
+    const bomb = declareSize(await docx(), 0x7fffffff);
+    expect(() => checkDocumentFile('a.docx', MIME, bomb)).toThrow(
+      BadRequestException,
+    );
+  });
+
+  it('rejects a zip with far too many entries', async () => {
+    const many = await docx(DOCX_MAX_ENTRIES + 5);
+    expect(() => checkDocumentFile('a.docx', MIME, many)).toThrow(
+      BadRequestException,
+    );
   });
 });

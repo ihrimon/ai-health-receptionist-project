@@ -235,7 +235,7 @@ describe('AuthService', () => {
   describe('forgotPassword', () => {
     it('does nothing visible for an unknown email', async () => {
       await expect(
-        service.forgotPassword('who@example.com'),
+        service.forgotPassword('who@example.com', meta),
       ).resolves.toBeUndefined();
       expect(prisma.emailToken.create).not.toHaveBeenCalled();
       expect(email.send).not.toHaveBeenCalled();
@@ -248,7 +248,7 @@ describe('AuthService', () => {
         name: 'Rina',
       });
 
-      await service.forgotPassword('rina@example.com');
+      await service.forgotPassword('rina@example.com', meta);
 
       expect(prisma.emailToken.updateMany).toHaveBeenCalledWith({
         where: {
@@ -273,7 +273,7 @@ describe('AuthService', () => {
       prisma.emailToken.findFirst.mockResolvedValue(null);
       prisma.emailToken.updateMany.mockResolvedValue({ count: 0 });
       await expect(
-        service.resetPassword('bad', 'brand new password'),
+        service.resetPassword('bad', 'brand new password', meta),
       ).rejects.toBeInstanceOf(BadRequestException);
       expect(prisma.user.update).not.toHaveBeenCalled();
     });
@@ -285,7 +285,7 @@ describe('AuthService', () => {
         emailVerifiedAt: null,
       });
 
-      await service.resetPassword('good', 'brand new password');
+      await service.resetPassword('good', 'brand new password', meta);
 
       const update = firstArg<{
         data: { passwordHash: string; emailVerifiedAt: Date };
@@ -296,10 +296,48 @@ describe('AuthService', () => {
     });
   });
 
+  describe('rate limits on the anonymous email routes (M7-2)', () => {
+    it('limits password resets per caller before hashing anything', async () => {
+      rateLimit.consume.mockRejectedValue(new Error('limited'));
+      await expect(
+        service.resetPassword('any', 'brand new password', meta),
+      ).rejects.toThrow('limited');
+      expect(rateLimit.consume).toHaveBeenCalledWith({
+        key: 'reset-password:ip:1.2.3.4',
+        limit: 10,
+        windowSeconds: 3600,
+      });
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+    });
+
+    it('limits verification attempts per caller', async () => {
+      rateLimit.consume.mockRejectedValue(new Error('limited'));
+      await expect(service.verifyEmail('any', meta)).rejects.toThrow('limited');
+      expect(rateLimit.consume).toHaveBeenCalledWith({
+        key: 'verify-email:ip:1.2.3.4',
+        limit: 30,
+        windowSeconds: 3600,
+      });
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+    });
+
+    it('limits forgot-password per address and per caller', async () => {
+      await service.forgotPassword('who@example.com', meta);
+      expect(rateLimit.consume).toHaveBeenCalledWith(
+        {
+          key: 'forgot-password:email:who@example.com',
+          limit: 3,
+          windowSeconds: 3600,
+        },
+        { key: 'forgot-password:ip:1.2.3.4', limit: 10, windowSeconds: 3600 },
+      );
+    });
+  });
+
   describe('verifyEmail', () => {
     it('marks the email verified for a valid token', async () => {
       prisma.emailToken.findFirst.mockResolvedValue({ userId: 'u1' });
-      await service.verifyEmail('good');
+      await service.verifyEmail('good', meta);
       expect(prisma.user.updateMany).toHaveBeenCalledWith({
         where: { id: 'u1', emailVerifiedAt: null },
         data: { emailVerifiedAt: expect.any(Date) as Date },

@@ -136,9 +136,4 @@ export function useSession(): SessionValue {
   return value;
 }
 
-/** A `next` query param that is safe to redirect to (same-site path only). */
-export function safeNext(next: string | null): string {
-  return next && next.startsWith("/") && !next.startsWith("//")
-    ? next
-    : "/app";
-}
+export { safeNext } from "./safe-next";

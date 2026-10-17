@@ -1,5 +1,7 @@
 import { BadRequestException, NotFoundException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { Test, TestingModule } from '@nestjs/testing';
+import { SecretBox } from '../../common/secret-box';
 import { PrismaService } from '../../database/prisma.service';
 import { LlmProvider } from '../../generated/prisma/client';
 import { ProviderRegistry } from '../llm/providers/provider-registry';
@@ -67,6 +69,10 @@ describe('LlmCredentialsService', () => {
         LlmCredentialsService,
         { provide: PrismaService, useValue: prismaMock },
         { provide: ProviderRegistry, useValue: providerRegistry },
+        {
+          provide: SecretBox,
+          useValue: new SecretBox(new ConfigService({ nodeEnv: 'test' })),
+        },
       ],
     }).compile();
 
@@ -115,7 +121,11 @@ describe('LlmCredentialsService', () => {
       await service.create(actor, dto);
 
       expect(llmCredential.create).toHaveBeenCalledWith({
-        data: { ...dto, sortOrder: 3 },
+        data: {
+          ...dto,
+          apiKey: expect.stringMatching(/^v1:/) as string,
+          sortOrder: 3,
+        },
       });
     });
 
@@ -123,8 +133,22 @@ describe('LlmCredentialsService', () => {
       await service.create(actor, dto);
 
       expect(llmCredential.create).toHaveBeenCalledWith({
-        data: { ...dto, sortOrder: 0 },
+        data: {
+          ...dto,
+          apiKey: expect.stringMatching(/^v1:/) as string,
+          sortOrder: 0,
+        },
       });
+    });
+
+    it('stores the key encrypted, never as plain text (M7-2)', async () => {
+      await service.create(actor, dto);
+
+      const { data } = (
+        llmCredential.create.mock.calls[0] as [{ data: { apiKey: string } }]
+      )[0];
+      expect(data.apiKey).not.toContain(dto.apiKey);
+      expect(SecretBox.isEncrypted(data.apiKey)).toBe(true);
     });
 
     it('rejects with the provider error when the key/model is invalid, without saving', async () => {
@@ -158,8 +182,28 @@ describe('LlmCredentialsService', () => {
       );
       expect(llmCredential.update).toHaveBeenCalledWith({
         where: { id: 'cred-1' },
-        data: { model: 'new-model' },
+        // A key saved as plain text is encrypted by this edit.
+        data: {
+          model: 'new-model',
+          apiKey: expect.stringMatching(/^v1:/) as string,
+        },
       });
+    });
+
+    it('reads an encrypted key back as plain text for validation (M7-2)', async () => {
+      const box = new SecretBox(new ConfigService({ nodeEnv: 'test' }));
+      llmCredential.findUnique.mockResolvedValue({
+        id: 'cred-1',
+        provider: LlmProvider.groq,
+        apiKey: box.encrypt('stored-secret-9999'),
+        model: 'old-model',
+      });
+
+      await service.update(actor, 'cred-1', { model: 'new-model' });
+
+      expect(adapter.complete).toHaveBeenCalledWith(
+        expect.objectContaining({ apiKey: 'stored-secret-9999' }),
+      );
     });
 
     it('does not re-validate a pure isActive toggle', async () => {
