@@ -4,7 +4,11 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../../database/prisma.service';
-import { LlmCredential, LlmProvider } from '../../generated/prisma/client';
+import {
+  LlmCredential,
+  LlmProvider,
+  Prisma,
+} from '../../generated/prisma/client';
 import { ProviderRegistry } from '../llm/providers/provider-registry';
 import { CreateLlmCredentialDto } from './dto/create-llm-credential.dto';
 import { UpdateLlmCredentialDto } from './dto/update-llm-credential.dto';
@@ -21,6 +25,31 @@ export type RateLimitSnapshot = Partial<
     | 'rlResetTokens'
   >
 >;
+
+/** Who made a change; written to `audit_logs`. */
+export interface CredentialActor {
+  id: string;
+  email: string;
+}
+
+/**
+ * What the admin API returns: the credential without the stored key, plus a
+ * masked hint. The full key never leaves the server (M6-13).
+ */
+export type LlmCredentialView = Omit<LlmCredential, 'apiKey'> & {
+  maskedKey: string;
+};
+
+/** "••••••••abcd"; keys shorter than 12 chars show dots only, so a short key is never mostly revealed. */
+export function maskApiKey(apiKey: string): string {
+  const tail = apiKey.length >= 12 ? apiKey.slice(-4) : '';
+  return `${'•'.repeat(8)}${tail}`;
+}
+
+export function toCredentialView(c: LlmCredential): LlmCredentialView {
+  const { apiKey, ...rest } = c;
+  return { ...rest, maskedKey: maskApiKey(apiKey) };
+}
 
 @Injectable()
 export class LlmCredentialsService {
@@ -41,17 +70,49 @@ export class LlmCredentialsService {
     return all.filter((c) => c.isActive);
   }
 
-  async create(dto: CreateLlmCredentialDto): Promise<LlmCredential> {
+  /**
+   * Audit row for a credential change. `details` carries ids, provider,
+   * model and flags only — never the key (M6-13).
+   */
+  private audit(
+    actor: CredentialActor,
+    action: string,
+    details: Prisma.InputJsonObject,
+  ): Prisma.AuditLogCreateInput {
+    return {
+      actor: { connect: { id: actor.id } },
+      actorEmail: actor.email,
+      action,
+      details,
+    };
+  }
+
+  async create(
+    actor: CredentialActor,
+    dto: CreateLlmCredentialDto,
+  ): Promise<LlmCredential> {
     await this.validateCredential(dto.provider, dto.apiKey, dto.model);
     const { _max } = await this.prisma.llmCredential.aggregate({
       _max: { sortOrder: true },
     });
-    return this.prisma.llmCredential.create({
-      data: { ...dto, sortOrder: (_max.sortOrder ?? -1) + 1 },
+    const sortOrder = (_max.sortOrder ?? -1) + 1;
+    return this.prisma.$transaction(async (tx) => {
+      const created = await tx.llmCredential.create({
+        data: { ...dto, sortOrder },
+      });
+      await tx.auditLog.create({
+        data: this.audit(actor, 'llm_credential.create', {
+          credentialId: created.id,
+          provider: created.provider,
+          model: created.model,
+        }),
+      });
+      return created;
     });
   }
 
   async update(
+    actor: CredentialActor,
     id: string,
     dto: UpdateLlmCredentialDto,
   ): Promise<LlmCredential> {
@@ -65,7 +126,23 @@ export class LlmCredentialsService {
         dto.model ?? credential.model,
       );
     }
-    return this.prisma.llmCredential.update({ where: { id }, data: dto });
+    return this.prisma.$transaction(async (tx) => {
+      const updated = await tx.llmCredential.update({
+        where: { id },
+        data: dto,
+      });
+      await tx.auditLog.create({
+        data: this.audit(actor, 'llm_credential.update', {
+          credentialId: id,
+          provider: updated.provider,
+          model: updated.model,
+          ...(dto.model !== undefined && { modelFrom: credential.model }),
+          keyRotated: dto.apiKey !== undefined,
+          ...(dto.isActive !== undefined && { isActive: dto.isActive }),
+        }),
+      });
+      return updated;
+    });
   }
 
   /**
@@ -95,13 +172,25 @@ export class LlmCredentialsService {
     }
   }
 
-  async remove(id: string): Promise<void> {
-    await this.findOne(id);
-    await this.prisma.llmCredential.delete({ where: { id } });
+  async remove(actor: CredentialActor, id: string): Promise<void> {
+    const credential = await this.findOne(id);
+    await this.prisma.$transaction([
+      this.prisma.llmCredential.delete({ where: { id } }),
+      this.prisma.auditLog.create({
+        data: this.audit(actor, 'llm_credential.delete', {
+          credentialId: id,
+          provider: credential.provider,
+          model: credential.model,
+        }),
+      }),
+    ]);
   }
 
   /** Re-numbers sort_order to match the given id order — used by the settings UI's drag/move-up-down reordering. */
-  async reorder(orderedIds: string[]): Promise<LlmCredential[]> {
+  async reorder(
+    actor: CredentialActor,
+    orderedIds: string[],
+  ): Promise<LlmCredential[]> {
     const all = await this.findAllOrdered();
     if (
       orderedIds.length !== all.length ||
@@ -111,14 +200,17 @@ export class LlmCredentialsService {
         'orderedIds must contain exactly the existing credential ids',
       );
     }
-    await this.prisma.$transaction(
-      orderedIds.map((id, index) =>
+    await this.prisma.$transaction([
+      ...orderedIds.map((id, index) =>
         this.prisma.llmCredential.update({
           where: { id },
           data: { sortOrder: index },
         }),
       ),
-    );
+      this.prisma.auditLog.create({
+        data: this.audit(actor, 'llm_credential.reorder', { orderedIds }),
+      }),
+    ]);
     return this.findAllOrdered();
   }
 

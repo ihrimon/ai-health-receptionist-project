@@ -16,7 +16,8 @@ const TITLES: { prefix: string; title: string }[] = [
   { prefix: "/app/settings", title: "Settings" },
   { prefix: "/admin/workspaces", title: "Workspaces" },
   { prefix: "/admin/conversations", title: "Conversations" },
-  { prefix: "/admin/settings", title: "Settings" },
+  { prefix: "/admin/usage", title: "Usage & cost" },
+  { prefix: "/admin/llm-credentials", title: "LLM keys" },
 ];
 
 function titleFor(pathname: string): string {
