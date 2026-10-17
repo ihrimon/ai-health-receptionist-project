@@ -303,6 +303,99 @@ describe('Widget page (M4-18, M4-19)', () => {
     });
   });
 
+  describe('verify installation (M4-14)', () => {
+    type Install = {
+      installVerifiedAt: string | null;
+      installVerifiedHost: string | null;
+    };
+    const install = async (cookie: string) =>
+      (await request(http).get('/v1/chatbot').set('Cookie', cookie).expect(200))
+        .body as Install;
+    const framedBy = (publicId: string, referer: string) =>
+      page(publicId)
+        .set('Referer', referer)
+        .set('Sec-Fetch-Dest', 'iframe')
+        .expect(200);
+    const reset = (chatbotId: string) =>
+      prisma.chatbot.update({
+        where: { id: chatbotId },
+        data: { installVerifiedAt: null, installVerifiedHost: null },
+      });
+    const notDetected = expect.objectContaining({
+      installVerifiedAt: null,
+      installVerifiedHost: null,
+    }) as Install;
+
+    beforeEach(async () => {
+      await reset(ids.botA);
+      await reset(ids.botB);
+      // Also drops the cached "installed" flag.
+      await setDomains(cookies.a, ['a-shop.example.com']);
+      await setDomains(cookies.b, ['b-shop.example.net']);
+    });
+
+    it('is not detected until the page loads inside an allowed site', async () => {
+      await page(publicIds.a).expect(200);
+      await framedBy(publicIds.a, 'https://unlisted.example.org/');
+      // Opened in a tab from the right site: not an install.
+      await page(publicIds.a)
+        .set('Referer', 'https://a-shop.example.com/')
+        .set('Sec-Fetch-Dest', 'document')
+        .expect(200);
+
+      expect(await install(cookies.a)).toEqual(notDetected);
+    });
+
+    it('records the first load from an allowed site, from the Referer or ?host=', async () => {
+      await framedBy(publicIds.a, 'https://a-shop.example.com/products/1');
+      const first = await install(cookies.a);
+      expect(first.installVerifiedHost).toBe('a-shop.example.com');
+      expect(first.installVerifiedAt).not.toBeNull();
+
+      // A later load never moves the date.
+      await framedBy(publicIds.a, 'https://a-shop.example.com/');
+      expect((await install(cookies.a)).installVerifiedAt).toBe(
+        first.installVerifiedAt,
+      );
+
+      // A site that sends no Referer: the loader's ?host= counts.
+      await page(publicIds.b)
+        .query({ host: 'https://b-shop.example.net' })
+        .expect(200);
+      expect((await install(cookies.b)).installVerifiedHost).toBe(
+        'b-shop.example.net',
+      );
+    });
+
+    it('resets when that site is removed from the allowed domains', async () => {
+      await framedBy(publicIds.a, 'https://a-shop.example.com/');
+      await setDomains(cookies.a, ['a-new-shop.example.com']);
+
+      expect(await install(cookies.a)).toEqual(notDetected);
+    });
+
+    it("one workspace's site never marks another workspace's chatbot", async () => {
+      // A's site on B's page, and B's site on A's page: neither counts.
+      await framedBy(publicIds.b, 'https://a-shop.example.com/');
+      await page(publicIds.a)
+        .query({ host: 'https://b-shop.example.net' })
+        .expect(200);
+      expect(await install(cookies.a)).toEqual(notDetected);
+      expect(await install(cookies.b)).toEqual(notDetected);
+
+      // A's own site marks only A.
+      await framedBy(publicIds.a, 'https://a-shop.example.com/');
+      expect((await install(cookies.a)).installVerifiedHost).toBe(
+        'a-shop.example.com',
+      );
+      expect(await install(cookies.b)).toEqual(notDetected);
+      const b = await prisma.chatbot.findUniqueOrThrow({
+        where: { id: ids.botB },
+      });
+      expect(b.installVerifiedAt).toBeNull();
+    });
+  });
+
   describe('static files', () => {
     it('serves the hashed assets with a long cache', async () => {
       const res = await request(http)

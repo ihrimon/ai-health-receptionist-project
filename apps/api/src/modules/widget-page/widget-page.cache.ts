@@ -5,20 +5,29 @@ export const WIDGET_PAGE_TTL_MS = 60_000;
 /** Most chatbots kept at once; the oldest entry goes first. */
 export const WIDGET_PAGE_MAX_ENTRIES = 5_000;
 
-interface Entry {
+/** What the widget page needs to know about one live chatbot. */
+export interface CachedPage {
+  /** The `frame-ancestors` value. */
   ancestors: string;
+  allowedDomains: string[];
+  /** "Verify installation" is already recorded (M4-14): no write needed. */
+  installed: boolean;
+}
+
+interface Entry {
+  page: CachedPage;
   expiresAt: number;
 }
 
 /**
- * In-process cache of each live chatbot's `frame-ancestors` value for the
- * widget page (M4-19), so a page load doesn't always query Postgres (no
- * Redis in the MVP). `ChatbotService` drops a chatbot's entry when its
- * allowed domains, status or published version change, so this instance
- * applies a change at once; the short TTL bounds how long another API
- * instance (or a change made outside the API, like a suspended workspace)
- * can serve the old value. Only live chatbots are stored, so requests for
- * random public IDs can't fill it.
+ * In-process cache of each live chatbot's `frame-ancestors` value (and its
+ * install status, M4-14) for the widget page (M4-19), so a page load
+ * doesn't always query Postgres (no Redis in the MVP). `ChatbotService`
+ * drops a chatbot's entry when its allowed domains, status or published
+ * version change, so this instance applies a change at once; the short
+ * TTL bounds how long another API instance (or a change made outside the
+ * API, like a suspended workspace) can serve the old value. Only live
+ * chatbots are stored, so requests for random public IDs can't fill it.
  */
 @Injectable()
 export class WidgetPageCache {
@@ -36,17 +45,17 @@ export class WidgetPageCache {
     return this.invalidations;
   }
 
-  get(publicId: string): string | null {
+  get(publicId: string): CachedPage | null {
     const entry = this.entries.get(publicId);
     if (!entry) return null;
     if (entry.expiresAt <= this.now()) {
       this.entries.delete(publicId);
       return null;
     }
-    return entry.ancestors;
+    return entry.page;
   }
 
-  set(publicId: string, ancestors: string, generation: number): void {
+  set(publicId: string, page: CachedPage, generation: number): void {
     if (generation !== this.invalidations) return;
     this.entries.delete(publicId);
     if (this.entries.size >= WIDGET_PAGE_MAX_ENTRIES) {
@@ -57,9 +66,15 @@ export class WidgetPageCache {
       }
     }
     this.entries.set(publicId, {
-      ancestors,
+      page,
       expiresAt: this.now() + WIDGET_PAGE_TTL_MS,
     });
+  }
+
+  /** The install was just recorded, so later loads skip the write. */
+  markInstalled(publicId: string): void {
+    const entry = this.entries.get(publicId);
+    if (entry) entry.page = { ...entry.page, installed: true };
   }
 
   invalidate(publicId: string): void {

@@ -24,6 +24,8 @@ interface Row {
   status: 'ENABLED' | 'DISABLED';
   draftConfig: unknown;
   allowedDomains: string[];
+  installVerifiedAt: Date | null;
+  installVerifiedHost: string | null;
   publishedVersion: {
     version: number;
     publishedAt: Date;
@@ -57,6 +59,8 @@ describe('ChatbotService', () => {
       status: 'ENABLED',
       draftConfig: publishable(),
       allowedDomains: [],
+      installVerifiedAt: null,
+      installVerifiedHost: null,
       publishedVersion: null,
     };
     db = {
@@ -312,6 +316,40 @@ describe('ChatbotService', () => {
       expect(widgetPages.invalidate).toHaveBeenCalledWith(
         'cb_abcdefghijklmnop',
       );
+    });
+
+    it('keeps the install status while its site is still listed (M4-14)', async () => {
+      const seen = new Date('2026-10-01T10:00:00Z');
+      row = {
+        ...row,
+        allowedDomains: ['*.example.com'],
+        installVerifiedAt: seen,
+        installVerifiedHost: 'shop.example.com',
+      };
+
+      const view = await service.setAllowedDomains([
+        '*.example.com',
+        'other.example.org',
+      ]);
+      expect(view).toMatchObject({
+        installVerifiedAt: seen,
+        installVerifiedHost: 'shop.example.com',
+      });
+    });
+
+    it('clears the install status when its site leaves the list (M4-14)', async () => {
+      row = {
+        ...row,
+        allowedDomains: ['shop.example.com'],
+        installVerifiedAt: new Date(),
+        installVerifiedHost: 'shop.example.com',
+      };
+
+      const view = await service.setAllowedDomains(['new-shop.example.com']);
+      expect(view).toMatchObject({
+        installVerifiedAt: null,
+        installVerifiedHost: null,
+      });
     });
 
     it('rejects localhost in production', async () => {
