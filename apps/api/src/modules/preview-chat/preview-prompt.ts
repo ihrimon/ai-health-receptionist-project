@@ -67,6 +67,17 @@ const TOOLS_RULE =
   'never state a price or stock level without a tool result. If the tool finds ' +
   'nothing, do not guess.';
 
+/** With questions to ask (M5-4): when to ask them and how to save the answers. */
+export const LEAD_RULE =
+  'The company settings may list questions to ask the visitor. Ask each one ' +
+  'at the moment it names, at most one question per reply, after your answer. ' +
+  'Never ask again what the visitor already answered or declined, and accept ' +
+  'a no politely. When the visitor answers one of them, or leaves their name, ' +
+  'email or phone, call capture_lead with exactly what they wrote (each answer ' +
+  'with its question id). A reply that only answers your question needs no ' +
+  'knowledge: thank them and go on. Never ask for passwords, card numbers or ' +
+  'other payment details.';
+
 /**
  * Stops text from closing one of our delimiters early and starting its own
  * "instructions" outside it: the angle bracket of a lookalike tag is
@@ -126,7 +137,7 @@ function companySettings(config: ChatbotConfig): string {
   }
   for (const q of behavior.questionsToAsk) {
     lines.push(
-      `Ask the visitor ${ASK_WHEN_TEXT[q.askWhen]}${q.required ? ' (required)' : ''}: ${neutralize(q.question)}`,
+      `Ask the visitor ${ASK_WHEN_TEXT[q.askWhen]}${q.required ? ' (required)' : ''} [question id: ${q.id}]: ${neutralize(q.question)}`,
     );
   }
   lines.push(`Fallback message: "${neutralize(behavior.fallbackMessage)}"`);
@@ -147,6 +158,8 @@ export function buildPreviewMessages(
   message: string,
   /** The product tools are offered this turn (M3-8). */
   withProductTools = false,
+  /** capture_lead is offered this turn (M5-4). */
+  withLeadTool = false,
 ): ChatCompletionMessageParam[] {
   const knowledge = matches.length
     ? matches
@@ -157,9 +170,11 @@ export function buildPreviewMessages(
         .join('\n\n')
     : '(no matching knowledge found)';
 
-  const rules = withProductTools
-    ? `${PLATFORM_RULES}\n${TOOLS_RULE}`
-    : PLATFORM_RULES;
+  const rules = [
+    PLATFORM_RULES,
+    ...(withProductTools ? [TOOLS_RULE] : []),
+    ...(withLeadTool ? [LEAD_RULE] : []),
+  ].join('\n');
 
   return [
     { role: 'system', content: rules },

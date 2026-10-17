@@ -6,6 +6,7 @@ import {
   COMPANY_OPEN,
   KNOWLEDGE_CLOSE,
   KNOWLEDGE_OPEN,
+  LEAD_RULE,
   neutralize,
   PLATFORM_RULES,
   VISITOR_CLOSE,
@@ -127,8 +128,23 @@ describe('buildPreviewMessages', () => {
     expect(company).toContain('Only discuss these topics: clothes, delivery.');
     expect(company).toContain('Politely decline to discuss: politics.');
     expect(company).toContain(
-      'Ask the visitor early in the conversation (required): What is your name?',
+      'Ask the visitor early in the conversation (required) [question id: q1]: What is your name?',
     );
+  });
+
+  it('tells the model how to ask and save lead answers only when capture_lead is offered', () => {
+    const without = text(buildPreviewMessages(config, [], [], 'Hi')[0]);
+    const withLead = text(
+      buildPreviewMessages(config, [], [], 'Hi', false, true)[0],
+    );
+    const both = text(
+      buildPreviewMessages(config, [], [], 'Hi', true, true)[0],
+    );
+    expect(without).not.toContain('capture_lead');
+    expect(withLead).toBe(`${PLATFORM_RULES}\n${LEAD_RULE}`);
+    expect(withLead).not.toContain('search_products');
+    expect(both).toContain('search_products');
+    expect(both.endsWith(LEAD_RULE)).toBe(true);
   });
 
   it('wraps retrieved chunks in the knowledge delimiters', () => {
