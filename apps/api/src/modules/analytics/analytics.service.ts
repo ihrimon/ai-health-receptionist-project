@@ -2,9 +2,14 @@ import {
   type AnalyticsDay,
   type AnalyticsOverview,
   type AnalyticsOverviewQuery,
+  type AnalyticsTopQuestions,
+  type AnalyticsTopQuestionsQuery,
   ANALYTICS_TIME_ZONE,
   analyticsRange,
   daysBetween,
+  TOP_QUESTIONS_DEFAULT_LIMIT,
+  TOP_QUESTIONS_MIN_CHARS,
+  TOP_QUESTIONS_SCAN_CAP,
 } from '@brainstack/shared';
 import { Inject, Injectable } from '@nestjs/common';
 import { requireTenant } from '../../tenancy/tenant-context';
@@ -26,6 +31,50 @@ export interface MessageDayRow {
 export interface LeadDayRow {
   day: string;
   leads: number;
+}
+
+/**
+ * Greetings and thanks that are not questions, compared after cleaning
+ * (lowercase, punctuation gone). A small list on purpose; everything else
+ * is counted like any other text.
+ */
+export const NON_QUESTIONS = [
+  'hi',
+  'hii',
+  'hello',
+  'hey',
+  'hola',
+  'yo',
+  'ok',
+  'okay',
+  'thanks',
+  'thank you',
+  'thx',
+  'bye',
+  'goodbye',
+  'good morning',
+  'good afternoon',
+  'good evening',
+  'hi there',
+  'hello there',
+  'yes',
+  'no',
+  'test',
+  'হাই',
+  'হ্যালো',
+  'হেলো',
+  'ধন্যবাদ',
+  'নমস্কার',
+  'আসসালামু আলাইকুম',
+  'সালাম',
+  'ওকে',
+];
+
+export interface TopQuestionRow {
+  count: number;
+  example: string;
+  lastAskedAt: Date;
+  scanned: number;
 }
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
@@ -161,5 +210,65 @@ export class AnalyticsService {
     ]);
 
     return buildOverview(range, { conversations, messages, leads });
+  }
+
+  /**
+   * What visitors ask most (M5-9): visitor messages of live, non-empty
+   * chats in the range, cleaned (lowercase; spaces, punctuation and the
+   * Bangla danda collapsed to single spaces, letters of any script kept)
+   * and grouped when identical. No meaning-based clustering yet. Only the
+   * newest TOP_QUESTIONS_SCAN_CAP messages of the range are read.
+   */
+  async topQuestions(
+    query: AnalyticsTopQuestionsQuery,
+  ): Promise<AnalyticsTopQuestions> {
+    const { workspaceId } = requireTenant();
+    const range = analyticsRange(query, this.now());
+    const tz = ANALYTICS_TIME_ZONE;
+    const limit = query.limit ?? TOP_QUESTIONS_DEFAULT_LIMIT;
+
+    const rows = await this.db.$queryRaw<TopQuestionRow[]>`
+      WITH scanned AS (
+        SELECT m.content, m.created_at
+        FROM messages m
+        JOIN conversations c
+          ON c.id = m.conversation_id AND c.workspace_id = ${workspaceId}::uuid
+        WHERE m.workspace_id = ${workspaceId}::uuid
+          AND m.role = 'USER'
+          AND NOT c.is_preview AND c.message_count > 0
+          AND m.created_at >= (${range.from}::date)::timestamp AT TIME ZONE ${tz}
+          AND m.created_at < (${range.to}::date + 1)::timestamp AT TIME ZONE ${tz}
+        ORDER BY m.created_at DESC
+        LIMIT ${TOP_QUESTIONS_SCAN_CAP}
+      ),
+      cleaned AS (
+        SELECT content, created_at,
+               btrim(regexp_replace(lower(content),
+                 '[[:space:][:punct:]।॥“”‘’…]+', ' ', 'g')) AS norm
+        FROM scanned
+      )
+      SELECT count(*)::int AS count,
+             left((array_agg(content ORDER BY created_at DESC))[1], 200) AS example,
+             max(created_at) AS "lastAskedAt",
+             (SELECT count(*)::int FROM scanned) AS scanned
+      FROM cleaned
+      WHERE char_length(norm) >= ${TOP_QUESTIONS_MIN_CHARS}
+        AND norm <> ALL (${NON_QUESTIONS}::text[])
+      GROUP BY norm
+      ORDER BY count(*) DESC, max(created_at) DESC
+      LIMIT ${limit}`;
+
+    return {
+      from: range.from,
+      to: range.to,
+      timeZone: tz,
+      questions: rows.map((r) => ({
+        count: r.count,
+        example: r.example.trim(),
+        lastAskedAt: r.lastAskedAt.toISOString(),
+      })),
+      // Only known when some rows came back (the scan size rides on them).
+      truncated: (rows[0]?.scanned ?? 0) >= TOP_QUESTIONS_SCAN_CAP,
+    };
   }
 }

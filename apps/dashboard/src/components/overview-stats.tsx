@@ -1,6 +1,6 @@
 "use client";
 
-import type { AnalyticsDay, AnalyticsOverview } from "@brainstack/shared";
+import type { AnalyticsDay, AnalyticsOverview, AnalyticsTopQuestions } from "@brainstack/shared";
 import { cn } from "cn";
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
@@ -15,6 +15,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import {
   analyticsApi,
   chartMax,
+  formatAskedAt,
   formatMetric,
   formatRate,
   METRIC_LABELS,
@@ -94,6 +95,7 @@ export function OverviewStats() {
               ))}
             </div>
             <DailyChart daily={overview.daily} metric={metric} />
+            <TopQuestions days={days} />
           </>
         ) : (
           <div className="grid gap-4" aria-busy="true">
@@ -277,5 +279,64 @@ function DailyChart({ daily, metric }: { daily: AnalyticsDay[]; metric: Overview
         </div>
       </details>
     </div>
+  );
+}
+
+/**
+ * The questions visitors ask most in the chosen range (M5-9). Identical
+ * wording (ignoring case and punctuation) is counted together; questions
+ * that mean the same in different words are not grouped yet.
+ */
+function TopQuestions({ days }: { days: RangePreset }) {
+  const { me } = useSession();
+  const [data, setData] = useState<{ days: number; result: AnalyticsTopQuestions } | null>(
+    null,
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+    analyticsApi.topQuestions(days).then(
+      (result) => !cancelled && setData({ days, result }),
+      (err: Error) => !cancelled && toastError(err.message),
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [days, me.activeWorkspace?.id]);
+
+  const result = data?.days === days ? data.result : null;
+
+  return (
+    <section className="grid gap-2" aria-labelledby="top-questions-title">
+      <h3 id="top-questions-title" className="text-sm font-medium">
+        Top questions
+      </h3>
+      {!result ? (
+        <Skeleton className="h-24" aria-busy="true" />
+      ) : result.questions.length === 0 ? (
+        <p className="text-sm text-muted-foreground">No questions in this range yet.</p>
+      ) : (
+        <>
+          <ol className="divide-y rounded-md border text-sm">
+            {result.questions.map((q, i) => (
+              <li key={`${i}-${q.example}`} className="flex items-start gap-3 p-2">
+                <span className="w-10 shrink-0 text-right font-semibold tabular-nums">
+                  {q.count.toLocaleString("en-US")}×
+                </span>
+                <span className="min-w-0 flex-1 break-words">{q.example}</span>
+                <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
+                  {formatAskedAt(q.lastAskedAt)}
+                </span>
+              </li>
+            ))}
+          </ol>
+          <p className="text-xs text-muted-foreground">
+            Same wording is counted together (ignoring case and punctuation); greetings and
+            very short messages are skipped.
+            {result.truncated && " Only the newest messages in this range were checked."}
+          </p>
+        </>
+      )}
+    </section>
   );
 }
