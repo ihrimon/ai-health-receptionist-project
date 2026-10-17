@@ -1,6 +1,8 @@
 import {
   type AnalyticsOverviewQuery,
   type AnalyticsTopQuestionsQuery,
+  type AnalyticsUnansweredQuery,
+  analyticsUnansweredQuerySchema,
   analyticsTopQuestionsQuerySchema,
   analyticsOverviewQuerySchema,
 } from '@brainstack/shared';
@@ -31,5 +33,14 @@ export class AnalyticsController {
     query: AnalyticsTopQuestionsQuery,
   ) {
     return this.analytics.topQuestions(query);
+  }
+
+  @Get('unanswered')
+  @Roles(WorkspaceRole.VIEWER)
+  unanswered(
+    @Query(new ZodBodyPipe(analyticsUnansweredQuerySchema))
+    query: AnalyticsUnansweredQuery,
+  ) {
+    return this.analytics.unanswered(query);
   }
 }

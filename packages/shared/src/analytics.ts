@@ -173,3 +173,30 @@ export interface AnalyticsTopQuestions {
   /** True when the range had more visitor messages than the scan cap, so older ones were skipped. */
   truncated: boolean;
 }
+
+/** GET /v1/analytics/unanswered query: same range and limit as top questions. */
+export const analyticsUnansweredQuerySchema = analyticsTopQuestionsQuerySchema;
+export type AnalyticsUnansweredQuery = z.output<typeof analyticsUnansweredQuerySchema>;
+
+/** One group of identical questions the bot answered with a fallback. */
+export interface UnansweredQuestion {
+  /** How many times the bot fell back on it. */
+  count: number;
+  /** One original wording (the most recent), cut to 200 characters. */
+  example: string;
+  /** When it was last asked (ISO instant). */
+  lastAskedAt: string;
+  /** The conversation of the most recent time, for a "view conversation" link. */
+  conversationId: string;
+}
+
+/** GET /v1/analytics/unanswered response. */
+export interface AnalyticsUnanswered {
+  from: string;
+  to: string;
+  timeZone: string;
+  /** Most often first; ties go to the most recently asked. */
+  questions: UnansweredQuestion[];
+  /** True when the range had more fallback replies than the scan cap, so older ones were skipped. */
+  truncated: boolean;
+}
