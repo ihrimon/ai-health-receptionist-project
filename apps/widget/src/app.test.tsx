@@ -26,7 +26,7 @@ afterEach(() => {
 });
 
 /** The API with a config, a new conversation per start, and `answer` streamed back. */
-function api(overrides: Partial<Record<"history" | "send" | "start", FakeHandler>> = {}) {
+function api(overrides: Partial<Record<"history" | "send" | "start" | "rate", FakeHandler>> = {}) {
   let started = 0;
   return fakeApi((req: FakeRequest) => {
     if (req.path === "/public/chatbots/pub1/config") return json(config);
@@ -35,6 +35,7 @@ function api(overrides: Partial<Record<"history" | "send" | "start", FakeHandler
       return overrides.start?.(req) ?? json({ conversationId: `c${started}`, conversationToken: `tok${started}` }, 201);
     }
     if (req.method === "GET") return overrides.history?.(req) ?? json([]);
+    if (req.path.endsWith("/rating")) return overrides.rate?.(req) ?? new Response(null, { status: 204 });
     return (
       overrides.send?.(req) ??
       sseResponse([sse("delta", { text: "We open " }), sse("delta", { text: "at 9." }), sse("done", { conversationId: "c1", answeredBy: "llm" })])
@@ -42,8 +43,8 @@ function api(overrides: Partial<Record<"history" | "send" | "start", FakeHandler
   });
 }
 
-async function ready() {
-  render(<App publicId="pub1" />);
+async function ready(ratingIdleMs?: number) {
+  render(<App publicId="pub1" ratingIdleMs={ratingIdleMs} />);
   await screen.findByText(config.welcomeMessage);
   return userEvent.setup();
 }
@@ -261,5 +262,84 @@ describe("App: quick replies and handoff (M4-6)", () => {
     await user.type(screen.getByLabelText(STRINGS.inputLabel), "Hours?{Enter}");
     await screen.findByText("We open at 9.");
     expect(screen.queryByRole("link")).toBeNull();
+  });
+});
+
+describe("App: rating (M5-7)", () => {
+  const prompt = () => screen.queryByRole("region", { name: STRINGS.ratingQuestion });
+  const quiet = () => new Promise((resolve) => setTimeout(resolve, 30));
+
+  it("asks once the chat is quiet after an answer, and sends the stars with the token", async () => {
+    const { requests } = api();
+    const user = await ready(10);
+    await quiet();
+    // Nothing to rate before the bot has answered.
+    expect(prompt()).toBeNull();
+
+    await user.type(screen.getByLabelText(STRINGS.inputLabel), "When do you open?{Enter}");
+    await screen.findByText("We open at 9.");
+    await screen.findByRole("region", { name: STRINGS.ratingQuestion });
+    await user.click(screen.getByRole("button", { name: STRINGS.rateStars(4) }));
+
+    expect(await screen.findByText(STRINGS.ratingThanks)).toBeTruthy();
+    await waitFor(() =>
+      expect(requests.filter((r) => r.path.endsWith("/rating")).map((r) => [r.path, r.headers.Authorization, r.body])).toEqual([
+        ["/public/conversations/c1/rating", "Bearer tok1", { rating: 4 }],
+      ]),
+    );
+    expect(stored()).toMatchObject({ rated: "c1" });
+
+    // The thanks goes with the next message, and nobody is asked twice.
+    await user.type(screen.getByLabelText(STRINGS.inputLabel), "And Sunday?{Enter}");
+    await waitFor(() => expect(bubbles()).toHaveLength(5));
+    await quiet();
+    expect(screen.queryByText(STRINGS.ratingThanks)).toBeNull();
+    expect(prompt()).toBeNull();
+  });
+
+  it("doesn't ask again for a conversation rated before a reload", async () => {
+    localStorage.setItem(
+      storageKey,
+      JSON.stringify({ visitorId: "v1", conversation: { conversationId: "c9", conversationToken: "tok9" }, rated: "c9" }),
+    );
+    api({
+      history: () =>
+        json([
+          { id: "1", role: "user", text: "Earlier question", createdAt: "" },
+          { id: "2", role: "assistant", text: "Earlier answer", createdAt: "" },
+        ]),
+    });
+    await ready(10);
+    await screen.findByText("Earlier answer");
+    await quiet();
+    expect(prompt()).toBeNull();
+  });
+
+  it("asks for a reloaded conversation that has an answer but no rating", async () => {
+    localStorage.setItem(storageKey, JSON.stringify({ visitorId: "v1", conversation: { conversationId: "c9", conversationToken: "tok9" } }));
+    api({ history: () => json([{ id: "2", role: "assistant", text: "Earlier answer", createdAt: "" }]) });
+    await ready(10);
+    expect(await screen.findByRole("region", { name: STRINGS.ratingQuestion })).toBeTruthy();
+  });
+
+  it("'Skip for now' hides it without sending anything", async () => {
+    const { requests } = api();
+    const user = await ready(10);
+    await user.type(screen.getByLabelText(STRINGS.inputLabel), "Hours?{Enter}");
+    await screen.findByRole("region", { name: STRINGS.ratingQuestion });
+    await user.click(screen.getByRole("button", { name: STRINGS.ratingSkip }));
+    expect(prompt()).toBeNull();
+    expect(requests.some((r) => r.path.endsWith("/rating"))).toBe(false);
+  });
+
+  it("still thanks the visitor when the rating can't be saved", async () => {
+    api({ rate: () => json({ message: "Too Many Requests" }, 429) });
+    const user = await ready(10);
+    await user.type(screen.getByLabelText(STRINGS.inputLabel), "Hours?{Enter}");
+    await screen.findByRole("region", { name: STRINGS.ratingQuestion });
+    await user.click(screen.getByRole("button", { name: STRINGS.rateStars(2) }));
+    expect(await screen.findByText(STRINGS.ratingThanks)).toBeTruthy();
+    // No error note in the chat either.
+    expect(bubbles().at(-1)).toEqual(["assistant", "We open at 9."]);
   });
 });

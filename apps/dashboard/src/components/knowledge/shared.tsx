@@ -70,11 +70,13 @@ export function ConfirmDelete({
   what,
   onConfirm,
   onClose,
+  description = "The chatbot stops using it right away. This can't be undone.",
 }: {
   /** e.g. "this FAQ"; null closes the dialog. */
   what: string | null;
   onConfirm: () => Promise<void>;
   onClose: () => void;
+  description?: string;
 }) {
   const [busy, setBusy] = useState(false);
   return (
@@ -82,9 +84,7 @@ export function ConfirmDelete({
       <DialogContent>
         <DialogHeader>
           <DialogTitle>Delete {what}?</DialogTitle>
-          <DialogDescription>
-            The chatbot stops using it right away. This can&apos;t be undone.
-          </DialogDescription>
+          <DialogDescription>{description}</DialogDescription>
         </DialogHeader>
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>

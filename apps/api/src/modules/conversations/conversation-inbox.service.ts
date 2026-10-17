@@ -173,4 +173,18 @@ export class ConversationInboxService {
       messages,
     };
   }
+
+  /**
+   * Deletes a conversation for privacy (M5-3); its messages go with it
+   * (`ON DELETE CASCADE`). Another workspace's or a preview conversation
+   * is a 404, as in detail().
+   */
+  async remove(id: string): Promise<void> {
+    const deleted = await this.db.conversation.deleteMany({
+      where: { id, isPreview: false },
+    });
+    if (deleted.count === 0) {
+      throw new NotFoundException('Conversation not found');
+    }
+  }
 }

@@ -1,13 +1,14 @@
 "use client";
 
 import type { ConversationDetail } from "@brainstack/shared";
-import { ExternalLink, Star, TriangleAlert } from "lucide-react";
-import { useParams } from "next/navigation";
+import { ExternalLink, Star, Trash2, TriangleAlert } from "lucide-react";
+import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { EmptyState } from "@/components/knowledge/shared";
+import { ConfirmDelete, EmptyState } from "@/components/knowledge/shared";
 import { PageHeader } from "@/components/page-header";
 import { TranscriptView } from "@/components/transcript-view";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ApiError, formatDateTime } from "@/lib/api";
 import {
@@ -17,17 +18,21 @@ import {
   visitorLabel,
 } from "@/lib/conversations";
 import { useSession } from "@/lib/session";
-import { toastError } from "@/lib/toast";
+import { toastError, toastSuccess } from "@/lib/toast";
 
 /**
  * One conversation (D-3 §3.6, M5-2): the page it started on, its rating,
- * and the full transcript with the sources behind every answer.
+ * and the full transcript with the sources behind every answer. An owner
+ * or admin can delete it for privacy (M5-3), after a confirm dialog.
  */
 export default function ConversationPage() {
   const { id } = useParams<{ id: string }>();
   const { me } = useSession();
   const [conversation, setConversation] = useState<ConversationDetail | null>(null);
   const [missing, setMissing] = useState(false);
+  const [confirming, setConfirming] = useState(false);
+  const router = useRouter();
+  const canDelete = me.role === "OWNER" || me.role === "ADMIN";
 
   useEffect(() => {
     let cancelled = false;
@@ -58,6 +63,13 @@ export default function ConversationPage() {
         backHref="/app/conversations"
         title={conversation ? visitorLabel(conversation.visitorId) : "Conversation"}
         subtitle={conversation ? formatDateTime(conversation.startedAt) : undefined}
+        actions={
+          conversation && canDelete ? (
+            <Button variant="outline" onClick={() => setConfirming(true)}>
+              <Trash2 /> Delete
+            </Button>
+          ) : undefined
+        }
       />
 
       {missing ? (
@@ -108,6 +120,17 @@ export default function ConversationPage() {
           </div>
         </>
       )}
+
+      <ConfirmDelete
+        what={confirming ? "this conversation" : null}
+        description="All of its messages are deleted for good. This can't be undone."
+        onClose={() => setConfirming(false)}
+        onConfirm={async () => {
+          await conversationsApi.remove(id);
+          toastSuccess("Conversation deleted.");
+          router.push("/app/conversations");
+        }}
+      />
     </div>
   );
 }

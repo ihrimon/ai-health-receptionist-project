@@ -103,6 +103,18 @@ describe("App in the loader's iframe (M4-10)", () => {
     await waitFor(() => expect(sent("unread").map((m) => m.data.count)).toEqual([1, 0]));
   });
 
+  it("asks for a rating as soon as the visitor closes the panel after an answer (M5-7)", async () => {
+    const { deliver, finish, user } = await embedded(true);
+    await user.type(screen.getByRole("textbox", { name: STRINGS.inputLabel }), "Hi{Enter}");
+    act(() => finish());
+    await screen.findByText("We open at 9.");
+    // The quiet time is long (30 s): only closing brings the prompt now.
+    expect(screen.queryByRole("region", { name: STRINGS.ratingQuestion })).toBeNull();
+
+    act(() => deliver(hostMessage("state", false), HOST));
+    expect(await screen.findByRole("region", { name: STRINGS.ratingQuestion })).toBeTruthy();
+  });
+
   it("doesn't count an answer the visitor watched arrive", async () => {
     const { finish, sent, user } = await embedded(true);
     await user.type(screen.getByRole("textbox", { name: STRINGS.inputLabel }), "Hi{Enter}");

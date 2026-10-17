@@ -86,4 +86,7 @@ export const conversationsApi = {
     apiFetch<ConversationPage>(`/conversations${conversationQueryString(query)}`),
   get: (id: string) =>
     apiFetch<ConversationDetail>(`/conversations/${encodeURIComponent(id)}`),
+  /** Privacy (M5-3): the conversation and all its messages; owner or admin only. */
+  remove: (id: string) =>
+    apiFetch<void>(`/conversations/${encodeURIComponent(id)}`, { method: "DELETE" }),
 };
