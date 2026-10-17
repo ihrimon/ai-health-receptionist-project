@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { MailWarning } from "lucide-react";
 import { OnboardingChecklist } from "@/components/onboarding-checklist";
+import { OverviewStats } from "@/components/overview-stats";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { apiFetch, ApiError } from "@/lib/api";
@@ -11,7 +12,7 @@ import { toastError, toastSuccess } from "@/lib/toast";
 
 /**
  * Home (M1-27): the onboarding checklist (M2-17, D-3 §3.1) until the
- * chatbot is set up and published.
+ * chatbot is set up and published, and the overview stats below it (M5-8).
  */
 export default function AppHomePage() {
   const { me } = useSession();
@@ -31,6 +32,8 @@ export default function AppHomePage() {
       {!me.user.emailVerifiedAt && <VerifyEmailBanner email={me.user.email} />}
 
       {me.activeWorkspace && <OnboardingChecklist key={me.activeWorkspace.id} />}
+
+      {me.activeWorkspace && <OverviewStats key={`stats-${me.activeWorkspace.id}`} />}
     </div>
   );
 }
