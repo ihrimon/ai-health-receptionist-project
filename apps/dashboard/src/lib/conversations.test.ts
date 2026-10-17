@@ -18,10 +18,11 @@ describe("conversationQueryString", () => {
         from: "2026-10-01",
         to: "2026-10-17",
         rating: "none",
+        hasLead: "true",
         cursor: "abc",
         limit: 25,
       }),
-    ).toBe("?q=refund&from=2026-10-01&to=2026-10-17&rating=none&cursor=abc&limit=25");
+    ).toBe("?q=refund&from=2026-10-01&to=2026-10-17&rating=none&hasLead=true&cursor=abc&limit=25");
   });
 });
 

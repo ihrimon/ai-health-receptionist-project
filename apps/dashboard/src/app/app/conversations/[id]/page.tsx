@@ -1,7 +1,8 @@
 "use client";
 
 import type { ConversationDetail } from "@brainstack/shared";
-import { ExternalLink, Star, Trash2, TriangleAlert } from "lucide-react";
+import { ExternalLink, Star, Trash2, TriangleAlert, UserRound } from "lucide-react";
+import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { ConfirmDelete, EmptyState } from "@/components/knowledge/shared";
@@ -109,6 +110,13 @@ export default function ConversationPage() {
             ) : (
               <span>Not rated</span>
             )}
+            {conversation.leadId && (
+              <Link href="/app/leads">
+                <Badge variant="outline" className="gap-1 text-emerald-700 dark:text-emerald-500">
+                  <UserRound className="size-3" /> Left a lead
+                </Badge>
+              </Link>
+            )}
             {conversation.hasFallback && (
               <Badge variant="outline" className="gap-1 text-amber-600 dark:text-amber-500">
                 <TriangleAlert className="size-3" /> The bot couldn&apos;t answer something
@@ -123,7 +131,11 @@ export default function ConversationPage() {
 
       <ConfirmDelete
         what={confirming ? "this conversation" : null}
-        description="All of its messages are deleted for good. This can't be undone."
+        description={
+          conversation?.leadId
+            ? "All of its messages are deleted for good. The lead it left stays in Leads. This can't be undone."
+            : "All of its messages are deleted for good. This can't be undone."
+        }
         onClose={() => setConfirming(false)}
         onConfirm={async () => {
           await conversationsApi.remove(id);
