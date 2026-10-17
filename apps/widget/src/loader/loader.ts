@@ -155,7 +155,10 @@ export function mountLoader(
   // Loaded right away (hidden), so the launcher gets the company's color
   // and side before the visitor clicks.
   const frame = el("iframe");
-  frame.src = `${widget.base}/w/${encodeURIComponent(chatbotId)}`;
+  // The site's origin, for "Verify installation" (M4-14) when the site
+  // sends no Referer; the API only counts one of the allowed domains.
+  const site = win.location.origin;
+  frame.src = `${widget.base}/w/${encodeURIComponent(chatbotId)}${site.startsWith("http") ? `?host=${encodeURIComponent(site)}` : ""}`;
   frame.title = LOADER_STRINGS.frameTitle;
   panel.append(frame);
   wrap.append(panel, button);

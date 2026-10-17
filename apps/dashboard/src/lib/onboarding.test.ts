@@ -7,6 +7,7 @@ const fresh = {
   productCount: 0,
   published: false,
   aiKeyReady: false,
+  installed: false,
 };
 
 const doneIds = (input: typeof fresh) =>
@@ -40,8 +41,9 @@ describe("onboardingSteps", () => {
         productCount: 1,
         published: true,
         aiKeyReady: true,
+        installed: true,
       }),
-    ).toEqual(["account", "aiKey", "business", "knowledge", "products", "publish"]);
+    ).toEqual(["account", "aiKey", "business", "knowledge", "products", "publish", "install"]);
   });
 
   it("doesn't count a blank description", () => {
@@ -62,6 +64,12 @@ describe("onboardingSteps", () => {
       optional: true,
       href: "/app/settings/install",
     });
+    expect(install?.done).toBe(false);
+  });
+
+  it("ticks install once the widget has loaded on an allowed domain (M4-14)", () => {
+    const install = onboardingSteps({ ...fresh, installed: true }).find((s) => s.id === "install");
+    expect(install?.done).toBe(true);
   });
 });
 
@@ -81,6 +89,7 @@ describe("onboardingProgress", () => {
       productCount: 0, // optional
       published: true,
       aiKeyReady: true,
+      installed: false, // optional
     };
     expect(onboardingProgress(onboardingSteps(live)).readyForNow).toBe(true);
     expect(

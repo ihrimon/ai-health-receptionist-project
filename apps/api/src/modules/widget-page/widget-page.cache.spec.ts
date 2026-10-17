@@ -1,8 +1,15 @@
 import {
+  type CachedPage,
   WIDGET_PAGE_MAX_ENTRIES,
   WIDGET_PAGE_TTL_MS,
   WidgetPageCache,
 } from './widget-page.cache';
+
+const page = (ancestors: string): CachedPage => ({
+  ancestors,
+  allowedDomains: [],
+  installed: false,
+});
 
 describe('WidgetPageCache', () => {
   let cache: WidgetPageCache;
@@ -15,36 +22,44 @@ describe('WidgetPageCache', () => {
   });
 
   it('returns a stored value until the TTL ends', () => {
-    cache.set('cb_a', 'https://a.example.com', cache.generation);
+    cache.set('cb_a', page('https://a.example.com'), cache.generation);
     now += WIDGET_PAGE_TTL_MS - 1;
-    expect(cache.get('cb_a')).toBe('https://a.example.com');
+    expect(cache.get('cb_a')?.ancestors).toBe('https://a.example.com');
     now += 1;
     expect(cache.get('cb_a')).toBeNull();
   });
 
   it('forgets a chatbot when it is invalidated', () => {
-    cache.set('cb_a', 'https://a.example.com', cache.generation);
-    cache.set('cb_b', 'https://b.example.com', cache.generation);
+    cache.set('cb_a', page('https://a.example.com'), cache.generation);
+    cache.set('cb_b', page('https://b.example.com'), cache.generation);
     cache.invalidate('cb_a');
     expect(cache.get('cb_a')).toBeNull();
-    expect(cache.get('cb_b')).toBe('https://b.example.com');
+    expect(cache.get('cb_b')?.ancestors).toBe('https://b.example.com');
   });
 
   it('does not keep a value loaded while an invalidation happened', () => {
     const generation = cache.generation;
     // ...the database read is in flight while the domains change...
     cache.invalidate('cb_a');
-    cache.set('cb_a', 'https://old.example.com', generation);
+    cache.set('cb_a', page('https://old.example.com'), generation);
     expect(cache.get('cb_a')).toBeNull();
   });
 
   it('drops the oldest entry when full', () => {
     for (let i = 0; i < WIDGET_PAGE_MAX_ENTRIES; i++) {
-      cache.set(`cb_${i}`, "'none'", cache.generation);
+      cache.set(`cb_${i}`, page("'none'"), cache.generation);
     }
-    cache.set('cb_new', "'none'", cache.generation);
+    cache.set('cb_new', page("'none'"), cache.generation);
     expect(cache.size).toBe(WIDGET_PAGE_MAX_ENTRIES);
     expect(cache.get('cb_0')).toBeNull();
-    expect(cache.get('cb_new')).toBe("'none'");
+    expect(cache.get('cb_new')?.ancestors).toBe("'none'");
+  });
+
+  it('remembers that the install was recorded (M4-14)', () => {
+    cache.set('cb_a', page("'none'"), cache.generation);
+    cache.markInstalled('cb_a');
+    cache.markInstalled('cb_missing');
+    expect(cache.get('cb_a')?.installed).toBe(true);
+    expect(cache.get('cb_missing')).toBeNull();
   });
 });

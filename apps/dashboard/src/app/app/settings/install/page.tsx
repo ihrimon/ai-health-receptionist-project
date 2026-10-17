@@ -1,8 +1,8 @@
 "use client";
 
-import { Check, CircleAlert, Copy } from "lucide-react";
+import { Check, CircleAlert, CircleCheck, Clock, Copy, RefreshCw } from "lucide-react";
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -14,6 +14,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { AllowedDomainsEditor } from "@/components/allowed-domains-editor";
 import { useChatbot } from "@/lib/chatbot";
+import { installStatus } from "@/lib/install-status";
 import { useSession } from "@/lib/session";
 import { toastError } from "@/lib/toast";
 import { useAiKeyReady } from "@/lib/use-ai-key-ready";
@@ -21,13 +22,22 @@ import { useAiKeyReady } from "@/lib/use-ai-key-ready";
 /**
  * Settings → Install (M4-13, D-3 §3.5): the sites allowed to show the chat,
  * the one-line snippet that puts it there, and what must be true for it to
- * answer.
+ * answer, and whether the chat has shown up on the site yet (M4-14).
  */
 export default function InstallPage() {
   const { me } = useSession();
-  const { chatbot } = useChatbot();
+  const { chatbot, refresh } = useChatbot();
   const aiKeyReady = useAiKeyReady();
   const [copied, setCopied] = useState(false);
+  const [checking, setChecking] = useState(false);
+
+  // The install is recorded by the API when the chat first loads on the
+  // site, so the status loaded with the dashboard may be old.
+  useEffect(() => {
+    refresh().catch(() => {});
+    // Once per visit to this page.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   if (!chatbot || aiKeyReady === undefined) {
     return <Skeleton className="h-64 w-full" />;
@@ -62,6 +72,22 @@ export default function InstallPage() {
         ]),
   ];
 
+  const status = installStatus(
+    chatbot.installVerifiedAt,
+    chatbot.installVerifiedHost,
+  );
+
+  async function checkAgain() {
+    setChecking(true);
+    try {
+      await refresh();
+    } catch (err) {
+      toastError((err as Error).message);
+    } finally {
+      setChecking(false);
+    }
+  }
+
   async function copy() {
     try {
       await navigator.clipboard.writeText(chatbot!.embedSnippet);
@@ -74,6 +100,33 @@ export default function InstallPage() {
 
   return (
     <div className="grid gap-4">
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            {status.installed ? (
+              <CircleCheck className="size-5 text-emerald-600" />
+            ) : (
+              <Clock className="size-5 text-muted-foreground" />
+            )}
+            {status.title}
+          </CardTitle>
+          <CardDescription>{status.detail}</CardDescription>
+        </CardHeader>
+        {!status.installed && (
+          <CardContent>
+            <Button
+              variant="outline"
+              className="w-fit"
+              disabled={checking}
+              onClick={() => void checkAgain()}
+            >
+              <RefreshCw className={checking ? "animate-spin" : undefined} />
+              Check again
+            </Button>
+          </CardContent>
+        )}
+      </Card>
+
       <Card>
         <CardHeader>
           <CardTitle>1. Allowed domains</CardTitle>

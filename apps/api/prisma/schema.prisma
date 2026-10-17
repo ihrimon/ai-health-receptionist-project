@@ -8,9 +8,7 @@
 // so rows inserted with raw SQL (KnowledgeService) get one too.
 //
 // Identity and tenancy (User, Workspace, WorkspaceMember, Session,
-// EmailToken) and Chatbot/ChatbotVersion follow docs/design/d1-data-model.md
-// (Chatbot's installVerifiedAt arrives in M4). Conversation is still the
-// interim single-tenant shape until M3.
+// EmailToken) and Chatbot/ChatbotVersion follow docs/design/d1-data-model.md.
 
 generator client {
   provider            = "prisma-client"
@@ -198,21 +196,27 @@ model EmailToken {
 /// One per workspace in the MVP (M0 decision B2), created together with the
 /// workspace. FAQs, custom answers and knowledge sources belong to it.
 model Chatbot {
-  id                 String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  workspaceId        String        @map("workspace_id") @db.Uuid
+  id                  String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId         String        @map("workspace_id") @db.Uuid
   /// "cb_" + 16 random characters; goes in the embed snippet.
-  publicId           String        @unique @map("public_id") @db.VarChar(24)
-  status             ChatbotStatus @default(ENABLED)
+  publicId            String        @unique @map("public_id") @db.VarChar(24)
+  status              ChatbotStatus @default(ENABLED)
   /// ChatbotConfig (packages/shared, docs/design/d4-chatbot-config.md),
   /// edited freely; the live config is publishedVersion.config.
-  draftConfig        Json          @map("draft_config")
+  draftConfig         Json          @map("draft_config")
   /// The live version; null until the first publish.
-  publishedVersionId String?       @unique @map("published_version_id") @db.Uuid
+  publishedVersionId  String?       @unique @map("published_version_id") @db.Uuid
   /// Sites allowed to embed the widget, e.g. "shop.example.com",
   /// "*.example.com" (enforced with frame-ancestors CSP in M4).
-  allowedDomains     String[]      @default([]) @map("allowed_domains")
-  createdAt          DateTime      @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt          DateTime      @updatedAt @map("updated_at") @db.Timestamptz
+  allowedDomains      String[]      @default([]) @map("allowed_domains")
+  /// When the widget page was first loaded inside an allowed site
+  /// ("Verify installation", FR-3.5, M4-14); null until then, and reset
+  /// when that site leaves allowedDomains.
+  installVerifiedAt   DateTime?     @map("install_verified_at") @db.Timestamptz
+  /// That site as host[:port], e.g. "shop.example.com".
+  installVerifiedHost String?       @map("install_verified_host") @db.VarChar(260)
+  createdAt           DateTime      @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt           DateTime      @updatedAt @map("updated_at") @db.Timestamptz
 
   workspace        Workspace         @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   publishedVersion ChatbotVersion?   @relation("PublishedVersion", fields: [publishedVersionId], references: [id], onDelete: SetNull)
