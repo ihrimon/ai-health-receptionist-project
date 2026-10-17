@@ -5,7 +5,8 @@ import request from 'supertest';
 import type { App } from 'supertest/types';
 import { AppModule } from '../../src/app.module';
 import { configureApp } from '../../src/app.setup';
-import { PrismaService } from '../../src/database/prisma.service';
+import { PrismaClient } from '../../src/generated/prisma/client';
+import { createAdminPrisma } from './admin-prisma';
 import { SESSION_COOKIE } from '../../src/modules/auth/auth.constants';
 import { SessionsService } from '../../src/modules/auth/sessions.service';
 import { EmbeddingService } from '../../src/modules/knowledge/embedding.service';
@@ -35,7 +36,7 @@ describe('Platform LLM credentials (M6-13)', () => {
   const BASE = '/v1/admin/llm-credentials';
   let app: NestExpressApplication;
   let http: App;
-  let prisma: PrismaService;
+  let prisma: PrismaClient;
   const cookies = { admin: '', owner: '' };
   const userIds = { admin: '', owner: '' };
   const wsIds: string[] = [];
@@ -79,7 +80,9 @@ describe('Platform LLM credentials (M6-13)', () => {
     configureApp(app);
     await app.init();
     http = app.getHttpServer();
-    prisma = app.get(PrismaService);
+    // Owner connection: not subject to RLS, so tests can arrange and check
+    // data across workspaces (the app itself runs as brainstack_app).
+    prisma = createAdminPrisma();
 
     const workspaces = app.get(WorkspacesService);
     const sessions = app.get(SessionsService);
@@ -117,6 +120,7 @@ describe('Platform LLM credentials (M6-13)', () => {
       });
     }
     await app?.close();
+    await prisma?.$disconnect();
   });
 
   it('answers 404 (not 403) to a normal owner on every endpoint, and changes nothing', async () => {

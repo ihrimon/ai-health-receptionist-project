@@ -23,6 +23,7 @@
     "test:integration": "node --experimental-vm-modules node_modules/jest/bin/jest.js --config ./test/jest-integration.json --runInBand",
     "knowledge:eval": "ts-node -r tsconfig-paths/register src/modules/knowledge/eval/retrieval-eval.script.ts",
     "knowledge:reembed": "ts-node -r tsconfig-paths/register src/modules/knowledge/reembed.script.ts",
+    "db:app-role": "ts-node -r tsconfig-paths/register src/database/app-role.script.ts",
     "user:platform-admin": "ts-node -r tsconfig-paths/register src/modules/auth/platform-admin.script.ts",
     "postinstall": "prisma generate",
     "prisma:generate": "prisma generate",

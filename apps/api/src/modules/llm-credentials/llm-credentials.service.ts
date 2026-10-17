@@ -10,6 +10,7 @@ import {
   LlmProvider,
   Prisma,
 } from '../../generated/prisma/client';
+import { runAsSystem } from '../../tenancy/tenant-context';
 import { ProviderRegistry } from '../llm/providers/provider-registry';
 import { CreateLlmCredentialDto } from './dto/create-llm-credential.dto';
 import { UpdateLlmCredentialDto } from './dto/update-llm-credential.dto';
@@ -101,7 +102,14 @@ export class LlmCredentialsService {
     };
   }
 
-  async create(
+  create(
+    actor: CredentialActor,
+    dto: CreateLlmCredentialDto,
+  ): Promise<LlmCredential> {
+    return this.withAudit(() => this.createInner(actor, dto));
+  }
+
+  private async createInner(
     actor: CredentialActor,
     dto: CreateLlmCredentialDto,
   ): Promise<LlmCredential> {
@@ -129,7 +137,15 @@ export class LlmCredentialsService {
     });
   }
 
-  async update(
+  update(
+    actor: CredentialActor,
+    id: string,
+    dto: UpdateLlmCredentialDto,
+  ): Promise<LlmCredential> {
+    return this.withAudit(() => this.updateInner(actor, id, dto));
+  }
+
+  private async updateInner(
     actor: CredentialActor,
     id: string,
     dto: UpdateLlmCredentialDto,
@@ -174,6 +190,15 @@ export class LlmCredentialsService {
    * production logs the next time the chat assistant happens to rotate to
    * this credential.
    */
+  /**
+   * Every change here also writes an audit_logs row. That table is for the
+   * platform team only (M7-1: its RLS policy allows only the bypass), so these
+   * platform-admin-only methods run with it.
+   */
+  private withAudit<T>(fn: () => Promise<T>): Promise<T> {
+    return runAsSystem('platform LLM credentials audit', fn);
+  }
+
   private async validateCredential(
     provider: LlmProvider,
     apiKey: string,
@@ -194,7 +219,11 @@ export class LlmCredentialsService {
     }
   }
 
-  async remove(actor: CredentialActor, id: string): Promise<void> {
+  remove(actor: CredentialActor, id: string): Promise<void> {
+    return this.withAudit(() => this.removeInner(actor, id));
+  }
+
+  private async removeInner(actor: CredentialActor, id: string): Promise<void> {
     const credential = await this.findOne(id);
     await this.prisma.$transaction([
       this.prisma.llmCredential.delete({ where: { id } }),
@@ -209,7 +238,14 @@ export class LlmCredentialsService {
   }
 
   /** Re-numbers sort_order to match the given id order — used by the settings UI's drag/move-up-down reordering. */
-  async reorder(
+  reorder(
+    actor: CredentialActor,
+    orderedIds: string[],
+  ): Promise<LlmCredential[]> {
+    return this.withAudit(() => this.reorderInner(actor, orderedIds));
+  }
+
+  private async reorderInner(
     actor: CredentialActor,
     orderedIds: string[],
   ): Promise<LlmCredential[]> {
