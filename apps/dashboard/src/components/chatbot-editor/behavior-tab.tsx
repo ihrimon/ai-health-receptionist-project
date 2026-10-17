@@ -11,6 +11,7 @@ import {
 } from "@/components/ui/select";
 import { ChipInput, Field, TextAreaField, TextField } from "./fields";
 import type { TabProps } from "./general-tab";
+import { QuestionsSection } from "./questions-section";
 import { Section } from "./section";
 
 const TONE_INFO: Record<Tone, { label: string; description: string }> = {
@@ -167,10 +168,9 @@ export function BehaviorTab({ draft, edit, errors }: TabProps) {
             onChange={(v) => edit((d) => void (d.behavior.handoff.label = v))}
           />
         )}
-        <p className="text-xs text-muted-foreground">
-          Questions the bot asks visitors (name, phone…) come with leads later.
-        </p>
       </Section>
+
+      <QuestionsSection draft={draft} edit={edit} errors={errors} />
     </>
   );
 }
