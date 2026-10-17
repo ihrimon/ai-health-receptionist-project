@@ -22,11 +22,13 @@ describe('WorkspaceAccessService.resolveActive', () => {
     prisma.workspaceMember.findUnique.mockResolvedValue({
       workspaceId: 'ws-a',
       role: WorkspaceRole.ADMIN,
+      workspace: { status: 'ACTIVE' },
     });
 
     await expect(service.resolveActive(session)).resolves.toEqual({
       workspaceId: 'ws-a',
       role: WorkspaceRole.ADMIN,
+      workspaceStatus: 'ACTIVE',
     });
     expect(prisma.session.update).not.toHaveBeenCalled();
   });
@@ -36,11 +38,13 @@ describe('WorkspaceAccessService.resolveActive', () => {
     prisma.workspaceMember.findFirst.mockResolvedValue({
       workspaceId: 'ws-c',
       role: WorkspaceRole.VIEWER,
+      workspace: { status: 'SUSPENDED' },
     });
 
     await expect(service.resolveActive(session)).resolves.toEqual({
       workspaceId: 'ws-c',
       role: WorkspaceRole.VIEWER,
+      workspaceStatus: 'SUSPENDED',
     });
     expect(prisma.session.update).toHaveBeenCalledWith({
       where: { id: 's1' },

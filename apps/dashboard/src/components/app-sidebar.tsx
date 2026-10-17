@@ -8,6 +8,7 @@ import {
   House,
   LogOut,
   KeyRound,
+  Building2,
   Settings,
 } from "lucide-react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -36,6 +37,7 @@ import {
 import { useSession } from "@/lib/session";
 
 const NAV_ITEMS = [
+  { title: "Workspaces", href: "/admin/workspaces", icon: Building2 },
   { title: "LLM keys", href: "/admin/settings", icon: KeyRound },
 ];
 

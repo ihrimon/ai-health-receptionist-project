@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
 
-/** The platform-admin area is just the LLM keys page for now. */
+/** The platform-admin area opens on the workspace list (M7-0). */
 export default function AdminHomePage() {
-  redirect("/admin/settings");
+  redirect("/admin/workspaces");
 }

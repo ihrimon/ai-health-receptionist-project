@@ -8,7 +8,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
-import { WorkspaceRole } from '../generated/prisma/client';
+import { WorkspaceRole, WorkspaceStatus } from '../generated/prisma/client';
 import { AuthenticatedRequest } from '../modules/auth/auth-context';
 import { TenantContext } from './tenant-context';
 import { hasRole, WorkspaceAccessService } from './workspace-access.service';
@@ -39,6 +39,18 @@ export class WorkspaceGuard implements CanActivate {
     const active = await this.access.resolveActive(req.auth.session);
     if (!active) {
       throw new ForbiddenException('You are not a member of any workspace');
+    }
+
+    // Checked before the role: every member, whatever their role, is
+    // locked out of a workspace the platform team suspended (M7-0).
+    if (active.workspaceStatus === WorkspaceStatus.SUSPENDED) {
+      throw new ForbiddenException({
+        statusCode: 403,
+        error: 'Forbidden',
+        code: 'WORKSPACE_SUSPENDED',
+        message:
+          'This workspace is suspended. Contact BrainStack support to get it back.',
+      });
     }
 
     const minimum =
