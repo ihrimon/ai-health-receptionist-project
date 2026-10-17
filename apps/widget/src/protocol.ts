@@ -1,4 +1,4 @@
-import type { HostToWidgetMessage, WidgetEnvelope, WidgetToHostMessage } from "@brainstack/shared";
+import type { HostToWidgetMessage, LauncherIcon, WidgetEnvelope, WidgetToHostMessage } from "@brainstack/shared";
 
 /*
  * The runtime half of the loader ↔ chat window protocol (M4-10; the types
@@ -12,6 +12,9 @@ const NS = "brainstack";
 const VERSION = 1;
 
 const HEX_COLOR = /^#[0-9a-fA-F]{6}$/;
+
+/** Same values as `LAUNCHER_ICONS` in @brainstack/shared (types only here). */
+const LAUNCHER_ICONS: readonly LauncherIcon[] = ["chat", "sparkle", "help"];
 
 export function envelope<T extends { type: string }>(message: T): WidgetEnvelope<T> {
   return { ns: NS, v: VERSION, ...message };
@@ -51,6 +54,11 @@ export function readWidgetMessage(data: unknown): WidgetToHostMessage | null {
         primaryColor: raw.primaryColor,
         textColor: raw.textColor,
         position: raw.position,
+        // Optional and open-ended, so an older or newer chat window still
+        // colors the launcher; anything unknown is the default icon.
+        launcherIcon: LAUNCHER_ICONS.includes(raw.launcherIcon as LauncherIcon)
+          ? (raw.launcherIcon as LauncherIcon)
+          : "chat",
       };
     case "resize":
       return isSize(raw.width) && isSize(raw.height)

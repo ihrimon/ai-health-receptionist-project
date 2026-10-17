@@ -1,4 +1,4 @@
-import type { HostToWidgetMessage } from "@brainstack/shared";
+import type { HostToWidgetMessage, LauncherIcon } from "@brainstack/shared";
 import { envelope, readWidgetMessage } from "../protocol";
 import { LOADER_STRINGS } from "../strings";
 
@@ -25,8 +25,21 @@ const DEFAULT_BOTTOM = 20;
 const WIDTH = { min: 300, max: 600 };
 const HEIGHT = { min: 400, max: 800 };
 
-const CHAT_ICON =
-  '<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>';
+const svg = (paths: string) =>
+  `<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths}</svg>`;
+
+/**
+ * The launcher icons a company can pick (FR-3.6), drawn like the dashboard
+ * preview's (lucide's message-square, sparkles, circle-help). Fixed markup
+ * only: the chat window sends a name, never SVG.
+ */
+const LAUNCHER_ICONS: Record<LauncherIcon, string> = {
+  chat: svg('<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>'),
+  sparkle: svg(
+    '<path d="M11.017 2.814a1 1 0 0 1 1.966 0l1.051 5.558a2 2 0 0 0 1.594 1.594l5.558 1.051a1 1 0 0 1 0 1.966l-5.558 1.051a2 2 0 0 0-1.594 1.594l-1.051 5.558a1 1 0 0 1-1.966 0l-1.051-5.558a2 2 0 0 0-1.594-1.594l-5.558-1.051a1 1 0 0 1 0-1.966l5.558-1.051a2 2 0 0 0 1.594-1.594z"/><path d="M20 2v4M22 4h-4"/><circle cx="4" cy="20" r="2"/>',
+  ),
+  help: svg('<circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3M12 17h.01"/>'),
+};
 const CLOSE_ICON =
   '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>';
 
@@ -150,13 +163,15 @@ export function mountLoader(
 
   let open = false;
   let unread = 0;
+  let launcherIcon: LauncherIcon = "chat";
 
   const post = (message: HostToWidgetMessage) =>
     frame.contentWindow?.postMessage(envelope(message), widget.origin);
 
   function render() {
     wrap.classList.toggle("open", open);
-    icon.innerHTML = open ? CLOSE_ICON : CHAT_ICON;
+    icon.innerHTML = open ? CLOSE_ICON : LAUNCHER_ICONS[launcherIcon];
+    icon.setAttribute("data-icon", open ? "close" : launcherIcon);
     const showBadge = !open && unread > 0;
     badge.hidden = !showBadge;
     badge.textContent = showBadge ? (unread > 9 ? "9+" : String(unread)) : "";
@@ -216,6 +231,8 @@ export function mountLoader(
         wrap.style.setProperty("--bg", message.primaryColor);
         wrap.style.setProperty("--fg", message.textColor);
         wrap.classList.toggle("left", message.position === "left");
+        launcherIcon = message.launcherIcon ?? "chat";
+        render();
         break;
       case "open":
         setOpen(true);

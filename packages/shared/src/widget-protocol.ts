@@ -1,3 +1,5 @@
+import type { LauncherIcon } from './public-chat';
+
 /**
  * The postMessage protocol between the loader (`chatbot.js` on a company's
  * page) and the chat window in its iframe (M4-10). The widget and the
@@ -28,6 +30,8 @@ export type WidgetToHostMessage =
       primaryColor: string;
       textColor: '#000000' | '#ffffff';
       position: 'left' | 'right';
+      /** Added after v1 shipped, so optional: a loader shows 'chat' when it's missing or unknown. */
+      launcherIcon?: LauncherIcon;
     }
   /** Open the chat (e.g. a link inside it asks for it). */
   | { type: 'open' }

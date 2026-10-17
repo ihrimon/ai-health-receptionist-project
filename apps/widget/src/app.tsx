@@ -52,8 +52,8 @@ export function App({
   // Only the launcher's look goes to the host page: nothing private.
   useEffect(() => {
     if (load.kind !== "ready") return;
-    const { primaryColor, position } = load.config;
-    host.connection?.post({ type: "config", primaryColor, textColor: textOn(primaryColor), position });
+    const { primaryColor, position, launcherIcon } = load.config;
+    host.connection?.post({ type: "config", primaryColor, textColor: textOn(primaryColor), position, launcherIcon });
   }, [load, host.connection]);
 
   if (load.kind !== "ready" || !publicId) {

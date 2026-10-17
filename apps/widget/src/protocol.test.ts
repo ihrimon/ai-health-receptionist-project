@@ -10,7 +10,7 @@ describe("protocol v1 (M4-10)", () => {
 
   it("reads every chat window message with valid fields", () => {
     for (const type of ["ready", "open", "close"]) expect(readWidgetMessage(wrap({ type }))).toEqual({ type });
-    const config = { type: "config", primaryColor: "#0F766E", textColor: "#ffffff", position: "left" };
+    const config = { type: "config", primaryColor: "#0F766E", textColor: "#ffffff", position: "left", launcherIcon: "help" };
     expect(readWidgetMessage(wrap(config))).toEqual(config);
     expect(readWidgetMessage(wrap({ type: "resize", width: 400, height: 600 }))).toEqual({
       type: "resize",
@@ -18,6 +18,13 @@ describe("protocol v1 (M4-10)", () => {
       height: 600,
     });
     expect(readWidgetMessage(wrap({ type: "unread", count: 2 }))).toEqual({ type: "unread", count: 2 });
+  });
+
+  it("reads a missing or unknown launcher icon as the default, so other versions still work", () => {
+    const base = { type: "config", primaryColor: "#0F766E", textColor: "#ffffff", position: "right" };
+    expect(readWidgetMessage(wrap(base))).toEqual({ ...base, launcherIcon: "chat" });
+    expect(readWidgetMessage(wrap({ ...base, launcherIcon: "<svg onload=x>" }))).toEqual({ ...base, launcherIcon: "chat" });
+    expect(readWidgetMessage(wrap({ ...base, launcherIcon: "custom" }))).toEqual({ ...base, launcherIcon: "chat" });
   });
 
   it("drops extra fields, so nothing unexpected reaches the page", () => {

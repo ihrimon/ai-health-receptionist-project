@@ -157,6 +157,22 @@ describe("loader ↔ chat window messages (M4-10)", () => {
     expect(wrap.classList.contains("left")).toBe(true);
   });
 
+  it("draws the chosen launcher icon, the default one without it, and the close icon while open", () => {
+    const loader = mount();
+    const icon = () => loader.button.querySelector("[data-icon]")!.getAttribute("data-icon");
+    expect(icon()).toBe("chat");
+    fromWidget(loader, { type: "config", primaryColor: "#0F766E", textColor: "#ffffff", position: "right", launcherIcon: "sparkle" });
+    expect(icon()).toBe("sparkle");
+    expect(loader.button.querySelector("svg")).not.toBeNull();
+    loader.setOpen(true);
+    expect(icon()).toBe("close");
+    loader.setOpen(false);
+    expect(icon()).toBe("sparkle");
+    // An older chat window sends no icon: back to the default.
+    fromWidget(loader, { type: "config", primaryColor: "#0F766E", textColor: "#ffffff", position: "right" });
+    expect(icon()).toBe("chat");
+  });
+
   it("closes on the chat window's close (its button or Escape) and opens on open", () => {
     const loader = mount();
     fromWidget(loader, { type: "open" });

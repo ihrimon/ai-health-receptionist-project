@@ -48,6 +48,10 @@ export interface PublicMessageView {
   createdAt: string;
 }
 
+/** The built-in launcher icons the loader can draw (FR-3.6). */
+export const LAUNCHER_ICONS = ['chat', 'sparkle', 'help'] as const;
+export type LauncherIcon = (typeof LAUNCHER_ICONS)[number];
+
 /** GET /v1/public/chatbots/:publicId/config: what the widget shows. */
 export interface PublicChatConfig {
   botName: string;
@@ -56,6 +60,8 @@ export interface PublicChatConfig {
   headerTitle: string;
   primaryColor: string;
   position: 'right' | 'left';
+  /** The launcher button's icon; a 'custom' one shows 'chat' until icon uploads exist. */
+  launcherIcon: LauncherIcon;
   quickReplies: string[];
   showBranding: boolean;
 }

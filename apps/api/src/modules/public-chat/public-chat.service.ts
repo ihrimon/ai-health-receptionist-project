@@ -83,6 +83,11 @@ export class PublicChatService {
       headerTitle: config.widget.headerTitle,
       primaryColor: config.widget.primaryColor,
       position: config.widget.position,
+      // No icon uploads yet (D-4), so a custom icon falls back to the default.
+      launcherIcon:
+        config.widget.launcherIcon === 'custom'
+          ? 'chat'
+          : config.widget.launcherIcon,
       quickReplies: config.widget.quickReplies,
       showBranding: config.widget.showBranding,
     };

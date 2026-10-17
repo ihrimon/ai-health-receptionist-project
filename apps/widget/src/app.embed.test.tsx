@@ -15,6 +15,7 @@ const config: PublicChatConfig = {
   headerTitle: "Acme Support",
   primaryColor: "#facc15",
   position: "left",
+  launcherIcon: "sparkle",
   quickReplies: [],
   showBranding: true,
 };
@@ -57,7 +58,7 @@ describe("App in the loader's iframe (M4-10)", () => {
     expect(posted()[0]).toEqual({ data: { ns: "brainstack", v: 1, type: "ready" }, target: "*" });
     await waitFor(() => expect(sent("config")).toHaveLength(1));
     expect(sent("config")[0]).toEqual({
-      data: { ns: "brainstack", v: 1, type: "config", primaryColor: "#facc15", textColor: "#000000", position: "left" },
+      data: { ns: "brainstack", v: 1, type: "config", primaryColor: "#facc15", textColor: "#000000", position: "left", launcherIcon: "sparkle" },
       target: HOST,
     });
   });
