@@ -19,6 +19,7 @@ export const TENANT_MODELS = new Set<string>([
   'Conversation',
   'Message',
   'UsageCounter',
+  'Lead',
 ]);
 
 const READ_MANY_OPS = new Set([

@@ -133,6 +133,7 @@ model Workspace {
   conversations   Conversation[]
   messages        Message[]
   usageCounters   UsageCounter[]
+  leads           Lead[]
   /// Sessions currently switched to this workspace.
   activeSessions  Session[]
 
@@ -227,6 +228,7 @@ model Chatbot {
   products         Product[]
   chunks           KnowledgeChunk[]
   conversations    Conversation[]
+  leads            Lead[]
 
   @@index([workspaceId])
   @@map("chatbots")
@@ -477,10 +479,40 @@ model Conversation {
   workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   chatbot   Chatbot   @relation(fields: [chatbotId], references: [id], onDelete: Cascade)
   messages  Message[]
+  lead      Lead?
 
   @@index([workspaceId, chatbotId, lastMessageAt(sort: Desc)])
   @@index([chatbotId, visitorId])
   @@map("conversations")
+}
+
+/// A visitor who left their contact details in a chat (M5-5, FR-8.2).
+/// Filled by the capture_lead tool (M5-4) through LeadsService.create.
+/// Deleting the conversation keeps the lead and clears the link.
+model Lead {
+  id             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId    String    @map("workspace_id") @db.Uuid
+  chatbotId      String    @map("chatbot_id") @db.Uuid
+  /// At most one lead per conversation; null once the chat is deleted.
+  conversationId String?   @unique @map("conversation_id") @db.Uuid
+  name           String?   @db.VarChar(100)
+  email          String?   @db.VarChar(255)
+  phone          String?   @db.VarChar(30)
+  /// { [QuestionToAsk.id]: "answer" } (D-4).
+  answers        Json      @default("{}")
+  /// The page the chat started on, copied so it outlives the conversation.
+  sourceUrl      String?   @map("source_url")
+  /// When the owner was emailed about it (M5-6); null until then.
+  notifiedAt     DateTime? @map("notified_at") @db.Timestamptz
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz
+
+  workspace    Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  chatbot      Chatbot       @relation(fields: [chatbotId], references: [id], onDelete: Cascade)
+  conversation Conversation? @relation(fields: [conversationId], references: [id], onDelete: SetNull)
+
+  @@index([workspaceId, createdAt(sort: Desc)])
+  @@index([chatbotId])
+  @@map("leads")
 }
 
 enum MessageRole {

@@ -1,5 +1,6 @@
 import { HeadObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { defaultChatbotConfig } from '@brainstack/shared';
+import { NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { NestExpressApplication } from '@nestjs/platform-express';
 import { Test } from '@nestjs/testing';
@@ -16,6 +17,7 @@ import { LlmChatClient } from '../../src/modules/llm/llm-chat.client';
 import { ConversationTokenService } from '../../src/modules/public-chat/conversation-token.service';
 import { EmbeddingService } from '../../src/modules/knowledge/embedding.service';
 import { KnowledgeService } from '../../src/modules/knowledge/knowledge.service';
+import { LeadsService } from '../../src/modules/leads/leads.service';
 import { WorkspacesService } from '../../src/modules/workspaces/workspaces.service';
 import { S3_CLIENT } from '../../src/storage/storage.service';
 import { runWithTenant } from '../../src/tenancy/tenant-context';
@@ -2205,6 +2207,229 @@ describe('Tenant isolation (M1-25)', () => {
     it('needs a session (401)', async () => {
       await request(http).get('/v1/conversations').expect(401);
       await request(http).get(`/v1/conversations/${convo.a}`).expect(401);
+    });
+  });
+
+  describe('Leads (M5-5)', () => {
+    const word = `quince${run}`;
+    const lead = { a: '', aOld: '', b: '' };
+    const convo = { a: '', b: '' };
+
+    async function seedConversation(
+      workspaceId: string,
+      chatbotId: string,
+    ): Promise<string> {
+      const created = await inWorkspace(workspaceId, () =>
+        db.conversation.create({
+          data: {
+            workspaceId,
+            chatbotId,
+            visitorId: `v-${run}`,
+            originUrl: 'https://shop.example/pricing',
+            messageCount: 1,
+            messages: {
+              create: [
+                { workspaceId, role: 'USER', content: `Hi, ${word} here` },
+              ],
+            },
+          },
+          select: { id: true },
+        }),
+      );
+      return created.id;
+    }
+
+    type LeadPage = {
+      items: { id: string; conversationId: string | null; name: string }[];
+      nextCursor: string | null;
+    };
+    const list = async (cookie: string, query = '') =>
+      (await as(cookie).get(`/v1/leads?q=${word}${query}`).expect(200))
+        .body as LeadPage;
+
+    beforeAll(async () => {
+      const leads = app.get(LeadsService);
+      convo.a = await seedConversation(ids.a, ids.botA);
+      convo.b = await seedConversation(ids.b, ids.botB);
+      lead.a = (
+        await inWorkspace(ids.a, () =>
+          leads.create({
+            chatbotId: ids.botA,
+            conversationId: convo.a,
+            name: `Ana ${word}`,
+            email: `ana-${run}@example.test`,
+          }),
+        )
+      ).id;
+      lead.aOld = (
+        await inWorkspace(ids.a, () =>
+          leads.create({ chatbotId: ids.botA, name: `=HYPERLINK ${word}` }),
+        )
+      ).id;
+      await prisma.lead.update({
+        where: { id: lead.aOld },
+        data: { createdAt: new Date('2026-01-05T10:00:00Z') },
+      });
+      lead.b = (
+        await inWorkspace(ids.b, () =>
+          leads.create({
+            chatbotId: ids.botB,
+            conversationId: convo.b,
+            name: `Bob ${word}`,
+          }),
+        )
+      ).id;
+    });
+
+    it("lists only the caller's leads, newest first; a viewer can too", async () => {
+      const a = await list(cookies.viewerA);
+      expect(a.items.map((l) => l.id)).toEqual([lead.a, lead.aOld]);
+      expect(a.items[0]).toMatchObject({
+        conversationId: convo.a,
+        sourceUrl: 'https://shop.example/pricing',
+      });
+      const b = await list(cookies.ownerB);
+      expect(b.items.map((l) => l.id)).toEqual([lead.b]);
+
+      const all = (
+        await as(cookies.ownerA).get('/v1/leads?limit=100').expect(200)
+      ).body as LeadPage;
+      expect(all.items.map((l) => l.id)).not.toContain(lead.b);
+    });
+
+    it('filters by date and pages with a cursor', async () => {
+      const ids1 = async (query: string) =>
+        (await list(cookies.ownerA, query)).items.map((l) => l.id);
+      expect(await ids1('&from=2026-01-01&to=2026-01-05')).toEqual([lead.aOld]);
+      expect(await ids1(`&chatbotId=${ids.botB}`)).toEqual([]);
+
+      const first = await list(cookies.ownerA, '&limit=1');
+      expect(first.items.map((l) => l.id)).toEqual([lead.a]);
+      const second = await list(
+        cookies.ownerA,
+        `&limit=1&cursor=${first.nextCursor}`,
+      );
+      expect(second.items.map((l) => l.id)).toEqual([lead.aOld]);
+      expect(second.nextCursor).toBeNull();
+
+      await as(cookies.ownerA).get('/v1/leads?cursor=bad').expect(400);
+      await as(cookies.ownerA).get('/v1/leads?from=nope').expect(400);
+    });
+
+    it("exports only the caller's leads as formula-safe CSV; owners and admins only", async () => {
+      const res = await as(cookies.ownerA)
+        .get(`/v1/leads/export.csv?q=${word}`)
+        .expect(200);
+      expect(String(res.headers['content-type'])).toContain('text/csv');
+      expect(String(res.headers['content-disposition'])).toMatch(
+        /^attachment; filename="leads-\d{4}-\d{2}-\d{2}\.csv"$/,
+      );
+      const lines = res.text
+        .replace(/^\uFEFF/, '')
+        .trimEnd()
+        .split('\r\n');
+      expect(lines).toHaveLength(3);
+      expect(lines[1]).toContain(`Ana ${word}`);
+      expect(lines[2]).toContain(`'=HYPERLINK ${word}`);
+      expect(res.text).not.toContain(`Bob ${word}`);
+
+      const b = await as(cookies.ownerB)
+        .get(`/v1/leads/export.csv?q=${word}`)
+        .expect(200);
+      expect(b.text).toContain(`Bob ${word}`);
+      expect(b.text).not.toContain(`Ana ${word}`);
+
+      await as(cookies.viewerA).get('/v1/leads/export.csv').expect(403);
+      await request(http).get('/v1/leads/export.csv').expect(401);
+      await request(http).get('/v1/leads').expect(401);
+    });
+
+    it("can't attach a lead to another workspace's chatbot or conversation", async () => {
+      const leads = app.get(LeadsService);
+      await expect(
+        inWorkspace(ids.b, () =>
+          leads.create({ chatbotId: ids.botA, name: 'Mallory' }),
+        ),
+      ).rejects.toBeInstanceOf(NotFoundException);
+      await expect(
+        inWorkspace(ids.b, () =>
+          leads.create({
+            chatbotId: ids.botB,
+            conversationId: convo.a,
+            name: 'Mallory',
+          }),
+        ),
+      ).rejects.toBeInstanceOf(NotFoundException);
+      expect(await prisma.lead.count({ where: { name: 'Mallory' } })).toBe(0);
+    });
+
+    it('a second capture in the same chat fills in the same lead', async () => {
+      const leads = app.get(LeadsService);
+      const again = await inWorkspace(ids.a, () =>
+        leads.create({
+          chatbotId: ids.botA,
+          conversationId: convo.a,
+          phone: '+8801711000000',
+        }),
+      );
+      expect(again).toMatchObject({
+        id: lead.a,
+        name: `Ana ${word}`,
+        phone: '+8801711000000',
+      });
+      expect(
+        await prisma.lead.count({ where: { conversationId: convo.a } }),
+      ).toBe(1);
+    });
+
+    it('the inbox marks and filters chats with a lead (hasLead)', async () => {
+      type Inbox = { items: { id: string; leadId: string | null }[] };
+      const inbox = async (cookie: string, query: string) =>
+        (
+          (
+            await as(cookie)
+              .get(`/v1/conversations?q=${word}${query}`)
+              .expect(200)
+          ).body as Inbox
+        ).items;
+      expect(await inbox(cookies.ownerA, '&hasLead=true')).toEqual([
+        expect.objectContaining({ id: convo.a, leadId: lead.a }),
+      ]);
+      expect(await inbox(cookies.ownerA, '&hasLead=false')).toEqual([]);
+      expect(await inbox(cookies.ownerB, '&hasLead=true')).toEqual([
+        expect.objectContaining({ id: convo.b, leadId: lead.b }),
+      ]);
+      await as(cookies.ownerA).get('/v1/conversations?hasLead=yes').expect(400);
+    });
+
+    it("deleting another workspace's lead is a 404 and keeps it; the owner deletes their own", async () => {
+      await as(cookies.ownerB).delete(`/v1/leads/${lead.a}`).expect(404);
+      await as(cookies.ownerA).delete(`/v1/leads/${lead.b}`).expect(404);
+      await as(cookies.viewerA).delete(`/v1/leads/${lead.aOld}`).expect(403);
+      await as(cookies.ownerA).delete('/v1/leads/not-a-uuid').expect(400);
+      expect(
+        await prisma.lead.count({ where: { id: { in: [lead.a, lead.b] } } }),
+      ).toBe(2);
+
+      await as(cookies.ownerA).delete(`/v1/leads/${lead.aOld}`).expect(204);
+      expect(
+        await prisma.lead.findUnique({ where: { id: lead.aOld } }),
+      ).toBeNull();
+    });
+
+    it('deleting the conversation keeps its lead and clears the link', async () => {
+      await as(cookies.ownerA)
+        .delete(`/v1/conversations/${convo.a}`)
+        .expect(204);
+      const kept = await prisma.lead.findUniqueOrThrow({
+        where: { id: lead.a },
+      });
+      expect(kept.conversationId).toBeNull();
+      expect(kept.sourceUrl).toBe('https://shop.example/pricing');
+      const a = await list(cookies.ownerA);
+      expect(a.items).toEqual([
+        expect.objectContaining({ id: lead.a, conversationId: null }),
+      ]);
     });
   });
 

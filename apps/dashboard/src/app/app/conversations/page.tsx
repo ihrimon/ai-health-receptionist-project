@@ -1,7 +1,7 @@
 "use client";
 
 import type { ConversationSummary } from "@brainstack/shared";
-import { MessageSquare, Search, Star, TriangleAlert } from "lucide-react";
+import { MessageSquare, Search, Star, TriangleAlert, UserRound } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { EmptyState } from "@/components/knowledge/shared";
@@ -40,6 +40,12 @@ const RATING_ITEMS = [
   { value: "none", label: "Not rated" },
 ];
 
+const LEAD_ITEMS = [
+  { value: "all", label: "Any chat" },
+  { value: "true", label: "Left a lead" },
+  { value: "false", label: "No lead" },
+];
+
 /**
  * Conversations inbox (D-3 §3.6, M5-2): every visitor chat of this
  * workspace, newest activity first, with search and filters. A row opens
@@ -51,6 +57,7 @@ export default function ConversationsPage() {
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
   const [rating, setRating] = useState("all");
+  const [lead, setLead] = useState("all");
   const [query, setQuery] = useState<ConversationQuery>({});
   const [items, setItems] = useState<ConversationSummary[] | null>(null);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
@@ -65,11 +72,12 @@ export default function ConversationsPage() {
           from,
           to,
           rating: rating === "all" ? undefined : (rating as RatingFilter),
+          hasLead: lead === "all" ? undefined : (lead as "true" | "false"),
         }),
       SEARCH_DELAY_MS,
     );
     return () => clearTimeout(timer);
-  }, [search, from, to, rating]);
+  }, [search, from, to, rating, lead]);
 
   // A newer search can finish before an older one; only the latest counts.
   useEffect(() => {
@@ -105,7 +113,9 @@ export default function ConversationsPage() {
     }
   }
 
-  const filtered = Boolean(query.q?.trim() || query.from || query.to || query.rating);
+  const filtered = Boolean(
+    query.q?.trim() || query.from || query.to || query.rating || query.hasLead,
+  );
 
   return (
     <div className="mx-auto grid w-full max-w-4xl gap-4 p-4 sm:p-6">
@@ -159,6 +169,18 @@ export default function ConversationsPage() {
             ))}
           </SelectContent>
         </Select>
+        <Select items={LEAD_ITEMS} value={lead} onValueChange={(v) => setLead(String(v))}>
+          <SelectTrigger className="w-full sm:w-36">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {LEAD_ITEMS.map((item) => (
+              <SelectItem key={item.value} value={item.value}>
+                {item.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       </div>
 
       {items === null ? (
@@ -200,6 +222,11 @@ export default function ConversationsPage() {
                     <span className="flex items-center gap-1">
                       <Star className="size-3" /> {c.rating}
                     </span>
+                  )}
+                  {c.leadId && (
+                    <Badge variant="outline" className="gap-1 text-emerald-700 dark:text-emerald-500">
+                      <UserRound className="size-3" /> lead
+                    </Badge>
                   )}
                   {c.hasFallback && (
                     <Badge variant="outline" className="gap-1 text-amber-600 dark:text-amber-500">

@@ -15,6 +15,8 @@ export interface ConversationQuery {
   from?: string;
   to?: string;
   rating?: RatingFilter;
+  /** Only chats that did ("true") or didn't ("false") leave a lead (M5-5). */
+  hasLead?: "true" | "false";
   chatbotId?: string;
   cursor?: string;
   limit?: number;
@@ -27,6 +29,7 @@ export function conversationQueryString(query: ConversationQuery): string {
   if (query.from) params.set("from", query.from);
   if (query.to) params.set("to", query.to);
   if (query.rating) params.set("rating", query.rating);
+  if (query.hasLead) params.set("hasLead", query.hasLead);
   if (query.chatbotId) params.set("chatbotId", query.chatbotId);
   if (query.cursor) params.set("cursor", query.cursor);
   if (query.limit) params.set("limit", String(query.limit));
