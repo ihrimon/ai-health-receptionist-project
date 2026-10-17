@@ -1,10 +1,12 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../database/prisma.service';
-import { WorkspaceRole } from '../generated/prisma/client';
+import { WorkspaceRole, WorkspaceStatus } from '../generated/prisma/client';
 
 export interface ActiveMembership {
   workspaceId: string;
   role: WorkspaceRole;
+  /** Suspended workspaces are blocked by WorkspaceGuard (M7-0). */
+  workspaceStatus: WorkspaceStatus;
 }
 
 /** Lowest to highest. */
@@ -42,20 +44,32 @@ export class WorkspaceAccessService {
             userId: session.userId,
           },
         },
+        include: { workspace: { select: { status: true } } },
       });
-      if (member) return { workspaceId: member.workspaceId, role: member.role };
+      if (member) {
+        return {
+          workspaceId: member.workspaceId,
+          role: member.role,
+          workspaceStatus: member.workspace.status,
+        };
+      }
     }
 
     const fallback = await this.prisma.workspaceMember.findFirst({
       where: { userId: session.userId },
       orderBy: { createdAt: 'asc' },
+      include: { workspace: { select: { status: true } } },
     });
     if (!fallback) return null;
     await this.prisma.session.update({
       where: { id: session.id },
       data: { activeWorkspaceId: fallback.workspaceId },
     });
-    return { workspaceId: fallback.workspaceId, role: fallback.role };
+    return {
+      workspaceId: fallback.workspaceId,
+      role: fallback.role,
+      workspaceStatus: fallback.workspace.status,
+    };
   }
 
   /** The user's role in a workspace, or null if they aren't a member. */
