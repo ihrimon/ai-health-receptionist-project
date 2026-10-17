@@ -19,9 +19,19 @@ RUN pnpm install --filter=api... --filter=widget...
 # calls the API on its own origin and the loader opens this origin's page.
 RUN pnpm --filter=api... --filter=widget... build
 
+# Run as the image's unprivileged `node` user, not root (M7-25). The only
+# place the app writes at runtime is the embedding model cache of
+# @xenova/transformers (a .cache folder inside its package, filled on the
+# first embedding), so that folder is created now and handed to `node`.
+# Everything else (the code, the widget build in apps/widget/dist) is only
+# read; uploads are kept in memory and go to S3, not to disk.
 WORKDIR /repo/apps/api
+RUN CACHE="$(realpath node_modules/@xenova/transformers)/.cache"   && mkdir -p "$CACHE"   && chown -R node:node "$CACHE"
+USER node
 ENV NODE_ENV=production
 EXPOSE 3001
 # Apply pending Prisma migrations, then start. Fine for a single instance;
 # with several replicas, run migrations as a separate deploy step (M7).
-CMD ["sh", "-c", "pnpm exec prisma migrate deploy && node dist/main.js"]
+# The prisma binary is called directly: pnpm (via corepack) would try to
+# write its own cache under the user's home at start.
+CMD ["sh", "-c", "./node_modules/.bin/prisma migrate deploy && node dist/main.js"]
