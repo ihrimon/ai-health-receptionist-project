@@ -9,6 +9,7 @@ export * from './chat-stream';
 export * from './llm-keys';
 export * from './public-chat';
 export * from './usage';
+export * from './analytics';
 export * from './types/booking';
 export * from './types/conversation';
 export * from './types/call-session';

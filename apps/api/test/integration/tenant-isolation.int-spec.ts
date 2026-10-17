@@ -2654,6 +2654,185 @@ describe('Tenant isolation (M1-25)', () => {
     });
   });
 
+  describe('Analytics overview (M5-8)', () => {
+    // Days no other test writes on, so the counts below are exact.
+    const day = (iso: string) => new Date(`2025-03-${iso}Z`);
+
+    /** A conversation with one visitor turn and one answer (unless empty). */
+    async function seedChat(
+      workspaceId: string,
+      chatbotId: string,
+      at: Date,
+      opts: {
+        rating?: number;
+        isPreview?: boolean;
+        empty?: boolean;
+        answeredBy?: string;
+      } = {},
+    ): Promise<string> {
+      const created = await inWorkspace(workspaceId, () =>
+        db.conversation.create({
+          data: {
+            workspaceId,
+            chatbotId,
+            visitorId: `v-${run}`,
+            isPreview: opts.isPreview ?? false,
+            rating: opts.rating ?? null,
+            messageCount: opts.empty ? 0 : 2,
+            startedAt: at,
+            lastMessageAt: at,
+            messages: opts.empty
+              ? undefined
+              : {
+                  create: [
+                    { workspaceId, role: 'USER', content: 'Hi', createdAt: at },
+                    {
+                      workspaceId,
+                      role: 'ASSISTANT',
+                      content: 'Hello!',
+                      answeredBy: opts.answeredBy ?? 'llm',
+                      createdAt: new Date(at.getTime() + 1000),
+                    },
+                  ],
+                },
+          },
+          select: { id: true },
+        }),
+      );
+      return created.id;
+    }
+
+    const seedLead = (
+      workspaceId: string,
+      chatbotId: string,
+      createdAt: Date,
+      conversationId?: string,
+    ) =>
+      inWorkspace(workspaceId, () =>
+        db.lead.create({
+          data: {
+            workspaceId,
+            chatbotId,
+            conversationId,
+            name: `Analytics ${run}`,
+            createdAt,
+          },
+        }),
+      );
+
+    type Overview = {
+      conversations: number;
+      messages: number;
+      leads: number;
+      avgRating: number | null;
+      ratings: number;
+      fallbackRate: number | null;
+      timeZone: string;
+      daily: {
+        date: string;
+        conversations: number;
+        messages: number;
+        leads: number;
+        avgRating: number | null;
+      }[];
+    };
+    const overview = async (cookie: string, query: string) =>
+      (await as(cookie).get(`/v1/analytics/overview?${query}`).expect(200))
+        .body as Overview;
+
+    beforeAll(async () => {
+      const first = await seedChat(ids.a, ids.botA, day('01T10:00:00'), {
+        rating: 5,
+      });
+      // 23:30 UTC still belongs to March 1 (UTC day buckets).
+      await seedChat(ids.a, ids.botA, day('01T23:30:00'), {
+        rating: 4,
+        answeredBy: 'fallback',
+      });
+      await seedChat(ids.a, ids.botA, day('03T00:10:00'));
+      // Left out like in the inbox: Test chat and a chat with no messages.
+      await seedChat(ids.a, ids.botA, day('01T12:00:00'), {
+        isPreview: true,
+        rating: 1,
+      });
+      await seedChat(ids.a, ids.botA, day('02T12:00:00'), { empty: true });
+      await seedLead(ids.a, ids.botA, day('01T10:05:00'), first);
+      await seedLead(ids.a, ids.botA, day('02T08:00:00'));
+      // Workspace B, same days: must never show up in A's numbers.
+      const bChat = await seedChat(ids.b, ids.botB, day('02T09:00:00'), {
+        rating: 1,
+        answeredBy: 'fallback',
+      });
+      await seedChat(ids.b, ids.botB, day('01T09:00:00'));
+      await seedLead(ids.b, ids.botB, day('02T09:05:00'), bChat);
+      await seedLead(ids.b, ids.botB, day('01T09:05:00'));
+    });
+
+    it("counts only the caller's live conversations, messages and leads, day by day", async () => {
+      const a = await overview(cookies.ownerA, 'from=2025-03-01&to=2025-03-03');
+      expect(a).toMatchObject({
+        timeZone: 'UTC',
+        conversations: 3,
+        messages: 6,
+        leads: 2,
+        avgRating: 4.5,
+        ratings: 2,
+        fallbackRate: 0.333,
+      });
+      expect(a.daily).toEqual([
+        expect.objectContaining({
+          date: '2025-03-01',
+          conversations: 2,
+          messages: 4,
+          leads: 1,
+          avgRating: 4.5,
+        }),
+        // No conversations on March 2: a zero day, not a missing one.
+        expect.objectContaining({
+          date: '2025-03-02',
+          conversations: 0,
+          messages: 0,
+          leads: 1,
+          avgRating: null,
+        }),
+        expect.objectContaining({
+          date: '2025-03-03',
+          conversations: 1,
+          messages: 2,
+          leads: 0,
+        }),
+      ]);
+
+      const b = await overview(cookies.ownerB, 'from=2025-03-01&to=2025-03-03');
+      expect(b).toMatchObject({
+        conversations: 2,
+        messages: 4,
+        leads: 2,
+        avgRating: 1,
+        fallbackRate: 0.5,
+      });
+    });
+
+    it('a viewer can read it; a one-day range has one zero-filled day', async () => {
+      const a = await overview(
+        cookies.viewerA,
+        'from=2025-03-02&to=2025-03-02',
+      );
+      expect(a).toMatchObject({ conversations: 0, messages: 0, leads: 1 });
+      expect(a.daily).toHaveLength(1);
+    });
+
+    it('rejects a bad range (400) and needs a session (401)', async () => {
+      await as(cookies.ownerA)
+        .get('/v1/analytics/overview?from=2025-03-03&to=2025-03-01')
+        .expect(400);
+      await as(cookies.ownerA)
+        .get('/v1/analytics/overview?workspaceId=' + ids.b)
+        .expect(400);
+      await request(http).get('/v1/analytics/overview').expect(401);
+    });
+  });
+
   describe('tenant Prisma client', () => {
     it('lists only the current workspace', async () => {
       const bots = await inWorkspace(ids.a, () => db.chatbot.findMany());
