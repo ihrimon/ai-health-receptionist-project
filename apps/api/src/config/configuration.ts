@@ -1,3 +1,4 @@
+import { usageCostConfigFromEnv } from '../modules/admin/usage-cost';
 import { join } from 'path';
 
 export default () => ({
@@ -85,6 +86,10 @@ export default () => ({
     // chat answers 503 without it.
     conversationTokenSecret: process.env.CONVERSATION_TOKEN_SECRET ?? '',
   },
+
+  // Price assumptions for the platform-admin usage and cost view (M6-12).
+  // Estimates only; see modules/admin/usage-cost.ts.
+  adminUsage: usageCostConfigFromEnv(process.env),
 
   knowledge: {
     embeddingModel:

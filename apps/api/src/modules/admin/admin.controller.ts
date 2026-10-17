@@ -31,6 +31,16 @@ export class AdminController {
     return this.admin.listWorkspaces(query);
   }
 
+  @Get('usage')
+  usageOverview() {
+    return this.admin.usageOverview();
+  }
+
+  @Get('workspaces/:id/usage')
+  workspaceUsage(@Param('id', ParseUUIDPipe) id: string) {
+    return this.admin.workspaceUsage(id);
+  }
+
   @Patch('workspaces/:id')
   updateWorkspace(
     @CurrentAuth() { user }: AuthContext,

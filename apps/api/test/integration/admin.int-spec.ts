@@ -421,4 +421,120 @@ describe('Platform admin (M7-0)', () => {
       ).toBe(before);
     });
   });
+  describe('usage and cost (M6-12)', () => {
+    const SECRET = `secret-visitor-text-${run}`;
+
+    beforeAll(async () => {
+      await prisma.usageCounter.update({
+        where: {
+          workspaceId_period: {
+            workspaceId: ids.a,
+            period: periodOf(new Date()),
+          },
+        },
+        data: { tokensIn: 1_000_000, tokensOut: 1_000_000 },
+      });
+      const conversation = await prisma.conversation.create({
+        data: {
+          workspaceId: ids.a,
+          chatbotId: ids.botA,
+          visitorId: `v-${run}`,
+          messageCount: 2,
+        },
+      });
+      await prisma.message.createMany({
+        data: [
+          {
+            workspaceId: ids.a,
+            conversationId: conversation.id,
+            role: 'USER',
+            content: SECRET,
+          },
+          {
+            workspaceId: ids.a,
+            conversationId: conversation.id,
+            role: 'ASSISTANT',
+            content: SECRET,
+          },
+        ],
+      });
+      // A Test chat conversation is not counted.
+      await prisma.conversation.create({
+        data: {
+          workspaceId: ids.a,
+          chatbotId: ids.botA,
+          visitorId: `p-${run}`,
+          isPreview: true,
+        },
+      });
+      await prisma.lead.create({
+        data: {
+          workspaceId: ids.a,
+          chatbotId: ids.botA,
+          conversationId: conversation.id,
+          name: SECRET,
+        },
+      });
+    });
+
+    it('answers 404 to a normal owner on both usage endpoints', async () => {
+      const owner = as(cookies.ownerA);
+      await owner.get('/v1/admin/usage').expect(404);
+      await owner.get(`/v1/admin/workspaces/${ids.a}/usage`).expect(404);
+      await owner.get(`/v1/admin/workspaces/${ids.b}/usage`).expect(404);
+      await request(http).get('/v1/admin/usage').expect(401);
+    });
+
+    it('shows an admin the counts and no message text', async () => {
+      const overview = await as(cookies.admin)
+        .get('/v1/admin/usage')
+        .expect(200);
+      const body = overview.body as {
+        totals: { messages: number };
+        items: {
+          workspaceId: string;
+          conversations: number;
+          messages: number;
+          leads: number;
+          tokensIn: number;
+          estimatedCostUsd: number;
+          platformCostUsd: number;
+        }[];
+      };
+      const a = body.items.find((i) => i.workspaceId === ids.a);
+      const b = body.items.find((i) => i.workspaceId === ids.b);
+      expect(a).toMatchObject({
+        conversations: 1,
+        messages: 7,
+        leads: 1,
+        tokensIn: 1_000_000,
+      });
+      expect(a!.estimatedCostUsd).toBeGreaterThan(0);
+      expect(a!.platformCostUsd).toBe(0);
+      expect(b).toMatchObject({ conversations: 0, messages: 0, leads: 0 });
+      expect(body.totals.messages).toBeGreaterThanOrEqual(7);
+
+      const detail = await as(cookies.admin)
+        .get(`/v1/admin/workspaces/${ids.a}/usage`)
+        .expect(200);
+      const months = (
+        detail.body as {
+          months: { period: string; conversations: number; messages: number }[];
+        }
+      ).months;
+      expect(months).toHaveLength(6);
+      expect(months[0]).toMatchObject({
+        period: periodOf(new Date()),
+        conversations: 1,
+        messages: 7,
+      });
+      expect(months[1].messages).toBe(0);
+
+      expect(JSON.stringify(overview.body)).not.toContain(SECRET);
+      expect(JSON.stringify(detail.body)).not.toContain(SECRET);
+      await as(cookies.admin)
+        .get('/v1/admin/workspaces/00000000-0000-4000-8000-000000000000/usage')
+        .expect(404);
+    });
+  });
 });

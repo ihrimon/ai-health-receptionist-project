@@ -59,3 +59,104 @@ export const adminApi = {
       body: JSON.stringify(body),
     }),
 };
+
+/* ─────────────── Usage and estimated cost (M6-12) ─────────────── */
+
+/** Every money value is an ESTIMATE in USD; real revenue arrives with billing. */
+export interface UsageCost {
+  conversations: number;
+  messages: number;
+  previewMessages: number;
+  leads: number;
+  tokensIn: number;
+  tokensOut: number;
+  /** Estimated LLM cost of all chat, whoever pays the provider. */
+  estimatedCostUsd: number;
+  /** The part on a platform key: what the platform pays. */
+  platformCostUsd: number;
+  /** The part on the company's own key: paid by the company. */
+  ownKeyCostUsd: number;
+  /** Manual plan price (not real revenue). */
+  revenueUsd: number;
+  /** revenueUsd - platformCostUsd. */
+  profitUsd: number;
+}
+
+export interface UsageAssumptions {
+  llmPriceInPerMillion: number;
+  llmPriceOutPerMillion: number;
+  platformKeyShare: number;
+  planPriceUsd: Record<WorkspacePlan, number>;
+}
+
+export interface UsageRow extends UsageCost {
+  workspaceId: string;
+  name: string;
+  plan: WorkspacePlan;
+  status: WorkspaceStatus;
+}
+
+export interface UsageOverview {
+  period: string;
+  assumptions: UsageAssumptions;
+  totals: UsageCost;
+  workspaceCount: number;
+  items: UsageRow[];
+}
+
+export interface UsageDetail {
+  workspace: { id: string; name: string; plan: WorkspacePlan };
+  assumptions: UsageAssumptions;
+  months: (UsageCost & { period: string })[];
+}
+
+export type UsageSortKey =
+  | "name"
+  | "conversations"
+  | "messages"
+  | "leads"
+  | "tokens"
+  | "estimatedCostUsd"
+  | "revenueUsd"
+  | "profitUsd";
+
+/** A sorted copy; names A-Z, numbers high to low unless `asc`. Ties keep name order. */
+export function sortUsageRows(
+  rows: UsageRow[],
+  key: UsageSortKey,
+  asc: boolean,
+): UsageRow[] {
+  const value = (r: UsageRow): string | number =>
+    key === "name"
+      ? r.name.toLowerCase()
+      : key === "tokens"
+        ? r.tokensIn + r.tokensOut
+        : r[key];
+  const dir = asc ? 1 : -1;
+  return [...rows].sort((a, b) => {
+    const x = value(a);
+    const y = value(b);
+    if (x < y) return -dir;
+    if (x > y) return dir;
+    return a.name.localeCompare(b.name);
+  });
+}
+
+/** "$0.0123" for small amounts, "$12.34" otherwise; negative amounts keep the sign in front. */
+export function formatUsd(n: number): string {
+  const abs = Math.abs(n);
+  const text = abs > 0 && abs < 1 ? abs.toFixed(4) : abs.toFixed(2);
+  return `${n < 0 ? "-" : ""}$${text}`;
+}
+
+/** 1234567 -> "1.23M", 4200 -> "4.2K". */
+export function formatTokens(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
+  return String(n);
+}
+
+export const usageApi = {
+  overview: () => apiFetch<UsageOverview>("/admin/usage"),
+  workspace: (id: string) => apiFetch<UsageDetail>(`/admin/workspaces/${id}/usage`),
+};

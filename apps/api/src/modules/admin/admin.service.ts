@@ -3,6 +3,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../database/prisma.service';
 import {
   Prisma,
@@ -18,7 +19,20 @@ import type {
   UpdateWorkspaceDto,
 } from './dto/admin.dto';
 
+import {
+  DEFAULT_USAGE_COST_CONFIG,
+  periodRange,
+  recentPeriods,
+  sumCosts,
+  withCost,
+  type UsageCostConfig,
+  type UsageNumbers,
+} from './usage-cost';
+
 const DEFAULT_LIMIT = 25;
+/** The usage overview lists at most this many workspaces. */
+const OVERVIEW_MAX = 500;
+const DETAIL_MONTHS = 6;
 
 export interface AdminActor {
   id: string;
@@ -88,7 +102,15 @@ export class AdminService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly widgetCache: WidgetPageCache,
+    private readonly config: ConfigService,
   ) {}
+
+  private costConfig(): UsageCostConfig {
+    return (
+      this.config.get<UsageCostConfig>('adminUsage') ??
+      DEFAULT_USAGE_COST_CONFIG
+    );
+  }
 
   async listWorkspaces(query: ListWorkspacesQueryDto) {
     const limit = query.limit ?? DEFAULT_LIMIT;
@@ -119,6 +141,116 @@ export class AdminService {
     return {
       items: page.map(toRow),
       nextCursor: rows.length > limit ? page[page.length - 1].id : null,
+    };
+  }
+
+  /**
+   * Every workspace's usage this month plus platform totals (M6-12). Counts
+   * and token sums only: it never reads conversation or message text.
+   * Costs are estimates; see usage-cost.ts.
+   */
+  async usageOverview() {
+    const config = this.costConfig();
+    const period = periodOf(this.now());
+    const { start, end } = periodRange(period);
+    const range = { gte: start, lt: end };
+    const [workspaces, counters, conversations, leads] = await Promise.all([
+      this.prisma.workspace.findMany({
+        take: OVERVIEW_MAX,
+        orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+        select: { id: true, name: true, plan: true, status: true },
+      }),
+      this.prisma.usageCounter.findMany({ where: { period } }),
+      this.prisma.conversation.groupBy({
+        by: ['workspaceId'],
+        where: { isPreview: false, startedAt: range },
+        _count: { _all: true },
+      }),
+      this.prisma.lead.groupBy({
+        by: ['workspaceId'],
+        where: { createdAt: range },
+        _count: { _all: true },
+      }),
+    ]);
+    const counterOf = new Map(counters.map((c) => [c.workspaceId, c]));
+    const convOf = new Map(
+      conversations.map((c) => [c.workspaceId, c._count._all]),
+    );
+    const leadOf = new Map(leads.map((l) => [l.workspaceId, l._count._all]));
+    const items = workspaces.map((w) => {
+      const c = counterOf.get(w.id);
+      return {
+        workspaceId: w.id,
+        name: w.name,
+        plan: w.plan,
+        status: w.status,
+        ...withCost(
+          {
+            conversations: convOf.get(w.id) ?? 0,
+            messages: c?.messages ?? 0,
+            previewMessages: c?.previewMessages ?? 0,
+            leads: leadOf.get(w.id) ?? 0,
+            tokensIn: Number(c?.tokensIn ?? 0),
+            tokensOut: Number(c?.tokensOut ?? 0),
+          },
+          w.plan,
+          config,
+        ),
+      };
+    });
+    return {
+      period,
+      assumptions: config,
+      totals: sumCosts(items),
+      workspaceCount: workspaces.length,
+      items,
+    };
+  }
+
+  /** One workspace's usage this month and the previous months (M6-12). */
+  async workspaceUsage(id: string) {
+    const config = this.costConfig();
+    const workspace = await this.prisma.workspace.findUnique({
+      where: { id },
+      select: { id: true, name: true, plan: true },
+    });
+    if (!workspace) throw new NotFoundException('Workspace not found');
+    const periods = recentPeriods(this.now(), DETAIL_MONTHS);
+    const counters = await this.prisma.usageCounter.findMany({
+      where: { workspaceId: id, period: { in: periods } },
+    });
+    const months = await Promise.all(
+      periods.map(async (period) => {
+        const { start, end } = periodRange(period);
+        const range = { gte: start, lt: end };
+        const [conversations, leads] = await Promise.all([
+          this.prisma.conversation.count({
+            where: { workspaceId: id, isPreview: false, startedAt: range },
+          }),
+          this.prisma.lead.count({
+            where: { workspaceId: id, createdAt: range },
+          }),
+        ]);
+        const c = counters.find((x) => x.period === period);
+        const usage: UsageNumbers = {
+          conversations,
+          messages: c?.messages ?? 0,
+          previewMessages: c?.previewMessages ?? 0,
+          leads,
+          tokensIn: Number(c?.tokensIn ?? 0),
+          tokensOut: Number(c?.tokensOut ?? 0),
+        };
+        return { period, ...withCost(usage, workspace.plan, config) };
+      }),
+    );
+    return {
+      workspace: {
+        id: workspace.id,
+        name: workspace.name,
+        plan: workspace.plan,
+      },
+      assumptions: config,
+      months,
     };
   }
 
