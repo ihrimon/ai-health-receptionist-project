@@ -13,6 +13,7 @@ const config: PublicChatConfig = {
   headerTitle: "Acme Support",
   primaryColor: "#facc15",
   position: "right",
+  launcherIcon: "chat",
   quickReplies: ["Opening hours"],
   showBranding: false,
 };

@@ -84,6 +84,35 @@ describe('PublicChatService', () => {
       botName: config.identity.botName,
       welcomeMessage: config.identity.welcomeMessage,
       primaryColor: config.widget.primaryColor,
+      position: config.widget.position,
+      headerTitle: config.widget.headerTitle,
+      launcherIcon: 'chat',
+    });
+  });
+
+  it('sends the chosen launcher icon, and the default for a custom one', async () => {
+    const withIcon = (launcherIcon: typeof config.widget.launcherIcon) => ({
+      ...liveRow,
+      publishedVersion: {
+        id: 'ver-1',
+        config: {
+          ...config,
+          widget: {
+            ...config.widget,
+            launcherIcon,
+            launcherIconUrl:
+              launcherIcon === 'custom' ? 'https://cdn.example/i.png' : null,
+          },
+        },
+      },
+    });
+    prisma.chatbot.findUnique.mockResolvedValueOnce(withIcon('sparkle'));
+    await expect(service.config('cb_abc')).resolves.toMatchObject({
+      launcherIcon: 'sparkle',
+    });
+    prisma.chatbot.findUnique.mockResolvedValueOnce(withIcon('custom'));
+    await expect(service.config('cb_abc')).resolves.toMatchObject({
+      launcherIcon: 'chat',
     });
   });
 

@@ -61,11 +61,11 @@ export default function WidgetPage() {
     };
   }, [publicId]);
 
-  // Only colors and side: nothing private goes to the host page.
+  // Only the launcher's look: nothing private goes to the host page.
   useEffect(() => {
     if (state.kind !== "ready") return;
-    const { primaryColor, position } = state.config;
-    link?.post({ type: "config", primaryColor, textColor: textOn(primaryColor), position });
+    const { primaryColor, position, launcherIcon } = state.config;
+    link?.post({ type: "config", primaryColor, textColor: textOn(primaryColor), position, launcherIcon });
   }, [state, link]);
 
   if (state.kind !== "ready") {

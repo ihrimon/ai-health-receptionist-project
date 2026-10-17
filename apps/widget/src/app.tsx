@@ -1,5 +1,5 @@
 import type { PublicChatConfig } from "@brainstack/shared";
-import { useEffect, useRef, useState } from "preact/hooks";
+import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { widgetApi } from "./api";
 import { ChatWindow } from "./components/chat-window";
 import { QuickReplies } from "./components/quick-replies";
@@ -52,8 +52,8 @@ export function App({
   // Only the launcher's look goes to the host page: nothing private.
   useEffect(() => {
     if (load.kind !== "ready") return;
-    const { primaryColor, position } = load.config;
-    host.connection?.post({ type: "config", primaryColor, textColor: textOn(primaryColor), position });
+    const { primaryColor, position, launcherIcon } = load.config;
+    host.connection?.post({ type: "config", primaryColor, textColor: textOn(primaryColor), position, launcherIcon });
   }, [load, host.connection]);
 
   if (load.kind !== "ready" || !publicId) {
@@ -81,6 +81,11 @@ function Chat({ publicId, config, host }: { publicId: string; config: PublicChat
   const send = (text: string) => void chat.send(text);
   useUnread(host, chat.busy || chat.waiting);
   const { connection, embedded } = host;
+  // Stable between renders, so the window's Escape listener isn't re-added on every streamed word.
+  const onClose = useMemo(
+    () => (embedded && connection ? () => connection.post({ type: "close" }) : undefined),
+    [embedded, connection],
+  );
   return (
     <ChatWindow
       title={config.headerTitle}
@@ -91,7 +96,7 @@ function Chat({ publicId, config, host }: { publicId: string; config: PublicChat
       brand={brand}
       showBranding={config.showBranding}
       onSend={send}
-      onClose={embedded && connection ? () => connection.post({ type: "close" }) : undefined}
+      onClose={onClose}
       focusSignal={host.opened}
     >
       {!chat.messages.length && !chat.busy && (
