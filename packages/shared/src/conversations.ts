@@ -9,7 +9,8 @@ import type { PreviewChatSource } from './preview-chat';
 
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
 
-const isoDateOrDay = z
+/** A bare day (UTC) or an ISO 8601 date-time. */
+export const isoDateOrDay = z
   .string()
   .trim()
   .refine(
@@ -29,6 +30,8 @@ export const conversationListQuerySchema = z
     to: isoDateOrDay.optional(),
     /** Exact star rating, or `none` for conversations without one. */
     rating: z.enum(['1', '2', '3', '4', '5', 'none']).optional(),
+    /** `true`: only chats that left a lead; `false`: only those without (M5-5). */
+    hasLead: z.enum(['true', 'false']).optional(),
     /** Matches any message's text, ignoring case. */
     q: z.string().trim().max(100).optional(),
     /** `nextCursor` from the previous page; opaque to the client. */
@@ -75,6 +78,8 @@ export interface ConversationSummary {
   firstMessage: string | null;
   /** At least one answer was the fallback (the bot didn't know). */
   hasFallback: boolean;
+  /** The lead this chat left, if any (M5-5). */
+  leadId: string | null;
   startedAt: string;
   lastMessageAt: string;
 }

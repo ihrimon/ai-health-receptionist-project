@@ -33,6 +33,7 @@ const SUMMARY_SELECT = {
   _count: {
     select: { messages: { where: { answeredBy: 'fallback' } } },
   },
+  lead: { select: { id: true } },
 } satisfies Prisma.ConversationSelect;
 
 type SummaryRow = Prisma.ConversationGetPayload<{
@@ -57,6 +58,7 @@ function toSummary(row: SummaryRow): ConversationSummary {
     rating: row.rating,
     firstMessage: shorten(row.messages[0]?.content),
     hasFallback: row._count.messages > 0,
+    leadId: row.lead?.id ?? null,
     startedAt: row.startedAt.toISOString(),
     lastMessageAt: row.lastMessageAt.toISOString(),
   };
@@ -101,6 +103,11 @@ export class ConversationInboxService {
     if (query.rating) {
       filters.push({
         rating: query.rating === 'none' ? null : Number(query.rating),
+      });
+    }
+    if (query.hasLead) {
+      filters.push({
+        lead: query.hasLead === 'true' ? { isNot: null } : { is: null },
       });
     }
     if (query.q) {

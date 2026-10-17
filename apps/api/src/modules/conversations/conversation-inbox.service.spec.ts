@@ -38,7 +38,7 @@ describe('conversationListQuerySchema', () => {
       { from: '2026-10-18', to: '2026-10-17' },
       { chatbotId: 'not-a-uuid' },
       { limit: '0' },
-      { hasLead: 'true' },
+      { hasLead: 'yes' },
     ];
     for (const query of bad) {
       expect(conversationListQuerySchema.safeParse(query).success).toBe(false);
@@ -79,6 +79,7 @@ describe('ConversationInboxService', () => {
     lastMessageAt: new Date(at),
     messages: [{ content: 'Do you ship\n to Chittagong?' }],
     _count: { messages: 0 },
+    lead: null,
     ...extra,
   });
 
@@ -123,6 +124,7 @@ describe('ConversationInboxService', () => {
       lastMessageAt: '2026-10-17T10:00:00.000Z',
     });
     expect(page.items[1].hasFallback).toBe(false);
+    expect(page.items[1].leadId).toBeNull();
     expect(page.nextCursor).toBe(
       encodeCursor({ createdAt: new Date('2026-10-16T10:00:00Z'), id: 'c-1' }),
     );
@@ -178,6 +180,19 @@ describe('ConversationInboxService', () => {
     await expect(service.list(parse({ cursor: 'garbage' }))).rejects.toThrow(
       'Invalid cursor',
     );
+  });
+
+  it('`hasLead` keeps chats with or without a lead, and shows the lead (M5-5)', async () => {
+    db.conversation.findMany.mockResolvedValue([
+      row('c-1', '2026-10-16T10:00:00Z', { lead: { id: 'lead-1' } }),
+    ]);
+    const page = await service.list(parse({ hasLead: 'true' }));
+    expect(listArgs().where.AND).toContainEqual({ lead: { isNot: null } });
+    expect(page.items[0].leadId).toBe('lead-1');
+
+    db.conversation.findMany.mockClear();
+    await service.list(parse({ hasLead: 'false' }));
+    expect(listArgs().where.AND).toContainEqual({ lead: { is: null } });
   });
 
   it('shortens a long first message', async () => {

@@ -3,6 +3,7 @@ export * from './chatbot-config';
 export * from './knowledge';
 export * from './products';
 export * from './conversations';
+export * from './leads';
 export * from './preview-chat';
 export * from './chat-stream';
 export * from './llm-keys';
