@@ -18,6 +18,7 @@ import { ConversationTokenService } from '../../src/modules/public-chat/conversa
 import { EmbeddingService } from '../../src/modules/knowledge/embedding.service';
 import { KnowledgeService } from '../../src/modules/knowledge/knowledge.service';
 import { LeadsService } from '../../src/modules/leads/leads.service';
+import { LeadToolService } from '../../src/modules/preview-chat/lead-tool.service';
 import { WorkspacesService } from '../../src/modules/workspaces/workspaces.service';
 import { S3_CLIENT } from '../../src/storage/storage.service';
 import { runWithTenant } from '../../src/tenancy/tenant-context';
@@ -2400,6 +2401,83 @@ describe('Tenant isolation (M1-25)', () => {
         expect.objectContaining({ id: convo.b, leadId: lead.b }),
       ]);
       await as(cookies.ownerA).get('/v1/conversations?hasLead=yes').expect(400);
+    });
+
+    it("capture_lead (M5-4) saves to its own workspace's chat and can't reach another workspace's", async () => {
+      const tool = app.get(LeadToolService);
+      const base = defaultChatbotConfig('Iso Shop');
+      const config = {
+        ...base,
+        behavior: {
+          ...base.behavior,
+          questionsToAsk: [
+            {
+              id: 'q-size',
+              question: 'Which size?',
+              field: 'custom' as const,
+              required: false,
+              askWhen: 'before_recommendation' as const,
+            },
+          ],
+        },
+      };
+      const args = JSON.stringify({
+        name: 'Mallory Tool',
+        answers: [{ question_id: 'q-size', answer: '42' }],
+      });
+
+      // Workspace B's chat pointing at A's conversation, or at A's chatbot.
+      for (const target of [
+        { chatbotId: ids.botB, conversationId: convo.a },
+        { chatbotId: ids.botA, conversationId: convo.a },
+      ]) {
+        const run = await inWorkspace(ids.b, () =>
+          tool.run({ ...target, isPreview: false, config }, args),
+        );
+        expect(run.accepted).toBe(false);
+      }
+      expect(await prisma.lead.count({ where: { name: 'Mallory Tool' } })).toBe(
+        0,
+      );
+      expect(await prisma.lead.findUnique({ where: { id: lead.a } })).toEqual(
+        expect.objectContaining({ name: `Ana ${word}`, answers: {} }),
+      );
+
+      // A preview chat saves nothing; A's own live chat saves the lead.
+      const own = await seedConversation(ids.a, ids.botA);
+      const preview = await inWorkspace(ids.a, () =>
+        tool.run(
+          { chatbotId: ids.botA, conversationId: own, isPreview: true, config },
+          args,
+        ),
+      );
+      expect(preview.accepted).toBe(true);
+      expect(await prisma.lead.count({ where: { conversationId: own } })).toBe(
+        0,
+      );
+      const saved = await inWorkspace(ids.a, () =>
+        tool.run(
+          {
+            chatbotId: ids.botA,
+            conversationId: own,
+            isPreview: false,
+            config,
+          },
+          args,
+        ),
+      );
+      expect(saved.accepted).toBe(true);
+      expect(
+        await prisma.lead.findFirst({ where: { conversationId: own } }),
+      ).toEqual(
+        expect.objectContaining({
+          workspaceId: ids.a,
+          chatbotId: ids.botA,
+          name: 'Mallory Tool',
+          answers: { 'q-size': '42' },
+          sourceUrl: 'https://shop.example/pricing',
+        }),
+      );
     });
 
     it("deleting another workspace's lead is a 404 and keeps it; the owner deletes their own", async () => {

@@ -10,6 +10,8 @@ import {
 } from '../llm/llm-key-manager';
 import { KnowledgeService } from '../knowledge/knowledge.service';
 import { UsageService } from '../usage/usage.service';
+import { LeadsService } from '../leads/leads.service';
+import { LeadToolService } from './lead-tool.service';
 import { ProductToolsService } from './product-tools.service';
 import { LlmKeysService } from '../llm-keys/llm-keys.service';
 import {
@@ -55,6 +57,7 @@ describe('PreviewChatService', () => {
   const rateLimit = { consume: jest.fn() };
   const products = { hasProducts: jest.fn(), run: jest.fn() };
   const usage = { record: jest.fn() };
+  const leads = { create: jest.fn() };
   const conversations = { recordTurn: jest.fn(), recentTurns: jest.fn() };
   let service: PreviewChatService;
   let events: ChatStreamEvent[];
@@ -98,6 +101,8 @@ describe('PreviewChatService', () => {
         { provide: ConversationsService, useValue: conversations },
         { provide: ProductToolsService, useValue: products },
         { provide: UsageService, useValue: usage },
+        LeadToolService,
+        { provide: LeadsService, useValue: leads },
       ],
     }).compile();
     service = moduleRef.get(PreviewChatService);
@@ -403,6 +408,200 @@ describe('PreviewChatService', () => {
       expect(llm.streamWith).toHaveBeenCalledTimes(4);
       expect(products.run).toHaveBeenCalledTimes(3);
       expect(text()).toBe('Here is what I found.');
+    });
+  });
+
+  describe('capture_lead (M5-4)', () => {
+    const withQuestions = {
+      ...config,
+      behavior: {
+        ...config.behavior,
+        questionsToAsk: [
+          {
+            id: 'email',
+            question: 'What is your email?',
+            field: 'email' as const,
+            required: true,
+            askWhen: 'on_purchase_intent' as const,
+          },
+          {
+            id: 'budget',
+            question: 'What is your budget?',
+            field: 'custom' as const,
+            required: false,
+            askWhen: 'before_recommendation' as const,
+          },
+        ],
+      },
+    };
+    const leadCall = (args: object) => ({
+      type: 'done',
+      message: {
+        role: 'assistant',
+        content: null,
+        tool_calls: [
+          {
+            id: 'call_lead',
+            type: 'function',
+            function: { name: 'capture_lead', arguments: JSON.stringify(args) },
+          },
+        ],
+      },
+      credentialId: 'key-1',
+      model: 'gpt',
+      usage: { inputTokens: 50, outputTokens: 5 },
+    });
+    async function* oneEvent(event: unknown): AsyncGenerator<unknown> {
+      await Promise.resolve();
+      yield event;
+    }
+    /** The model saves the lead first, then thanks the visitor. */
+    const leadThenAnswer = (args: object, answer: string) => {
+      let calls = 0;
+      llm.streamWith.mockImplementation(() => {
+        calls += 1;
+        return calls === 1 ? oneEvent(leadCall(args)) : llmStream([answer]);
+      });
+    };
+    const live = {
+      isPreview: false,
+      visitorId: 'visitor-1',
+      versionId: 'version-1',
+      includeSources: false,
+      noCredentialsReply: 'off',
+      keysExhaustedReply: 'busy',
+    };
+    const toolNames = (call: unknown[]) =>
+      ((call[2] as { function: { name: string } }[] | undefined) ?? []).map(
+        (t) => t.function.name,
+      );
+
+    beforeEach(() => {
+      knowledge.search.mockResolvedValue([]);
+      chatbot.draft.mockResolvedValue({ id: 'bot-1', config: withQuestions });
+    });
+
+    it('saves a live lead to the server-chosen chatbot and conversation, then streams the thanks', async () => {
+      leadThenAnswer(
+        {
+          name: 'Ana',
+          email: null,
+          phone: null,
+          answers: [
+            { question_id: 'email', answer: 'Ana@Example.com' },
+            { question_id: 'budget', answer: 'About 50 USD' },
+            { question_id: 'made-up', answer: 'ignored' },
+          ],
+        },
+        'Thanks, Ana! We will be in touch.',
+      );
+
+      await service.answer(
+        'bot-1',
+        withQuestions,
+        {
+          message: 'ana@example.com, budget about 50',
+          history: [],
+          conversationId: 'conv-9',
+        },
+        emit,
+        live,
+      );
+
+      expect(leads.create).toHaveBeenCalledWith({
+        chatbotId: 'bot-1',
+        conversationId: 'conv-9',
+        name: 'Ana',
+        email: 'Ana@Example.com',
+        answers: { budget: 'About 50 USD' },
+      });
+      const [first, second] = llm.streamWith.mock.calls as unknown[][];
+      expect(toolNames(first)).toEqual(['capture_lead']);
+      expect(JSON.stringify(second[1])).toContain('\\"saved\\":true');
+      // A saved lead grounds the reply: no fallback although no knowledge matched.
+      expect(text()).toBe('Thanks, Ana! We will be in touch.');
+      expect(events.at(-1)).toMatchObject({ type: 'done', answeredBy: 'llm' });
+    });
+
+    it('does not save a lead from the dashboard Test chat, but the chat behaves the same', async () => {
+      leadThenAnswer({ email: 'ana@example.com' }, 'Thanks, noted!');
+
+      await service.send(
+        'user-1',
+        { message: 'ana@example.com', history: [] },
+        emit,
+      );
+
+      expect(leads.create).not.toHaveBeenCalled();
+      const [, second] = llm.streamWith.mock.calls as unknown[][];
+      expect(JSON.stringify(second[1])).toContain('\\"preview\\":true');
+      expect(text()).toBe('Thanks, noted!');
+      expect(events.at(-1)).toMatchObject({ answeredBy: 'llm' });
+    });
+
+    it('tells the model when the details are invalid and saves nothing', async () => {
+      leadThenAnswer({ email: 'not-an-email' }, 'Could you check your email?');
+
+      await service.answer(
+        'bot-1',
+        withQuestions,
+        { message: 'not-an-email', history: [], conversationId: 'conv-9' },
+        emit,
+        live,
+      );
+
+      expect(leads.create).not.toHaveBeenCalled();
+      const [, second] = llm.streamWith.mock.calls as unknown[][];
+      expect(JSON.stringify(second[1])).toContain('Not saved');
+      // Nothing grounded the text, so the fallback replaces it.
+      expect(events.at(-1)).toMatchObject({ answeredBy: 'fallback' });
+    });
+
+    it('offers capture_lead with the product tools, and the prompt explains it', async () => {
+      products.hasProducts.mockResolvedValue(true);
+      llm.streamWith.mockImplementation(() => llmStream(['Hello!']));
+
+      await service.send('user-1', { message: 'Hi', history: [] }, emit);
+
+      const [first] = llm.streamWith.mock.calls as unknown[][];
+      expect(toolNames(first)).toEqual([
+        'search_products',
+        'get_product',
+        'capture_lead',
+      ]);
+      const messages = first[1] as { content: string }[];
+      expect(messages[0].content).toContain('capture_lead');
+      expect(messages[1].content).toContain('[question id: budget]');
+    });
+
+    it('goes to the model without knowledge, since the message may be an answer', async () => {
+      llm.streamWith.mockImplementation(() => llmStream(['made up']));
+      await service.send(
+        'user-1',
+        { message: 'About 50 USD', history: [] },
+        emit,
+      );
+      expect(llm.streamWith).toHaveBeenCalled();
+      // The model didn't save anything, so its text isn't grounded.
+      expect(text()).toBe(withQuestions.behavior.fallbackMessage);
+    });
+
+    it('is not offered without questions to ask', async () => {
+      chatbot.draft.mockResolvedValue({ id: 'bot-1', config });
+      knowledge.search.mockResolvedValue([
+        {
+          content: '30 days.',
+          metadata: { title: 'Returns', headingPath: [] },
+          similarity: 0.8,
+          keywordHit: true,
+        },
+      ]);
+      await send();
+      const [first] = llm.streamWith.mock.calls as unknown[][];
+      expect(first[2]).toBeUndefined();
+      expect((first[1] as { content: string }[])[0].content).not.toContain(
+        'capture_lead',
+      );
     });
   });
 

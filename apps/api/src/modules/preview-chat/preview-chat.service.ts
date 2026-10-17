@@ -25,7 +25,11 @@ import {
 } from '../knowledge/knowledge.service';
 import { LlmKeysService } from '../llm-keys/llm-keys.service';
 import { UsageService } from '../usage/usage.service';
-import type { ChatCompletionMessageParam } from '../llm/providers/provider-adapter.types';
+import type {
+  ChatCompletionMessageParam,
+  ChatCompletionTool,
+} from '../llm/providers/provider-adapter.types';
+import { CAPTURE_LEAD_TOOL, LeadToolService } from './lead-tool.service';
 import { PRODUCT_TOOLS, ProductToolsService } from './product-tools.service';
 import { buildPreviewMessages } from './preview-prompt';
 import { isSmallTalk } from './small-talk';
@@ -73,6 +77,7 @@ export class PreviewChatService {
     private readonly conversations: ConversationsService,
     private readonly products: ProductToolsService,
     private readonly usage: UsageService,
+    private readonly leadTool: LeadToolService,
   ) {}
 
   async send(
@@ -180,16 +185,23 @@ export class PreviewChatService {
     // Grounding (M3-10): nothing relevant was found, so the server says so
     // itself instead of letting the model guess. Greetings and thanks still
     // go to the model: they need no knowledge. A chatbot with products goes
-    // on: the answer may come from the product tools (M3-8).
+    // on: the answer may come from the product tools (M3-8). So does one
+    // with questions to ask: the message may be the visitor's answer (M5-4).
     const smallTalk = isSmallTalk(request.message);
     const hasProducts = await this.products.hasProducts(botId);
-    if (matches.length === 0 && !smallTalk && !hasProducts) {
+    const hasLeadTool = LeadToolService.offered(config);
+    if (matches.length === 0 && !smallTalk && !hasProducts && !hasLeadTool) {
       await this.sendFallback(botId, config, request, emit, context, startedAt);
       return;
     }
     // With no knowledge match the text is held back until a tool has
-    // returned a product; without one it is replaced by the fallback.
+    // returned a product or saved a lead; without one it is replaced by
+    // the fallback.
     const needsToolData = matches.length === 0 && !smallTalk;
+    const offeredTools: ChatCompletionTool[] = [
+      ...(hasProducts ? PRODUCT_TOOLS : []),
+      ...(hasLeadTool ? [CAPTURE_LEAD_TOOL] : []),
+    ];
 
     const messages = buildPreviewMessages(
       config,
@@ -197,6 +209,7 @@ export class PreviewChatService {
       history,
       request.message,
       hasProducts,
+      hasLeadTool,
     );
 
     let text = '';
@@ -205,11 +218,15 @@ export class PreviewChatService {
     let tokensIn: number | null = null;
     let tokensOut: number | null = null;
     const productHits = new Map<string, string>();
+    let leadAccepted = false;
+    const grounded = () => productHits.size > 0 || leadAccepted;
     try {
       for (let round = 0; ; round++) {
         // The last round has no tools, so the model has to answer.
         const tools =
-          hasProducts && round < MAX_TOOL_ROUNDS ? PRODUCT_TOOLS : undefined;
+          offeredTools.length > 0 && round < MAX_TOOL_ROUNDS
+            ? offeredTools
+            : undefined;
         let roundText = '';
         let toolCalls: NonNullable<
           Extract<
@@ -224,9 +241,10 @@ export class PreviewChatService {
         )) {
           if (event.type === 'text') {
             roundText += event.text;
-            // Held back only until a tool has found a product: from then
-            // on the answer is grounded, so it streams like any other.
-            if (!needsToolData || productHits.size > 0) {
+            // Held back only until a tool has found a product or saved a
+            // lead: from then on the answer is grounded, so it streams like
+            // any other.
+            if (!needsToolData || grounded()) {
               streamed = true;
               text += event.text;
               // The client has gone: stop, and store nothing.
@@ -253,19 +271,32 @@ export class PreviewChatService {
           tool_calls: toolCalls,
         });
         for (const call of toolCalls) {
-          const run = await this.products.run(
-            botId,
-            call.function.name,
-            call.function.arguments,
-          );
-          for (const product of run.products) {
-            productHits.set(product.id, product.name);
+          let content: string;
+          if (call.function.name === CAPTURE_LEAD_TOOL.function!.name) {
+            // The chatbot and conversation come from the server (M5-4).
+            const run = await this.leadTool.run(
+              {
+                chatbotId: botId,
+                conversationId: request.conversationId ?? null,
+                isPreview: context.isPreview,
+                config,
+              },
+              call.function.arguments,
+            );
+            if (run.accepted) leadAccepted = true;
+            content = run.content;
+          } else {
+            const run = await this.products.run(
+              botId,
+              call.function.name,
+              call.function.arguments,
+            );
+            for (const product of run.products) {
+              productHits.set(product.id, product.name);
+            }
+            content = run.content;
           }
-          messages.push({
-            role: 'tool',
-            tool_call_id: call.id,
-            content: run.content,
-          });
+          messages.push({ role: 'tool', tool_call_id: call.id, content });
         }
       }
     } catch (err) {
@@ -286,10 +317,10 @@ export class PreviewChatService {
       throw err;
     }
 
-    // No knowledge and no product found: nothing grounds the text, so the
-    // server's fallback replaces whatever the model wrote.
+    // No knowledge, no product found and no lead saved: nothing grounds the
+    // text, so the server's fallback replaces whatever the model wrote.
     if (needsToolData) {
-      if (productHits.size === 0) {
+      if (!grounded()) {
         await this.sendFallback(
           botId,
           config,
