@@ -9,6 +9,7 @@ import {
   ChevronsUpDown,
   House,
   LogOut,
+  MessagesSquare,
   Package,
   Settings,
   Shield,
@@ -38,13 +39,14 @@ import {
 import { useSession } from "@/lib/session";
 import { toastError } from "@/lib/toast";
 
-// D-3 §2. Chatbot, Knowledge, Products and Install arrive with M2–M4;
-// only pages that exist are listed.
+// D-3 §2. Chatbot, Knowledge, Products and Install arrive with M2–M4,
+// Conversations with M5; only pages that exist are listed.
 const NAV_ITEMS = [
   { title: "Home", href: "/app", icon: House },
   { title: "Chatbot", href: "/app/chatbot", icon: Bot },
   { title: "Knowledge", href: "/app/knowledge", icon: BookOpen },
   { title: "Products", href: "/app/products", icon: Package },
+  { title: "Conversations", href: "/app/conversations", icon: MessagesSquare },
   { title: "Settings", href: "/app/settings", icon: Settings },
 ];
 
