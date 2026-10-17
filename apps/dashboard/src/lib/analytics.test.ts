@@ -1,11 +1,13 @@
 import type { AnalyticsDay } from "@brainstack/shared";
 import { describe, expect, it } from "vitest";
 import {
+  addToKnowledgeHref,
   chartMax,
   formatMetric,
   formatRate,
   metricValue,
   overviewQueryString,
+  prefillQuestion,
   shortDay,
 } from "./analytics";
 
@@ -23,6 +25,23 @@ describe("overviewQueryString", () => {
     const now = new Date("2026-10-17T23:30:00Z");
     expect(overviewQueryString(7, now)).toBe("?from=2026-10-11&to=2026-10-17");
     expect(overviewQueryString(30, now)).toBe("?from=2026-09-18&to=2026-10-17");
+  });
+});
+
+describe("addToKnowledgeHref / prefillQuestion", () => {
+  it("round-trips a question, Bangla and symbols included", () => {
+    for (const q of ["Do you ship to Dhaka & Chattogram?", "আপনাদের ঠিকানা কী?"]) {
+      const href = addToKnowledgeHref(q);
+      expect(href.startsWith("/app/knowledge?addFaq=")).toBe(true);
+      expect(prefillQuestion(href.slice(href.indexOf("?")))).toBe(q);
+    }
+  });
+
+  it("ignores a missing or blank value and cuts to the 500-character limit", () => {
+    expect(prefillQuestion("")).toBeNull();
+    expect(prefillQuestion("?addFaq=%20%20")).toBeNull();
+    expect(prefillQuestion("?other=1")).toBeNull();
+    expect(prefillQuestion(`?addFaq=${"a".repeat(600)}`)).toHaveLength(500);
   });
 });
 

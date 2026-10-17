@@ -2959,6 +2959,148 @@ describe('Tenant isolation (M1-25)', () => {
     });
   });
 
+  describe('Unanswered questions (M5-10)', () => {
+    // April 2024: no other test writes here.
+    const at = (d: string) => new Date(`2024-04-${d}Z`);
+    type Unanswered = {
+      questions: {
+        count: number;
+        example: string;
+        lastAskedAt: string;
+        conversationId: string;
+      }[];
+      truncated: boolean;
+    };
+    const unanswered = async (
+      cookie: string,
+      query = 'from=2024-04-01&to=2024-04-03',
+    ) =>
+      (await as(cookie).get(`/v1/analytics/unanswered?${query}`).expect(200))
+        .body as Unanswered;
+
+    /** One chat: each turn is [visitor text, how the bot answered]. */
+    async function seedChat(
+      workspaceId: string,
+      chatbotId: string,
+      when: Date,
+      turns: [string, string][],
+      opts: { isPreview?: boolean } = {},
+    ) {
+      return inWorkspace(workspaceId, () =>
+        db.conversation.create({
+          data: {
+            workspaceId,
+            chatbotId,
+            visitorId: `v-${run}`,
+            isPreview: opts.isPreview ?? false,
+            messageCount: turns.length * 2,
+            startedAt: when,
+            lastMessageAt: when,
+            messages: {
+              create: turns.flatMap(([content, answeredBy], i) => [
+                {
+                  workspaceId,
+                  role: 'USER' as const,
+                  content,
+                  createdAt: new Date(when.getTime() + i * 2000),
+                },
+                {
+                  workspaceId,
+                  role: 'ASSISTANT' as const,
+                  content: 'Reply ' + i,
+                  answeredBy,
+                  createdAt: new Date(when.getTime() + i * 2000 + 1000),
+                },
+              ]),
+            },
+          },
+        }),
+      );
+    }
+
+    let newestHoursChat: string;
+
+    beforeAll(async () => {
+      await seedChat(ids.a, ids.botA, at('01T10:00:00'), [
+        ['What are your opening hours?', 'fallback'],
+        ['hi', 'fallback'],
+        ['Do you ship abroad?', 'llm'],
+      ]);
+      const newest = await seedChat(ids.a, ids.botA, at('02T10:00:00'), [
+        ['  what are your OPENING hours  ', 'fallback'],
+        ['আপনাদের ঠিকানা কী?', 'fallback'],
+      ]);
+      newestHoursChat = newest.id;
+      await seedChat(ids.a, ids.botA, at('03T10:00:00'), [
+        ['আপনাদের ঠিকানা কী', 'fallback'],
+        ['Answered by a custom answer', 'custom_answer'],
+      ]);
+      // Left out: Test chat.
+      await seedChat(
+        ids.a,
+        ids.botA,
+        at('01T12:00:00'),
+        [['Preview only question', 'fallback']],
+        { isPreview: true },
+      );
+      // Workspace B falls back on the same wording many times: must never reach A.
+      for (let i = 0; i < 4; i++) {
+        await seedChat(ids.b, ids.botB, at('02T11:00:00'), [
+          ['What are your opening hours?', 'fallback'],
+          ['Secret B question', 'fallback'],
+        ]);
+      }
+    });
+
+    it("groups the visitor message before each fallback, from the caller's workspace only", async () => {
+      const a = await unanswered(cookies.ownerA);
+      expect(a.truncated).toBe(false);
+      expect(a.questions.map((q) => q.count)).toEqual([2, 2]);
+      expect(a.questions.map((q) => q.example)).toEqual([
+        // Most recent wording first; "hi", answered ones and Test chat are out.
+        'আপনাদের ঠিকানা কী',
+        'what are your OPENING hours',
+      ]);
+      // The link points at the chat of the most recent time.
+      expect(a.questions[1].conversationId).toBe(newestHoursChat);
+      const text = JSON.stringify(a);
+      expect(text).not.toContain('Secret B');
+      expect(text).not.toContain('Preview only');
+      expect(text).not.toContain('ship abroad');
+
+      const b = await unanswered(cookies.ownerB);
+      expect(b.questions[0]).toMatchObject({ count: 4 });
+      expect(JSON.stringify(b)).not.toContain('ঠিকানা');
+      expect(
+        b.questions.some((q) => q.conversationId === newestHoursChat),
+      ).toBe(false);
+    });
+
+    it('honours the range and the limit; a viewer can read it', async () => {
+      const day1 = await unanswered(
+        cookies.viewerA,
+        'from=2024-04-01&to=2024-04-01',
+      );
+      expect(day1.questions).toHaveLength(1);
+      expect(day1.questions[0]).toMatchObject({ count: 1 });
+      const one = await unanswered(
+        cookies.ownerA,
+        'from=2024-04-01&to=2024-04-03&limit=1',
+      );
+      expect(one.questions).toHaveLength(1);
+    });
+
+    it('rejects a bad query (400) and needs a session (401)', async () => {
+      await as(cookies.ownerA)
+        .get('/v1/analytics/unanswered?limit=0')
+        .expect(400);
+      await as(cookies.ownerA)
+        .get('/v1/analytics/unanswered?workspaceId=' + ids.b)
+        .expect(400);
+      await request(http).get('/v1/analytics/unanswered').expect(401);
+    });
+  });
+
   describe('tenant Prisma client', () => {
     it('lists only the current workspace', async () => {
       const bots = await inWorkspace(ids.a, () => db.chatbot.findMany());

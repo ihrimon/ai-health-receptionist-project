@@ -4,6 +4,8 @@ import {
   type AnalyticsOverviewQuery,
   type AnalyticsTopQuestions,
   type AnalyticsTopQuestionsQuery,
+  type AnalyticsUnanswered,
+  type AnalyticsUnansweredQuery,
   ANALYTICS_TIME_ZONE,
   analyticsRange,
   daysBetween,
@@ -69,6 +71,21 @@ export const NON_QUESTIONS = [
   'সালাম',
   'ওকে',
 ];
+
+/**
+ * Regex (Postgres) for the characters that collapse into one space when
+ * grouping questions: spaces, punctuation, the Bangla danda and curly
+ * quotes. Shared by top questions and unanswered questions.
+ */
+const CLEAN_PATTERN = '[[:space:][:punct:]।॥“”‘’…]+';
+
+export interface UnansweredRow {
+  count: number;
+  example: string;
+  lastAskedAt: Date;
+  conversationId: string;
+  scanned: number;
+}
 
 export interface TopQuestionRow {
   count: number;
@@ -244,7 +261,7 @@ export class AnalyticsService {
       cleaned AS (
         SELECT content, created_at,
                btrim(regexp_replace(lower(content),
-                 '[[:space:][:punct:]।॥“”‘’…]+', ' ', 'g')) AS norm
+                 ${CLEAN_PATTERN}, ' ', 'g')) AS norm
         FROM scanned
       )
       SELECT count(*)::int AS count,
@@ -268,6 +285,76 @@ export class AnalyticsService {
         lastAskedAt: r.lastAskedAt.toISOString(),
       })),
       // Only known when some rows came back (the scan size rides on them).
+      truncated: (rows[0]?.scanned ?? 0) >= TOP_QUESTIONS_SCAN_CAP,
+    };
+  }
+
+  /**
+   * Questions the bot could not answer (M5-10): for every fallback reply
+   * of a live, non-empty chat in the range, the visitor message right
+   * before it, cleaned and grouped like top questions. Each group links
+   * to the most recent conversation. Only the newest
+   * TOP_QUESTIONS_SCAN_CAP fallback replies of the range are read.
+   */
+  async unanswered(
+    query: AnalyticsUnansweredQuery,
+  ): Promise<AnalyticsUnanswered> {
+    const { workspaceId } = requireTenant();
+    const range = analyticsRange(query, this.now());
+    const tz = ANALYTICS_TIME_ZONE;
+    const limit = query.limit ?? TOP_QUESTIONS_DEFAULT_LIMIT;
+
+    const rows = await this.db.$queryRaw<UnansweredRow[]>`
+      WITH scanned AS (
+        SELECT m.conversation_id, m.created_at,
+               (SELECT u.content
+                  FROM messages u
+                 WHERE u.conversation_id = m.conversation_id
+                   AND u.workspace_id = ${workspaceId}::uuid
+                   AND u.role = 'USER'
+                   AND u.created_at <= m.created_at
+                 ORDER BY u.created_at DESC
+                 LIMIT 1) AS content
+        FROM messages m
+        JOIN conversations c
+          ON c.id = m.conversation_id AND c.workspace_id = ${workspaceId}::uuid
+        WHERE m.workspace_id = ${workspaceId}::uuid
+          AND m.role = 'ASSISTANT' AND m.answered_by = 'fallback'
+          AND NOT c.is_preview AND c.message_count > 0
+          AND m.created_at >= (${range.from}::date)::timestamp AT TIME ZONE ${tz}
+          AND m.created_at < (${range.to}::date + 1)::timestamp AT TIME ZONE ${tz}
+        ORDER BY m.created_at DESC
+        LIMIT ${TOP_QUESTIONS_SCAN_CAP}
+      ),
+      cleaned AS (
+        SELECT conversation_id, content, created_at,
+               btrim(regexp_replace(lower(content),
+                 ${CLEAN_PATTERN}, ' ', 'g')) AS norm
+        FROM scanned
+        WHERE content IS NOT NULL
+      )
+      SELECT count(*)::int AS count,
+             left((array_agg(content ORDER BY created_at DESC))[1], 200) AS example,
+             max(created_at) AS "lastAskedAt",
+             (array_agg(conversation_id ORDER BY created_at DESC))[1]::text AS "conversationId",
+             (SELECT count(*)::int FROM scanned) AS scanned
+      FROM cleaned
+      WHERE char_length(norm) >= ${TOP_QUESTIONS_MIN_CHARS}
+        AND norm <> ALL (${NON_QUESTIONS}::text[])
+      GROUP BY norm
+      ORDER BY count(*) DESC, max(created_at) DESC
+      LIMIT ${limit}`;
+
+    return {
+      from: range.from,
+      to: range.to,
+      timeZone: tz,
+      questions: rows.map((r) => ({
+        count: r.count,
+        example: r.example.trim(),
+        lastAskedAt: r.lastAskedAt.toISOString(),
+        conversationId: r.conversationId,
+      })),
       truncated: (rows[0]?.scanned ?? 0) >= TOP_QUESTIONS_SCAN_CAP,
     };
   }

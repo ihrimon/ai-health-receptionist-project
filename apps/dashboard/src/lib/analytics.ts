@@ -2,6 +2,7 @@ import {
   type AnalyticsDay,
   type AnalyticsOverview,
   type AnalyticsTopQuestions,
+  type AnalyticsUnanswered,
   lastDays,
 } from "@brainstack/shared";
 import { apiFetch } from "@/lib/api";
@@ -81,7 +82,22 @@ export function formatAskedAt(iso: string): string {
   });
 }
 
+/** The FAQ form on the Knowledge page, opened with this question filled in. */
+export function addToKnowledgeHref(question: string): string {
+  return `/app/knowledge?${new URLSearchParams({ addFaq: question }).toString()}`;
+}
+
+/** The question to prefill, from the Knowledge page's query string (or null). */
+export function prefillQuestion(search: string): string | null {
+  const value = new URLSearchParams(search).get("addFaq")?.trim();
+  return value ? value.slice(0, 500) : null;
+}
+
 export const analyticsApi = {
+  unanswered: (days: number) =>
+    apiFetch<AnalyticsUnanswered>(
+      `/analytics/unanswered${overviewQueryString(days)}&limit=50`,
+    ),
   topQuestions: (days: number) =>
     apiFetch<AnalyticsTopQuestions>(
       `/analytics/top-questions${overviewQueryString(days)}&limit=10`,

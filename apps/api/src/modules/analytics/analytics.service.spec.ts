@@ -2,6 +2,7 @@ import {
   analyticsOverviewQuerySchema,
   analyticsRange,
   analyticsTopQuestionsQuerySchema,
+  analyticsUnansweredQuerySchema,
   lastDays,
 } from '@brainstack/shared';
 import { Test } from '@nestjs/testing';
@@ -147,6 +148,20 @@ describe('AnalyticsService', () => {
       expect(values).toContain('2026-10-17');
       expect(values).not.toContain('ws-2');
     }
+  });
+});
+
+describe('analyticsUnansweredQuerySchema', () => {
+  it('takes the same range and limit as top questions', () => {
+    expect(
+      analyticsUnansweredQuerySchema.parse({ to: '2026-10-17', limit: '50' }),
+    ).toEqual({ to: '2026-10-17', limit: 50 });
+    expect(
+      analyticsUnansweredQuerySchema.safeParse({ limit: '51' }).success,
+    ).toBe(false);
+    expect(
+      analyticsUnansweredQuerySchema.safeParse({ cursor: 'x' }).success,
+    ).toBe(false);
   });
 });
 

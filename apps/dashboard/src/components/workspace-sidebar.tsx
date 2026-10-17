@@ -7,6 +7,7 @@ import {
   Bot,
   Check,
   ChevronsUpDown,
+  CircleHelp,
   House,
   LogOut,
   MessagesSquare,
@@ -49,6 +50,7 @@ const NAV_ITEMS = [
   { title: "Products", href: "/app/products", icon: Package },
   { title: "Conversations", href: "/app/conversations", icon: MessagesSquare },
   { title: "Leads", href: "/app/leads", icon: UserRound },
+  { title: "Unanswered", href: "/app/unanswered", icon: CircleHelp },
   { title: "Settings", href: "/app/settings", icon: Settings },
 ];
 
