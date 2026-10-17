@@ -2833,6 +2833,132 @@ describe('Tenant isolation (M1-25)', () => {
     });
   });
 
+  describe('Top questions (M5-9)', () => {
+    // March 2024: no other test writes here.
+    const at = (d: string) => new Date(`2024-03-${d}Z`);
+    type Top = {
+      questions: { count: number; example: string; lastAskedAt: string }[];
+      truncated: boolean;
+    };
+    const top = async (
+      cookie: string,
+      query = 'from=2024-03-01&to=2024-03-03',
+    ) =>
+      (await as(cookie).get(`/v1/analytics/top-questions?${query}`).expect(200))
+        .body as Top;
+
+    async function seedAsk(
+      workspaceId: string,
+      chatbotId: string,
+      when: Date,
+      texts: string[],
+      opts: { isPreview?: boolean } = {},
+    ) {
+      await inWorkspace(workspaceId, () =>
+        db.conversation.create({
+          data: {
+            workspaceId,
+            chatbotId,
+            visitorId: `v-${run}`,
+            isPreview: opts.isPreview ?? false,
+            messageCount: texts.length * 2,
+            startedAt: when,
+            lastMessageAt: when,
+            messages: {
+              create: texts.flatMap((content, i) => [
+                {
+                  workspaceId,
+                  role: 'USER' as const,
+                  content,
+                  createdAt: new Date(when.getTime() + i * 2000),
+                },
+                {
+                  workspaceId,
+                  role: 'ASSISTANT' as const,
+                  content: 'Answer ' + content,
+                  createdAt: new Date(when.getTime() + i * 2000 + 1000),
+                },
+              ]),
+            },
+          },
+        }),
+      );
+    }
+
+    beforeAll(async () => {
+      await seedAsk(ids.a, ids.botA, at('01T10:00:00'), [
+        'What are your opening hours?',
+        'hi',
+      ]);
+      await seedAsk(ids.a, ids.botA, at('02T10:00:00'), [
+        '  what are your OPENING hours  ',
+        'আপনাদের ঠিকানা কী?',
+        'ok',
+      ]);
+      await seedAsk(ids.a, ids.botA, at('03T10:00:00'), [
+        'আপনাদের ঠিকানা কী',
+        'Do you ship abroad?',
+      ]);
+      // Left out: Test chat.
+      await seedAsk(
+        ids.a,
+        ids.botA,
+        at('01T12:00:00'),
+        ['Preview only question'],
+        {
+          isPreview: true,
+        },
+      );
+      // Workspace B asks the same thing many times: must never reach A.
+      for (let i = 0; i < 4; i++) {
+        await seedAsk(ids.b, ids.botB, at('02T11:00:00'), [
+          'What are your opening hours?',
+          'Secret B question',
+        ]);
+      }
+    });
+
+    it("groups identical questions after cleaning, Bangla included, from the caller's workspace only", async () => {
+      const a = await top(cookies.ownerA);
+      expect(a.truncated).toBe(false);
+      expect(a.questions.map((q) => q.count)).toEqual([2, 2, 1]);
+      expect(a.questions.map((q) => q.example)).toEqual([
+        // Most recent wording; the Mar 3 Bangla chat is newer than Mar 2 hours.
+        'আপনাদের ঠিকানা কী',
+        'what are your OPENING hours',
+        'Do you ship abroad?',
+      ]);
+      const text = JSON.stringify(a);
+      expect(text).not.toContain('Secret B');
+      expect(text).not.toContain('Preview only');
+
+      const b = await top(cookies.ownerB);
+      expect(b.questions[0]).toMatchObject({ count: 4 });
+      expect(JSON.stringify(b)).not.toContain('ship abroad');
+    });
+
+    it('honours the range and the limit; a viewer can read it', async () => {
+      const day1 = await top(cookies.viewerA, 'from=2024-03-01&to=2024-03-01');
+      expect(day1.questions).toHaveLength(1);
+      expect(day1.questions[0]).toMatchObject({ count: 1 });
+      const one = await top(
+        cookies.ownerA,
+        'from=2024-03-01&to=2024-03-03&limit=1',
+      );
+      expect(one.questions).toHaveLength(1);
+    });
+
+    it('rejects a bad query (400) and needs a session (401)', async () => {
+      await as(cookies.ownerA)
+        .get('/v1/analytics/top-questions?limit=0')
+        .expect(400);
+      await as(cookies.ownerA)
+        .get('/v1/analytics/top-questions?workspaceId=' + ids.b)
+        .expect(400);
+      await request(http).get('/v1/analytics/top-questions').expect(401);
+    });
+  });
+
   describe('tenant Prisma client', () => {
     it('lists only the current workspace', async () => {
       const bots = await inWorkspace(ids.a, () => db.chatbot.findMany());

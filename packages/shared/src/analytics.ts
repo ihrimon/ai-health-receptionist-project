@@ -49,27 +49,33 @@ export function lastDays(days: number, now = new Date()): { from: string; to: st
   return { from: addDays(to, -(days - 1)), to };
 }
 
+type RangeQuery = { from?: string; to?: string };
+
+const rangeNotReversed = (v: RangeQuery) => !v.from || !v.to || v.from <= v.to;
+
+function rangeWithinMax(v: RangeQuery): boolean {
+  // Zod still runs this when a day is malformed; the field reports that.
+  if ((v.from && !isCalendarDay(v.from)) || (v.to && !isCalendarDay(v.to))) {
+    return true;
+  }
+  const { from, to } = analyticsRange(v);
+  return (Date.parse(to) - Date.parse(from)) / DAY_MS + 1 <= ANALYTICS_MAX_DAYS;
+}
+
 /** GET /v1/analytics/overview query: both days included; defaults to the last 30 days. */
 export const analyticsOverviewQuerySchema = z
   .strictObject({
     from: calendarDay.optional(),
     to: calendarDay.optional(),
   })
-  .refine((v) => !v.from || !v.to || v.from <= v.to, {
+  .refine(rangeNotReversed, {
     message: '`from` must not be after `to`',
     path: ['to'],
   })
-  .refine(
-    (v) => {
-      // Zod still runs this when a day is malformed; the field reports that.
-      if ((v.from && !isCalendarDay(v.from)) || (v.to && !isCalendarDay(v.to))) {
-        return true;
-      }
-      const { from, to } = analyticsRange(v);
-      return (Date.parse(to) - Date.parse(from)) / DAY_MS + 1 <= ANALYTICS_MAX_DAYS;
-    },
-    { message: `Pick at most ${ANALYTICS_MAX_DAYS} days`, path: ['from'] },
-  );
+  .refine(rangeWithinMax, {
+    message: `Pick at most ${ANALYTICS_MAX_DAYS} days`,
+    path: ['from'],
+  });
 
 export type AnalyticsOverviewQuery = z.output<typeof analyticsOverviewQuerySchema>;
 
@@ -118,4 +124,52 @@ export interface AnalyticsOverview {
   fallbackRate: number | null;
   /** One entry per day from `from` to `to`, in order. */
   daily: AnalyticsDay[];
+}
+
+/* ─────────────── Top questions (D-2 §2.6, M5-9) ─────────────── */
+
+export const TOP_QUESTIONS_DEFAULT_LIMIT = 10;
+export const TOP_QUESTIONS_MAX_LIMIT = 50;
+/** Visitor messages scanned per request (the newest in the range); a hard cap. */
+export const TOP_QUESTIONS_SCAN_CAP = 5000;
+/** Messages shorter than this after cleaning are ignored. */
+export const TOP_QUESTIONS_MIN_CHARS = 3;
+
+/** GET /v1/analytics/top-questions query: the overview range plus `limit`. */
+export const analyticsTopQuestionsQuerySchema = z
+  .strictObject({
+    from: calendarDay.optional(),
+    to: calendarDay.optional(),
+    limit: z.coerce.number().int().min(1).max(TOP_QUESTIONS_MAX_LIMIT).optional(),
+  })
+  .refine(rangeNotReversed, {
+    message: '`from` must not be after `to`',
+    path: ['to'],
+  })
+  .refine(rangeWithinMax, {
+    message: `Pick at most ${ANALYTICS_MAX_DAYS} days`,
+    path: ['from'],
+  });
+
+export type AnalyticsTopQuestionsQuery = z.output<typeof analyticsTopQuestionsQuerySchema>;
+
+/** One group of identical questions (same text after cleaning). */
+export interface TopQuestion {
+  /** How many times visitors asked it. */
+  count: number;
+  /** One original wording (the most recent), cut to 200 characters. */
+  example: string;
+  /** When it was last asked (ISO instant). */
+  lastAskedAt: string;
+}
+
+/** GET /v1/analytics/top-questions response. */
+export interface AnalyticsTopQuestions {
+  from: string;
+  to: string;
+  timeZone: string;
+  /** Most asked first; ties go to the most recently asked. */
+  questions: TopQuestion[];
+  /** True when the range had more visitor messages than the scan cap, so older ones were skipped. */
+  truncated: boolean;
 }

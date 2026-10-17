@@ -1,5 +1,7 @@
 import {
   type AnalyticsOverviewQuery,
+  type AnalyticsTopQuestionsQuery,
+  analyticsTopQuestionsQuerySchema,
   analyticsOverviewQuerySchema,
 } from '@brainstack/shared';
 import { Controller, Get, Query } from '@nestjs/common';
@@ -20,5 +22,14 @@ export class AnalyticsController {
     query: AnalyticsOverviewQuery,
   ) {
     return this.analytics.overview(query);
+  }
+
+  @Get('top-questions')
+  @Roles(WorkspaceRole.VIEWER)
+  topQuestions(
+    @Query(new ZodBodyPipe(analyticsTopQuestionsQuerySchema))
+    query: AnalyticsTopQuestionsQuery,
+  ) {
+    return this.analytics.topQuestions(query);
   }
 }

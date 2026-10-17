@@ -1,4 +1,9 @@
-import { type AnalyticsDay, type AnalyticsOverview, lastDays } from "@brainstack/shared";
+import {
+  type AnalyticsDay,
+  type AnalyticsOverview,
+  type AnalyticsTopQuestions,
+  lastDays,
+} from "@brainstack/shared";
 import { apiFetch } from "@/lib/api";
 
 /* ─────────────── Overview analytics (D-2 §2.6, M5-8) ─────────────── */
@@ -64,7 +69,23 @@ export function formatRate(rate: number | null): string | null {
   return rate === null ? null : `${Math.round(rate * 100)}%`;
 }
 
+/** "Oct 17, 14:05" for an ISO instant, in UTC like the day buckets. */
+export function formatAskedAt(iso: string): string {
+  return new Date(iso).toLocaleString("en-US", {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+    timeZone: "UTC",
+  });
+}
+
 export const analyticsApi = {
+  topQuestions: (days: number) =>
+    apiFetch<AnalyticsTopQuestions>(
+      `/analytics/top-questions${overviewQueryString(days)}&limit=10`,
+    ),
   overview: (days: number) =>
     apiFetch<AnalyticsOverview>(`/analytics/overview${overviewQueryString(days)}`),
 };

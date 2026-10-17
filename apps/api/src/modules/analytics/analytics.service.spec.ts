@@ -1,6 +1,7 @@
 import {
   analyticsOverviewQuerySchema,
   analyticsRange,
+  analyticsTopQuestionsQuerySchema,
   lastDays,
 } from '@brainstack/shared';
 import { Test } from '@nestjs/testing';
@@ -145,6 +146,35 @@ describe('AnalyticsService', () => {
       expect(values).toContain('2026-10-11');
       expect(values).toContain('2026-10-17');
       expect(values).not.toContain('ws-2');
+    }
+  });
+});
+
+describe('analyticsTopQuestionsQuerySchema', () => {
+  it('takes the overview range plus a limit', () => {
+    expect(analyticsTopQuestionsQuerySchema.parse({})).toEqual({});
+    expect(
+      analyticsTopQuestionsQuerySchema.parse({
+        from: '2026-10-01',
+        limit: '5',
+      }),
+    ).toEqual({ from: '2026-10-01', limit: 5 });
+  });
+
+  it('rejects a bad limit, a reversed or too long range and unknown fields', () => {
+    const bad = [
+      { limit: '0' },
+      { limit: '51' },
+      { limit: 'many' },
+      { limit: '1.5' },
+      { from: '2026-10-18', to: '2026-10-17' },
+      { from: '2020-01-01' },
+      { chatbotId: 'x' },
+    ];
+    for (const query of bad) {
+      expect(analyticsTopQuestionsQuerySchema.safeParse(query).success).toBe(
+        false,
+      );
     }
   });
 });
