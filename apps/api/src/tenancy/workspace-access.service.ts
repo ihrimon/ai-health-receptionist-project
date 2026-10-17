@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../database/prisma.service';
 import { WorkspaceRole, WorkspaceStatus } from '../generated/prisma/client';
+import { runAsSystem } from './tenant-context';
 
 export interface ActiveMembership {
   workspaceId: string;
@@ -31,7 +32,18 @@ export class WorkspaceAccessService {
    * removed) it falls back to their oldest membership and saves that on
    * the session. Null if they belong to no workspace at all.
    */
-  async resolveActive(session: {
+  resolveActive(session: {
+    id: string;
+    userId: string;
+    activeWorkspaceId: string | null;
+  }): Promise<ActiveMembership | null> {
+    // Runs before any workspace is chosen, so it can't be scoped to one (M7-1).
+    return runAsSystem('resolve active workspace', () =>
+      this.resolveActiveInner(session),
+    );
+  }
+
+  private async resolveActiveInner(session: {
     id: string;
     userId: string;
     activeWorkspaceId: string | null;
@@ -77,9 +89,11 @@ export class WorkspaceAccessService {
     userId: string,
     workspaceId: string,
   ): Promise<WorkspaceRole | null> {
-    const member = await this.prisma.workspaceMember.findUnique({
-      where: { workspaceId_userId: { workspaceId, userId } },
-    });
+    const member = await runAsSystem('role in workspace', () =>
+      this.prisma.workspaceMember.findUnique({
+        where: { workspaceId_userId: { workspaceId, userId } },
+      }),
+    );
     return member?.role ?? null;
   }
 }

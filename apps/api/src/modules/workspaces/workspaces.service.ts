@@ -7,7 +7,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../../database/prisma.service';
 import { Prisma, WorkspaceRole } from '../../generated/prisma/client';
-import { requireTenant } from '../../tenancy/tenant-context';
+import { requireTenant, runAsSystem } from '../../tenancy/tenant-context';
 import { TENANT_PRISMA, type TenantPrisma } from '../../tenancy/tenant-prisma';
 import { WorkspaceAccessService } from '../../tenancy/workspace-access.service';
 import type { AuthContext } from '../auth/auth-context';
@@ -67,7 +67,10 @@ export class WorkspacesService {
     tx?: Prisma.TransactionClient,
   ): Promise<WorkspaceWithChatbots> {
     if (!tx) {
-      return this.prisma.$transaction((t) => this.createWithOwner(input, t));
+      // A workspace that doesn't exist yet has no id to scope to (M7-1).
+      return runAsSystem('create workspace', () =>
+        this.prisma.$transaction((t) => this.createWithOwner(input, t)),
+      );
     }
 
     const name = input.name.trim();

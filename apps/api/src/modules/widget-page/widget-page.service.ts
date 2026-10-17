@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../database/prisma.service';
+import { runAsSystem } from '../../tenancy/tenant-context';
 import { ChatbotStatus, WorkspaceStatus } from '../../generated/prisma/client';
 import { embeddingHost, type PageRequest } from './install-host';
 import { frameAncestors } from './widget-page-headers';
@@ -39,16 +40,19 @@ export class WidgetPageService {
     if (cached !== null) return cached;
 
     const generation = this.cache.generation;
-    const bot = await this.prisma.chatbot.findUnique({
-      where: { publicId },
-      select: {
-        status: true,
-        allowedDomains: true,
-        publishedVersionId: true,
-        installVerifiedAt: true,
-        workspace: { select: { status: true } },
-      },
-    });
+    // The widget page has no session; the publicId finds the chatbot (M7-1).
+    const bot = await runAsSystem('find widget page by public id', () =>
+      this.prisma.chatbot.findUnique({
+        where: { publicId },
+        select: {
+          status: true,
+          allowedDomains: true,
+          publishedVersionId: true,
+          installVerifiedAt: true,
+          workspace: { select: { status: true } },
+        },
+      }),
+    );
     if (
       !bot ||
       bot.status !== ChatbotStatus.ENABLED ||
@@ -80,10 +84,12 @@ export class WidgetPageService {
     const host = embeddingHost(req, page.allowedDomains, this.allowLocalhost);
     if (!host) return;
     try {
-      await this.prisma.chatbot.updateMany({
-        where: { publicId, installVerifiedAt: null },
-        data: { installVerifiedAt: new Date(), installVerifiedHost: host },
-      });
+      await runAsSystem('record widget install', () =>
+        this.prisma.chatbot.updateMany({
+          where: { publicId, installVerifiedAt: null },
+          data: { installVerifiedAt: new Date(), installVerifiedHost: host },
+        }),
+      );
       this.cache.markInstalled(publicId);
     } catch (err) {
       this.logger.warn(

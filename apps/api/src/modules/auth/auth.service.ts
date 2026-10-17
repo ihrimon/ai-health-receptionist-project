@@ -16,6 +16,7 @@ import {
 import { EmailService, OutgoingEmail } from '../email/email.service';
 import { RateLimitService } from '../../rate-limit/rate-limit.service';
 import { WorkspacesService } from '../workspaces/workspaces.service';
+import { runAsSystem } from '../../tenancy/tenant-context';
 import { WorkspaceAccessService } from '../../tenancy/workspace-access.service';
 import { resetPasswordMessage, verifyEmailMessage } from './auth-emails';
 import { AuthContext } from './auth-context';
@@ -90,20 +91,22 @@ export class AuthService {
     const passwordHash = await hashPassword(dto.password);
     let result: { user: User; workspace: Workspace; session: IssuedSession };
     try {
-      result = await this.prisma.$transaction(async (tx) => {
-        const user = await tx.user.create({
-          data: { email: dto.email, name: dto.name, passwordHash },
-        });
-        const workspace = await this.workspaces.createWithOwner(
-          { name: dto.companyName, ownerUserId: user.id },
-          tx,
-        );
-        const session = await this.sessions.create(
-          { userId: user.id, activeWorkspaceId: workspace.id, ...meta },
-          tx,
-        );
-        return { user, workspace, session };
-      });
+      result = await runAsSystem('sign up', () =>
+        this.prisma.$transaction(async (tx) => {
+          const user = await tx.user.create({
+            data: { email: dto.email, name: dto.name, passwordHash },
+          });
+          const workspace = await this.workspaces.createWithOwner(
+            { name: dto.companyName, ownerUserId: user.id },
+            tx,
+          );
+          const session = await this.sessions.create(
+            { userId: user.id, activeWorkspaceId: workspace.id, ...meta },
+            tx,
+          );
+          return { user, workspace, session };
+        }),
+      );
     } catch (err) {
       // Two signups with the same email racing past the check above.
       if (
@@ -130,12 +133,15 @@ export class AuthService {
       { key: `login:ip:${meta.ipAddress}`, limit: 20, windowSeconds: HOUR },
     );
 
-    const user = await this.prisma.user.findUnique({
-      where: { email: dto.email },
-      include: {
-        memberships: { orderBy: { createdAt: 'asc' }, take: 1 },
-      },
-    });
+    // The user's first workspace is found before any workspace is active.
+    const user = await runAsSystem('log in', () =>
+      this.prisma.user.findUnique({
+        where: { email: dto.email },
+        include: {
+          memberships: { orderBy: { createdAt: 'asc' }, take: 1 },
+        },
+      }),
+    );
     const valid = user
       ? await verifyPassword(user.passwordHash, dto.password)
       : await burnPasswordCheck(dto.password);
@@ -155,11 +161,14 @@ export class AuthService {
   }
 
   async me({ user, session }: AuthContext): Promise<MeResponse> {
-    const memberships = await this.prisma.workspaceMember.findMany({
-      where: { userId: user.id },
-      include: { workspace: true },
-      orderBy: { createdAt: 'asc' },
-    });
+    // All of the user's workspaces, not just the current one.
+    const memberships = await runAsSystem('list my workspaces', () =>
+      this.prisma.workspaceMember.findMany({
+        where: { userId: user.id },
+        include: { workspace: true },
+        orderBy: { createdAt: 'asc' },
+      }),
+    );
     // Same rule as WorkspaceGuard, so the dashboard shows the workspace
     // its requests will actually run in.
     const resolved = await this.access.resolveActive(session);

@@ -5,6 +5,7 @@ import { NestFactory } from '@nestjs/core';
 import configuration from '../../config/configuration';
 import { DatabaseModule } from '../../database/database.module';
 import { PrismaService } from '../../database/prisma.service';
+import { runAsSystem } from '../../tenancy/tenant-context';
 import { QueueModule } from '../../queue/queue.module';
 import { KnowledgeIngestQueue } from './knowledge-ingest.queue';
 import { findItemsToReembed, summarize } from './reembed';
@@ -47,7 +48,10 @@ async function main(): Promise<void> {
     const model = app
       .get(ConfigService)
       .getOrThrow<string>('knowledge.embeddingModel');
-    const items = await findItemsToReembed(app.get(PrismaService), model);
+    // Reads every workspace on purpose (M7-1: runs with the RLS bypass).
+    const items = await runAsSystem('re-embed all workspaces', () =>
+      findItemsToReembed(app.get(PrismaService), model),
+    );
     console.log(`Not embedded with ${model}: ${summarize(items)}.`);
     if (dryRun || items.length === 0) return;
 

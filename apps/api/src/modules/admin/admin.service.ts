@@ -11,6 +11,7 @@ import {
   WorkspaceRole,
   WorkspaceStatus,
 } from '../../generated/prisma/client';
+import { runAsSystem } from '../../tenancy/tenant-context';
 import { periodOf } from '../usage/usage.service';
 import { WidgetPageCache } from '../widget-page/widget-page.cache';
 import type {
@@ -105,6 +106,15 @@ export class AdminService {
     private readonly config: ConfigService,
   ) {}
 
+  /**
+   * The platform-admin console reads every workspace on purpose, so its
+   * queries run with the Row-Level Security bypass (M7-1). The controller
+   * only lets platform admins in.
+   */
+  private asPlatform<T>(fn: () => Promise<T>): Promise<T> {
+    return runAsSystem('platform-admin console', fn);
+  }
+
   private costConfig(): UsageCostConfig {
     return (
       this.config.get<UsageCostConfig>('adminUsage') ??
@@ -112,7 +122,11 @@ export class AdminService {
     );
   }
 
-  async listWorkspaces(query: ListWorkspacesQueryDto) {
+  listWorkspaces(query: ListWorkspacesQueryDto) {
+    return this.asPlatform(() => this.listWorkspacesInner(query));
+  }
+
+  private async listWorkspacesInner(query: ListWorkspacesQueryDto) {
     const limit = query.limit ?? DEFAULT_LIMIT;
     const period = periodOf(this.now());
     const where: Prisma.WorkspaceWhereInput = {};
@@ -149,7 +163,11 @@ export class AdminService {
    * and token sums only: it never reads conversation or message text.
    * Costs are estimates; see usage-cost.ts.
    */
-  async usageOverview() {
+  usageOverview() {
+    return this.asPlatform(() => this.usageOverviewInner());
+  }
+
+  private async usageOverviewInner() {
     const config = this.costConfig();
     const period = periodOf(this.now());
     const { start, end } = periodRange(period);
@@ -208,7 +226,11 @@ export class AdminService {
   }
 
   /** One workspace's usage this month and the previous months (M6-12). */
-  async workspaceUsage(id: string) {
+  workspaceUsage(id: string) {
+    return this.asPlatform(() => this.workspaceUsageInner(id));
+  }
+
+  private async workspaceUsageInner(id: string) {
     const config = this.costConfig();
     const workspace = await this.prisma.workspace.findUnique({
       where: { id },
@@ -254,7 +276,15 @@ export class AdminService {
     };
   }
 
-  async updateWorkspace(
+  updateWorkspace(
+    actor: AdminActor,
+    id: string,
+    dto: UpdateWorkspaceDto,
+  ): Promise<AdminWorkspaceRow> {
+    return this.asPlatform(() => this.updateWorkspaceInner(actor, id, dto));
+  }
+
+  private async updateWorkspaceInner(
     actor: AdminActor,
     id: string,
     dto: UpdateWorkspaceDto,
@@ -313,7 +343,11 @@ export class AdminService {
     return toRow(updated);
   }
 
-  async auditLog(query: AuditLogQueryDto) {
+  auditLog(query: AuditLogQueryDto) {
+    return this.asPlatform(() => this.auditLogInner(query));
+  }
+
+  private async auditLogInner(query: AuditLogQueryDto) {
     const limit = query.limit ?? DEFAULT_LIMIT;
     const rows = await this.prisma.auditLog.findMany({
       where: query.workspaceId ? { workspaceId: query.workspaceId } : {},

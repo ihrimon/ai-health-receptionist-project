@@ -22,7 +22,7 @@ import {
   WorkspaceStatus,
 } from '../../generated/prisma/client';
 import { RateLimitService } from '../../rate-limit/rate-limit.service';
-import { runWithTenant } from '../../tenancy/tenant-context';
+import { runAsSystem, runWithTenant } from '../../tenancy/tenant-context';
 import { ConversationsService } from '../conversations/conversations.service';
 import { PreviewChatService } from '../preview-chat/preview-chat.service';
 import {
@@ -255,16 +255,20 @@ export class PublicChatService {
   private async liveBot(
     where: { publicId: string } | { id: string },
   ): Promise<LiveBot> {
-    const bot = await this.prisma.chatbot.findUnique({
-      where,
-      select: {
-        id: true,
-        workspaceId: true,
-        status: true,
-        workspace: { select: { status: true } },
-        publishedVersion: { select: { id: true, config: true } },
-      },
-    });
+    // A visitor has no session; the publicId is what finds the workspace
+    // (M7-1: the only lookup of this chat flow outside its workspace).
+    const bot = await runAsSystem('find chatbot by public id', () =>
+      this.prisma.chatbot.findUnique({
+        where,
+        select: {
+          id: true,
+          workspaceId: true,
+          status: true,
+          workspace: { select: { status: true } },
+          publishedVersion: { select: { id: true, config: true } },
+        },
+      }),
+    );
     if (
       !bot ||
       bot.status !== ChatbotStatus.ENABLED ||
