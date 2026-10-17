@@ -3,6 +3,8 @@ export const QUEUE_NAMES = {
   KNOWLEDGE_INGEST: 'knowledge-ingest',
   /** Email the workspace owners about a new lead (M5-6). */
   LEAD_NOTIFY: 'lead-notify',
+  /** Look up the account and email a password-reset link (M7-24). */
+  PASSWORD_RESET: 'password-reset',
 } as const;
 
 /** Every queue the app uses; created at startup (pg-boss needs that). */

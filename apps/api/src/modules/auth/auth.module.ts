@@ -4,6 +4,8 @@ import { EmailModule } from '../email/email.module';
 import { WorkspacesModule } from '../workspaces/workspaces.module';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
+import { PasswordResetProcessor } from './password-reset.processor';
+import { PasswordResetQueue } from './password-reset.queue';
 import { SessionGuard } from './session.guard';
 import { SessionsService } from './sessions.service';
 
@@ -13,6 +15,8 @@ import { SessionsService } from './sessions.service';
   providers: [
     AuthService,
     SessionsService,
+    PasswordResetQueue,
+    PasswordResetProcessor,
     // Every route needs a session unless marked @Public().
     { provide: APP_GUARD, useClass: SessionGuard },
   ],
