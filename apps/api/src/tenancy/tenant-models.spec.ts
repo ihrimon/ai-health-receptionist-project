@@ -1,4 +1,4 @@
-import { readFileSync } from 'fs';
+import { readdirSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { TENANT_MODELS } from './tenant-prisma';
 
@@ -39,5 +39,56 @@ describe('TENANT_MODELS', () => {
       (model) => !modelsWithWorkspaceId.includes(model),
     );
     expect(extra).toEqual([]);
+  });
+});
+
+/**
+ * M7-1: the database enforces the same rule a second time with Row-Level
+ * Security. A table with a workspace_id (or the workspaces table itself)
+ * that no migration puts a policy on would be protected by the app's own
+ * scoping only, so this fails the build. The integration suite
+ * (rls.int-spec.ts) proves the policies work against a real database.
+ */
+describe('Row-Level Security policies', () => {
+  const schema = readFileSync(
+    join(__dirname, '../../prisma/schema.prisma'),
+    'utf8',
+  );
+  const tableOf = new Map<string, string>();
+  for (const match of schema.matchAll(/^model (\w+) \{([\s\S]*?)^\}/gm)) {
+    const mapped = /@@map\("(\w+)"\)/.exec(match[2]);
+    if (mapped) tableOf.set(match[1], mapped[1]);
+  }
+
+  const migrationsDir = join(__dirname, '../../prisma/migrations');
+  const migrationSql = readdirSync(migrationsDir, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) =>
+      readFileSync(join(migrationsDir, entry.name, 'migration.sql'), 'utf8'),
+    )
+    // Only migrations that deal with row security at all.
+    .filter((sql) => sql.includes('ROW LEVEL SECURITY'));
+
+  /** Is there a migration that enables, forces and writes a policy for `table`? */
+  const hasPolicy = (table: string) =>
+    migrationSql.some(
+      (sql) =>
+        sql.includes('ENABLE ROW LEVEL SECURITY') &&
+        sql.includes('FORCE ROW LEVEL SECURITY') &&
+        sql.includes('CREATE POLICY') &&
+        (sql.includes(`'${table}'`) || sql.includes(`"${table}"`)),
+    );
+
+  const models = [...TENANT_MODELS, 'Workspace', 'AuditLog'];
+
+  it('knows the table of every model it checks', () => {
+    expect(models.filter((model) => !tableOf.has(model))).toEqual([]);
+  });
+
+  it('has an ENABLE + FORCE ROW LEVEL SECURITY policy for every tenant table', () => {
+    const missing = models
+      .map((model) => tableOf.get(model) as string)
+      .filter((table) => !hasPolicy(table));
+    expect(missing).toEqual([]);
   });
 });

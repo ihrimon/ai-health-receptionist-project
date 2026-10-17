@@ -9,7 +9,8 @@ import request from 'supertest';
 import type { App } from 'supertest/types';
 import { AppModule } from '../../src/app.module';
 import { configureApp } from '../../src/app.setup';
-import { PrismaService } from '../../src/database/prisma.service';
+import { PrismaClient } from '../../src/generated/prisma/client';
+import { createAdminPrisma } from './admin-prisma';
 import { WorkspaceRole } from '../../src/generated/prisma/client';
 import { SESSION_COOKIE } from '../../src/modules/auth/auth.constants';
 import { SessionsService } from '../../src/modules/auth/sessions.service';
@@ -73,7 +74,7 @@ describe('Tenant isolation (M1-25)', () => {
 
   let app: NestExpressApplication;
   let http: App;
-  let prisma: PrismaService;
+  let prisma: PrismaClient;
   let db: TenantPrisma;
   // No real LLM calls: the preview test checks what would be sent, and
   // every key "verifies".
@@ -230,7 +231,9 @@ describe('Tenant isolation (M1-25)', () => {
     configureApp(app);
     await app.init();
     http = app.getHttpServer();
-    prisma = app.get(PrismaService);
+    // Owner connection: not subject to RLS, so tests can arrange and check
+    // data across workspaces (the app itself runs as brainstack_app).
+    prisma = createAdminPrisma();
     db = app.get<TenantPrisma>(TENANT_PRISMA);
 
     const workspaces = app.get(WorkspacesService);
@@ -280,6 +283,7 @@ describe('Tenant isolation (M1-25)', () => {
       });
     }
     await app?.close();
+    await prisma?.$disconnect();
   });
 
   describe('HTTP API', () => {

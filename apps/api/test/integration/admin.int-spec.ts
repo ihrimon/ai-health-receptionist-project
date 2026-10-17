@@ -10,7 +10,8 @@ import request from 'supertest';
 import type { App } from 'supertest/types';
 import { AppModule } from '../../src/app.module';
 import { configureApp } from '../../src/app.setup';
-import { PrismaService } from '../../src/database/prisma.service';
+import { PrismaClient } from '../../src/generated/prisma/client';
+import { createAdminPrisma } from './admin-prisma';
 import { SESSION_COOKIE } from '../../src/modules/auth/auth.constants';
 import { SessionsService } from '../../src/modules/auth/sessions.service';
 import { EmbeddingService } from '../../src/modules/knowledge/embedding.service';
@@ -44,7 +45,7 @@ describe('Platform admin (M7-0)', () => {
   const email = (who: string) => `adm-${run}-${who}@example.test`.toLowerCase();
   let app: NestExpressApplication;
   let http: App;
-  let prisma: PrismaService;
+  let prisma: PrismaClient;
   let dist: string;
   const ids = { a: '', b: '', botA: '', botB: '' };
   const publicIds = { a: '', b: '' };
@@ -103,7 +104,9 @@ describe('Platform admin (M7-0)', () => {
     configureApp(app);
     await app.init();
     http = app.getHttpServer();
-    prisma = app.get(PrismaService);
+    // Owner connection: not subject to RLS, so tests can arrange and check
+    // data across workspaces (the app itself runs as brainstack_app).
+    prisma = createAdminPrisma();
 
     const workspaces = app.get(WorkspacesService);
     const sessions = app.get(SessionsService);
@@ -178,6 +181,7 @@ describe('Platform admin (M7-0)', () => {
       });
     }
     await app?.close();
+    await prisma?.$disconnect();
     rmSync(dist, { recursive: true, force: true });
   });
 
