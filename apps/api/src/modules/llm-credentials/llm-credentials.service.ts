@@ -3,6 +3,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { SecretBox } from '../../common/secret-box';
 import { PrismaService } from '../../database/prisma.service';
 import {
   LlmCredential,
@@ -56,12 +57,25 @@ export class LlmCredentialsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly providerRegistry: ProviderRegistry,
+    private readonly secrets: SecretBox,
   ) {}
 
-  findAllOrdered(): Promise<LlmCredential[]> {
-    return this.prisma.llmCredential.findMany({
+  /**
+   * The row with its key in plain text, for use inside the server. Keys are
+   * stored encrypted (M7-2); a row saved before that is still plain text
+   * and is encrypted the next time it is edited.
+   */
+  private open(row: LlmCredential): LlmCredential {
+    return SecretBox.isEncrypted(row.apiKey)
+      ? { ...row, apiKey: this.secrets.decrypt(row.apiKey) }
+      : row;
+  }
+
+  async findAllOrdered(): Promise<LlmCredential[]> {
+    const rows = await this.prisma.llmCredential.findMany({
       orderBy: { sortOrder: 'asc' },
     });
+    return rows.map((row) => this.open(row));
   }
 
   /** Only the active ones, in rotation order — what LlmKeyManager actually uses. */
@@ -98,7 +112,11 @@ export class LlmCredentialsService {
     const sortOrder = (_max.sortOrder ?? -1) + 1;
     return this.prisma.$transaction(async (tx) => {
       const created = await tx.llmCredential.create({
-        data: { ...dto, sortOrder },
+        data: {
+          ...dto,
+          apiKey: this.secrets.encrypt(dto.apiKey),
+          sortOrder,
+        },
       });
       await tx.auditLog.create({
         data: this.audit(actor, 'llm_credential.create', {
@@ -107,7 +125,7 @@ export class LlmCredentialsService {
           model: created.model,
         }),
       });
-      return created;
+      return this.open(created);
     });
   }
 
@@ -127,9 +145,13 @@ export class LlmCredentialsService {
       );
     }
     return this.prisma.$transaction(async (tx) => {
+      // Always written encrypted: this also upgrades a row saved as plain text.
       const updated = await tx.llmCredential.update({
         where: { id },
-        data: dto,
+        data: {
+          ...dto,
+          apiKey: this.secrets.encrypt(dto.apiKey ?? credential.apiKey),
+        },
       });
       await tx.auditLog.create({
         data: this.audit(actor, 'llm_credential.update', {
@@ -141,7 +163,7 @@ export class LlmCredentialsService {
           ...(dto.isActive !== undefined && { isActive: dto.isActive }),
         }),
       });
-      return updated;
+      return this.open(updated);
     });
   }
 
@@ -234,6 +256,6 @@ export class LlmCredentialsService {
     if (!credential) {
       throw new NotFoundException(`LLM credential ${id} not found`);
     }
-    return credential;
+    return this.open(credential);
   }
 }
