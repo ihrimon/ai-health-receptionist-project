@@ -53,7 +53,7 @@ describe("widgetBaseFrom / bottomFrom", () => {
 describe("mountLoader (M4-9)", () => {
   it("adds a launcher and a hidden chat iframe for the chatbot, on the widget's origin", () => {
     const loader = mount();
-    expect(loader.frame.src).toBe(`${WIDGET}/w/cb_123`);
+    expect(loader.frame.src).toBe(`${WIDGET}/w/cb_123?host=${encodeURIComponent(location.origin)}`);
     expect(loader.frame.title).toBe("Chat");
     expect(loader.button.getAttribute("aria-label")).toBe("Open chat");
     expect(loader.button.getAttribute("aria-expanded")).toBe("false");
@@ -63,7 +63,7 @@ describe("mountLoader (M4-9)", () => {
 
   it("opens the chat on a configured widget URL", () => {
     const loader = mount({ "data-chatbot-id": "cb 1" }, "https://api.example");
-    expect(loader.frame.src).toBe("https://api.example/w/cb%201");
+    expect(loader.frame.src).toBe(`https://api.example/w/cb%201?host=${encodeURIComponent(location.origin)}`);
     expect(loader.widgetOrigin).toBe("https://api.example");
   });
 
