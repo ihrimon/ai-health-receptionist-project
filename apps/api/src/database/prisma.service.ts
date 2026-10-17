@@ -21,6 +21,7 @@ export class PrismaService
       adapter: new RlsPrismaPg(
         new PrismaPg({
           connectionString: config.get<string>('database.url'),
+          max: config.get<number>('database.poolMax') ?? 10,
           // Managed Postgres (Neon, Supabase…) needs TLS with a cert Node's
           // default trust store usually can't verify — see POSTGRES_SSL.
           ssl: config.get<boolean>('database.ssl')

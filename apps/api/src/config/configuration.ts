@@ -1,7 +1,12 @@
 import { usageCostConfigFromEnv } from '../modules/admin/usage-cost';
 import { join } from 'path';
+import { loadTestConfigFromEnv } from './load-test';
 
 export default () => ({
+  // Fake LLM + scaled rate limits for the local load test (M7-5); throws at
+  // start-up if switched on in production.
+  loadTest: loadTestConfigFromEnv(process.env),
+
   nodeEnv: process.env.NODE_ENV ?? 'development',
   apiPort: parseInt(process.env.API_PORT ?? '3001', 10),
   dashboardUrl: process.env.DASHBOARD_URL ?? 'http://localhost:3000',
@@ -38,6 +43,12 @@ export default () => ({
     // recognizes — set POSTGRES_SSL=true for those; leave unset for a
     // local/Docker Postgres with no TLS at all.
     ssl: process.env.POSTGRES_SSL === 'true',
+    // Most connections the API's pool opens (node-postgres defaults to 10).
+    // Every tenant query is its own short transaction, so under load the
+    // pool size caps how many requests can be in the database at once
+    // (M7-5). Keep it below Postgres max_connections divided by the number
+    // of API instances.
+    poolMax: parseInt(process.env.DATABASE_POOL_MAX ?? '10', 10),
   },
 
   // Background jobs run on pg-boss in the app's own Postgres (no Redis in
