@@ -1,6 +1,8 @@
 export const QUEUE_NAMES = {
   /** Extract, chunk and embed a knowledge source (M2-11). */
   KNOWLEDGE_INGEST: 'knowledge-ingest',
+  /** Email the workspace owners about a new lead (M5-6). */
+  LEAD_NOTIFY: 'lead-notify',
 } as const;
 
 /** Every queue the app uses; created at startup (pg-boss needs that). */
