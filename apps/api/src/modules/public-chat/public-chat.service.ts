@@ -12,8 +12,11 @@ import {
 import {
   Injectable,
   NotFoundException,
+  Optional,
   UnauthorizedException,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import type { LoadTestConfig } from '../../config/load-test';
 import type { EmitChatEvent } from '../../common/sse';
 import { PrismaService } from '../../database/prisma.service';
 import {
@@ -75,7 +78,19 @@ export class PublicChatService {
     private readonly preview: PreviewChatService,
     private readonly conversations: ConversationsService,
     private readonly tokens: ConversationTokenService,
-  ) {}
+    @Optional() config?: ConfigService,
+  ) {
+    // Load-test mode only (M7-5; the config refuses it in production): a
+    // local run from one IP would otherwise stop at the per-IP limits.
+    const loadTest = config?.get<LoadTestConfig>('loadTest');
+    this.limitFactor = loadTest?.enabled ? loadTest.rateLimitFactor : 1;
+  }
+
+  private readonly limitFactor: number;
+
+  private scaled(rule: { limit: number; windowSeconds: number }) {
+    return { ...rule, limit: Math.ceil(rule.limit * this.limitFactor) };
+  }
 
   async config(publicId: string): Promise<PublicChatConfig> {
     const { config } = await this.liveBot({ publicId });
@@ -105,7 +120,7 @@ export class PublicChatService {
     const bot = await this.liveBot({ publicId });
     await this.rateLimit.consume({
       key: `public:new:${ip}`,
-      ...PUBLIC_CHAT_LIMITS.newConversationHour,
+      ...this.scaled(PUBLIC_CHAT_LIMITS.newConversationHour),
     });
 
     const conversationId = await this.inBotWorkspace(bot, () =>
@@ -138,11 +153,20 @@ export class PublicChatService {
     await this.rateLimit.consume(
       {
         key: `public:conv:${conversationId}`,
-        ...PUBLIC_CHAT_LIMITS.perConversationMinute,
+        ...this.scaled(PUBLIC_CHAT_LIMITS.perConversationMinute),
       },
-      { key: `public:ip:${ip}`, ...PUBLIC_CHAT_LIMITS.perIpMinute },
-      { key: `public:ip-hour:${ip}`, ...PUBLIC_CHAT_LIMITS.perIpHour },
-      { key: `public:bot:${bot.id}`, ...PUBLIC_CHAT_LIMITS.perBotMinute },
+      {
+        key: `public:ip:${ip}`,
+        ...this.scaled(PUBLIC_CHAT_LIMITS.perIpMinute),
+      },
+      {
+        key: `public:ip-hour:${ip}`,
+        ...this.scaled(PUBLIC_CHAT_LIMITS.perIpHour),
+      },
+      {
+        key: `public:bot:${bot.id}`,
+        ...this.scaled(PUBLIC_CHAT_LIMITS.perBotMinute),
+      },
     );
 
     await this.inBotWorkspace(bot, async () => {
@@ -217,7 +241,7 @@ export class PublicChatService {
     const bot = await this.liveBot({ id: claims.chatbotId });
     await this.rateLimit.consume({
       key: `public:rating:${conversationId}`,
-      ...PUBLIC_CHAT_LIMITS.ratingPerConversationMinute,
+      ...this.scaled(PUBLIC_CHAT_LIMITS.ratingPerConversationMinute),
     });
     const rated = await this.inBotWorkspace(bot, () =>
       this.conversations.rate(conversationId, bot.id, request.rating),

@@ -333,3 +333,53 @@ describe('PublicChatService', () => {
     });
   });
 });
+
+describe('PublicChatService rate limits in load-test mode (M7-5)', () => {
+  it('scales the limits only when load-test mode is on', async () => {
+    const consume = jest.fn().mockResolvedValue(undefined);
+    const make = (loadTest: unknown) =>
+      new PublicChatService(
+        {
+          chatbot: {
+            findUnique: jest.fn().mockResolvedValue({
+              id: 'bot-1',
+              workspaceId: 'ws-1',
+              status: 'ENABLED',
+              workspace: { status: 'ACTIVE' },
+              publishedVersion: {
+                id: 'ver-1',
+                config: defaultChatbotConfig('Rina Shop'),
+              },
+            }),
+          },
+        } as never,
+        { consume } as never,
+        {} as never,
+        { start: jest.fn().mockResolvedValue('c1') } as never,
+        { sign: jest.fn().mockReturnValue('t') } as never,
+        { get: () => loadTest } as never,
+      );
+    const request = { visitorId: 'v1' } as never;
+
+    await make({ enabled: true, rateLimitFactor: 50 }).startConversation(
+      'pub',
+      '1.1.1.1',
+      request,
+    );
+    expect(consume).toHaveBeenLastCalledWith({
+      key: 'public:new:1.1.1.1',
+      limit: PUBLIC_CHAT_LIMITS.newConversationHour.limit * 50,
+      windowSeconds: PUBLIC_CHAT_LIMITS.newConversationHour.windowSeconds,
+    });
+
+    await make({ enabled: false, rateLimitFactor: 50 }).startConversation(
+      'pub',
+      '1.1.1.1',
+      request,
+    );
+    expect(consume).toHaveBeenLastCalledWith({
+      key: 'public:new:1.1.1.1',
+      ...PUBLIC_CHAT_LIMITS.newConversationHour,
+    });
+  });
+});

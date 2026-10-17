@@ -16,6 +16,9 @@ apps/api/src/generated/
 .env.local
 .env.*.local
 
+# Local load-test output (M7-5)
+apps/api/test/load/.out/
+
 # Logs
 *.log
 npm-debug.log*
