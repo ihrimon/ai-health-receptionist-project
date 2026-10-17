@@ -112,22 +112,32 @@ export class AuthController {
   @Public()
   @Post('forgot-password')
   @HttpCode(HttpStatus.NO_CONTENT)
-  forgotPassword(@Body() dto: ForgotPasswordDto): Promise<void> {
-    return this.authService.forgotPassword(dto.email);
+  forgotPassword(
+    @Body() dto: ForgotPasswordDto,
+    @Req() req: Request,
+  ): Promise<void> {
+    return this.authService.forgotPassword(dto.email, requestMeta(req));
   }
 
   @Public()
   @Post('reset-password')
   @HttpCode(HttpStatus.NO_CONTENT)
-  resetPassword(@Body() dto: ResetPasswordDto): Promise<void> {
-    return this.authService.resetPassword(dto.token, dto.newPassword);
+  resetPassword(
+    @Body() dto: ResetPasswordDto,
+    @Req() req: Request,
+  ): Promise<void> {
+    return this.authService.resetPassword(
+      dto.token,
+      dto.newPassword,
+      requestMeta(req),
+    );
   }
 
   @Public()
   @Post('verify-email')
   @HttpCode(HttpStatus.NO_CONTENT)
-  verifyEmail(@Body() dto: VerifyEmailDto): Promise<void> {
-    return this.authService.verifyEmail(dto.token);
+  verifyEmail(@Body() dto: VerifyEmailDto, @Req() req: Request): Promise<void> {
+    return this.authService.verifyEmail(dto.token, requestMeta(req));
   }
 
   @Post('resend-verification')

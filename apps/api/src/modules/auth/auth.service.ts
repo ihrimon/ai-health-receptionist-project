@@ -199,12 +199,21 @@ export class AuthService {
    * M1-19: always succeeds from the caller's point of view, so it can't be
    * used to find out which emails have accounts.
    */
-  async forgotPassword(email: string): Promise<void> {
-    await this.rateLimit.consume({
-      key: `forgot-password:email:${email}`,
-      limit: 3,
-      windowSeconds: HOUR,
-    });
+  async forgotPassword(email: string, meta: RequestMeta): Promise<void> {
+    // Per address (so one inbox isn't flooded) and per caller (so this
+    // can't be used to mail many strangers).
+    await this.rateLimit.consume(
+      {
+        key: `forgot-password:email:${email}`,
+        limit: 3,
+        windowSeconds: HOUR,
+      },
+      {
+        key: `forgot-password:ip:${meta.ipAddress}`,
+        limit: 10,
+        windowSeconds: HOUR,
+      },
+    );
 
     const user = await this.prisma.user.findUnique({ where: { email } });
     if (!user) return;
@@ -227,7 +236,18 @@ export class AuthService {
    * M1-19: sets the new password and logs out every session of that user
    * (D-2 §2.1). The link arrived by email, so it also proves the address.
    */
-  async resetPassword(token: string, newPassword: string): Promise<void> {
+  async resetPassword(
+    token: string,
+    newPassword: string,
+    meta: RequestMeta,
+  ): Promise<void> {
+    // Hashing a password is deliberately slow; without a limit an anonymous
+    // caller could keep the CPU busy with bad tokens (M7-2).
+    await this.rateLimit.consume({
+      key: `reset-password:ip:${meta.ipAddress}`,
+      limit: 10,
+      windowSeconds: HOUR,
+    });
     const passwordHash = await hashPassword(newPassword);
     await this.prisma.$transaction(async (tx) => {
       const userId = await this.consumeEmailToken(
@@ -248,7 +268,12 @@ export class AuthService {
   }
 
   /** M1-20 */
-  async verifyEmail(token: string): Promise<void> {
+  async verifyEmail(token: string, meta: RequestMeta): Promise<void> {
+    await this.rateLimit.consume({
+      key: `verify-email:ip:${meta.ipAddress}`,
+      limit: 30,
+      windowSeconds: HOUR,
+    });
     await this.prisma.$transaction(async (tx) => {
       const userId = await this.consumeEmailToken(
         tx,
