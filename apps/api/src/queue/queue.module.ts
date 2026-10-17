@@ -37,7 +37,12 @@ class BossShutdown implements OnApplicationShutdown {
         // with a dynamic import (as @xenova/transformers does).
         const { PgBoss } = await import('pg-boss');
         const boss = new PgBoss({
-          connectionString: config.getOrThrow<string>('database.url'),
+          // pg-boss creates and upgrades its own schema, which the
+          // restricted app role (M7-1) may not do, so it connects with the
+          // admin URL when there is one. It never touches tenant tables.
+          connectionString:
+            config.get<string>('database.adminUrl') ||
+            config.getOrThrow<string>('database.url'),
           ssl: config.get<boolean>('database.ssl')
             ? { rejectUnauthorized: false }
             : undefined,
