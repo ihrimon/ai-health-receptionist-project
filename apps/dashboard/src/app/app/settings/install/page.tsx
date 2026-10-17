@@ -1,6 +1,6 @@
 "use client";
 
-import { Check, CircleAlert, CircleCheck, Clock, Copy, RefreshCw } from "lucide-react";
+import { Check, CircleAlert, CircleCheck, Clock, RefreshCw } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { AllowedDomainsEditor } from "@/components/allowed-domains-editor";
+import { InstallGuides, SnippetBlock } from "@/components/install-guides";
 import { useChatbot } from "@/lib/chatbot";
 import { installStatus } from "@/lib/install-status";
 import { useSession } from "@/lib/session";
@@ -22,13 +23,13 @@ import { useAiKeyReady } from "@/lib/use-ai-key-ready";
 /**
  * Settings → Install (M4-13, D-3 §3.5): the sites allowed to show the chat,
  * the one-line snippet that puts it there, and what must be true for it to
- * answer, and whether the chat has shown up on the site yet (M4-14).
+ * answer, whether the chat has shown up on the site yet (M4-14), and
+ * step-by-step guides for pasting the snippet on common platforms (M4-15).
  */
 export default function InstallPage() {
   const { me } = useSession();
   const { chatbot, refresh } = useChatbot();
   const aiKeyReady = useAiKeyReady();
-  const [copied, setCopied] = useState(false);
   const [checking, setChecking] = useState(false);
 
   // The install is recorded by the API when the chat first loads on the
@@ -88,16 +89,6 @@ export default function InstallPage() {
     }
   }
 
-  async function copy() {
-    try {
-      await navigator.clipboard.writeText(chatbot!.embedSnippet);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch {
-      toastError("Couldn't copy. Select the code and copy it yourself.");
-    }
-  }
-
   return (
     <div className="grid gap-4">
       <Card>
@@ -142,26 +133,32 @@ export default function InstallPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle>2. Add the chat to your website</CardTitle>
+          <CardTitle>2. Copy this code</CardTitle>
           <CardDescription>
-            Paste this line just before <code>&lt;/body&gt;</code> on every
-            page where the chat should appear. A chat button shows up in the
-            corner.
+            It goes just before <code>&lt;/body&gt;</code> on every page where
+            the chat should appear. A chat button shows up in the corner.
           </CardDescription>
         </CardHeader>
         <CardContent className="grid gap-3">
-          <pre className="overflow-x-auto rounded-lg bg-muted p-3 text-xs whitespace-pre-wrap break-all">
-            <code>{chatbot.embedSnippet}</code>
-          </pre>
-          <Button variant="outline" className="w-fit" onClick={() => void copy()}>
-            {copied ? <Check /> : <Copy />}
-            {copied ? "Copied" : "Copy code"}
-          </Button>
+          <SnippetBlock snippet={chatbot.embedSnippet} />
           <p className="text-xs text-muted-foreground">
             Does the chat button cover something at the bottom of your site?
             Add <code>data-bottom=&quot;96&quot;</code> to the tag to lift it
             96 pixels from the bottom.
           </p>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>3. Paste it into your site</CardTitle>
+          <CardDescription>
+            Pick where your website is built and follow the steps. The code in
+            each guide is already filled in for your chatbot.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <InstallGuides snippet={chatbot.embedSnippet} />
         </CardContent>
       </Card>
 
