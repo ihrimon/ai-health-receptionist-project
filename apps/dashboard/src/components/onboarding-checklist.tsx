@@ -72,6 +72,7 @@ export function OnboardingChecklist() {
     productCount: counts.products,
     published: chatbot.publishedVersion !== null,
     aiKeyReady,
+    installed: chatbot.installVerifiedAt !== null,
   });
   const progress = onboardingProgress(steps);
   const reasons = chatbot.publishProblems.map((p) => p.message);

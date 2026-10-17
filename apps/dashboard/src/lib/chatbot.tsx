@@ -20,6 +20,9 @@ export interface ChatbotView extends PublishInfo {
   status: "ENABLED" | "DISABLED";
   draftConfig: ChatbotConfig;
   allowedDomains: string[];
+  /** First widget load on an allowed domain (M4-14); null until then. */
+  installVerifiedAt: string | null;
+  installVerifiedHost: string | null;
   embedSnippet: string;
 }
 

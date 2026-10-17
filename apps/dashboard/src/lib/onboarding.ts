@@ -33,6 +33,8 @@ export interface OnboardingInput {
   published: boolean;
   /** A key is switched on; null when the viewer can't see keys (not the owner). */
   aiKeyReady: boolean | null;
+  /** The widget has loaded on one of the allowed domains (M4-14). */
+  installed: boolean;
 }
 
 export function onboardingSteps(input: OnboardingInput): OnboardingStep[] {
@@ -80,9 +82,9 @@ export function onboardingSteps(input: OnboardingInput): OnboardingStep[] {
     {
       id: "install",
       title: "Install on your website",
-      // Nothing tells us yet that the snippet is on a site (M4-14), so it
-      // can't tick itself; optional so it doesn't hold the checklist open.
-      done: false,
+      // Ticks itself once the widget loads on an allowed domain (M4-14);
+      // optional so it doesn't hold the checklist open.
+      done: input.installed,
       available: true,
       optional: true,
       href: "/app/settings/install",
