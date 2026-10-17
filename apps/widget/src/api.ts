@@ -57,8 +57,8 @@ function post(body: unknown, headers: Record<string, string> = {}): RequestInit 
 const bearer = (chat: Conversation) => ({ Authorization: `Bearer ${chat.conversationToken}` });
 
 const botPath = (publicId: string) => `/public/chatbots/${encodeURIComponent(publicId)}`;
-const conversationPath = (chat: Conversation) =>
-  `/public/conversations/${encodeURIComponent(chat.conversationId)}/messages`;
+const conversationPath = (chat: Conversation, what: "messages" | "rating" = "messages") =>
+  `/public/conversations/${encodeURIComponent(chat.conversationId)}/${what}`;
 
 export const widgetApi = {
   /** The published look and texts. A 404 means the chat is off or unknown. */
@@ -77,6 +77,11 @@ export const widgetApi = {
       post({ visitorId, ...(originUrl ? { originUrl } : {}) }),
     );
     return res.json() as Promise<PublicConversation>;
+  },
+
+  /** The visitor's 1–5 stars for this conversation (FR-4.6, M5-7). */
+  async rate(chat: Conversation, rating: number): Promise<void> {
+    await call(conversationPath(chat, "rating"), post({ rating }, bearer(chat)));
   },
 
   /** The conversation so far, for a reloaded page. */

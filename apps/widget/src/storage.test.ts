@@ -15,6 +15,13 @@ describe("widget storage", () => {
     expect(loadStored("bot-b")).toEqual({});
   });
 
+  it("remembers which conversation was rated (M5-7)", () => {
+    saveStored("bot-a", { visitorId: "v1", conversation, rated: "c1" });
+    expect(loadStored("bot-a").rated).toBe("c1");
+    localStorage.setItem("brainstack:chat:bot-a", JSON.stringify({ visitorId: "v1", rated: 7 }));
+    expect(loadStored("bot-a")).toEqual({ visitorId: "v1" });
+  });
+
   it("ignores broken or half-written data", () => {
     localStorage.setItem("brainstack:chat:bot-a", "{not json");
     expect(loadStored("bot-a")).toEqual({});

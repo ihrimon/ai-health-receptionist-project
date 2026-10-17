@@ -6,8 +6,8 @@ const STARS = [1, 2, 3, 4, 5] as const;
 
 /**
  * "How was this conversation?" with 1–5 stars (FR-4.6). It only reports
- * the choice; the caller sends it (`POST /v1/public/conversations/:id/rating`
- * comes in M5). After a choice it says thanks, and the choice is final.
+ * the choice; the caller sends it (`POST /v1/public/conversations/:id/rating`,
+ * M5-7). After a choice it says thanks, and the choice is final.
  */
 export function RatingPrompt({
   onRate,

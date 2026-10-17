@@ -14,6 +14,9 @@ const newId = () => `m${++lastId}`;
  * localStorage, so a reload or the next page of the site shows the same
  * chat; an expired or unknown one is dropped and the next message starts
  * a new conversation.
+ *
+ * It also says when the visitor can be asked for a rating (M5-7): once the
+ * conversation has a complete answer and hasn't been rated yet.
  */
 export function useChat(publicId: string) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -23,22 +26,29 @@ export function useChat(publicId: string) {
   const [busy, setBusy] = useState(false);
   const busyRef = useRef(false);
   const conversationRef = useRef<Conversation | null>(null);
+  /** The conversation has at least one complete answer from the bot. */
+  const [answered, setAnswered] = useState(false);
+  const [rated, setRated] = useState(false);
 
   const forget = () => {
     conversationRef.current = null;
+    setAnswered(false);
+    setRated(false);
     const { visitorId } = loadStored(publicId);
     saveStored(publicId, { visitorId });
   };
 
   // A reloaded page picks the conversation up again.
   useEffect(() => {
-    const { conversation } = loadStored(publicId);
+    const { conversation, rated: ratedId } = loadStored(publicId);
     if (!conversation) return;
     conversationRef.current = conversation;
+    setRated(ratedId === conversation.conversationId);
     let cancelled = false;
     widgetApi.history(conversation).then(
       (rows) => {
         if (cancelled) return;
+        if (rows.some((r) => r.role === "assistant")) setAnswered(true);
         setMessages((current) => [
           ...rows.map((r) => ({ id: newId(), role: r.role, text: r.text })),
           ...current,
@@ -107,6 +117,7 @@ export function useChat(publicId: string) {
       // Complete: the end is no longer cut mid-mark, and the handoff shows.
       streaming = false;
       showAnswer();
+      setAnswered(true);
     } catch (err) {
       if (isGone(err)) forget();
       // A broken answer is not stored, so none of it stays on screen.
@@ -121,7 +132,19 @@ export function useChat(publicId: string) {
     }
   }
 
-  return { messages, waiting, busy, send };
+  /**
+   * Sends the visitor's stars and remembers that this conversation is
+   * rated. A failed call is let go: the visitor already saw the thanks.
+   */
+  async function rate(stars: number) {
+    const chat = conversationRef.current;
+    if (!chat) return;
+    setRated(true);
+    saveStored(publicId, { ...loadStored(publicId), rated: chat.conversationId });
+    await widgetApi.rate(chat, stars).catch(() => undefined);
+  }
+
+  return { messages, waiting, busy, send, answered, rated, rate };
 }
 
 /** The conversation no longer exists for this visitor. */
