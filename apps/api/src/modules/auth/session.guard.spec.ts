@@ -1,8 +1,15 @@
-import { ExecutionContext, UnauthorizedException } from '@nestjs/common';
+import {
+  ExecutionContext,
+  NotFoundException,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { SESSION_COOKIE } from './auth.constants';
 import { AuthenticatedRequest } from './auth-context';
-import { PlatformAdminGuard } from './platform-admin.guard';
+import {
+  HiddenPlatformAdminGuard,
+  PlatformAdminGuard,
+} from './platform-admin.guard';
 import { SessionGuard } from './session.guard';
 
 function httpContext(req: Partial<AuthenticatedRequest>): ExecutionContext {
@@ -73,5 +80,23 @@ describe('PlatformAdminGuard', () => {
     expect(() => guard.canActivate(withUser(false))).toThrow(
       'Platform admin access required',
     );
+  });
+});
+
+describe('HiddenPlatformAdminGuard (/v1/admin/*)', () => {
+  const guard = new HiddenPlatformAdminGuard();
+  const withUser = (isPlatformAdmin: boolean) =>
+    httpContext({ auth: { user: { isPlatformAdmin } } as never });
+
+  it('allows platform admins', () => {
+    expect(guard.canActivate(withUser(true))).toBe(true);
+  });
+
+  it('answers 404, not 403, to everyone else', () => {
+    expect(() => guard.canActivate(withUser(false))).toThrow(NotFoundException);
+  });
+
+  it('answers 404 when there is no session user at all', () => {
+    expect(() => guard.canActivate(httpContext({}))).toThrow(NotFoundException);
   });
 });

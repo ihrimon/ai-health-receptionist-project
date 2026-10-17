@@ -3,6 +3,7 @@ import {
   ExecutionContext,
   ForbiddenException,
   Injectable,
+  NotFoundException,
   UseGuards,
 } from '@nestjs/common';
 import { AuthenticatedRequest } from './auth-context';
@@ -25,3 +26,23 @@ export class PlatformAdminGuard implements CanActivate {
 }
 
 export const PlatformAdminOnly = () => UseGuards(PlatformAdminGuard);
+
+/**
+ * Guard for the `/v1/admin/*` namespace (M7-0): a non-admin gets the same
+ * 404 as for a route that doesn't exist, so the area can't be discovered.
+ * The flag is read from the user row the SessionGuard just loaded, and no
+ * API path can set it (only `pnpm --filter api user:platform-admin`).
+ */
+@Injectable()
+export class HiddenPlatformAdminGuard implements CanActivate {
+  canActivate(context: ExecutionContext): boolean {
+    const req = context.switchToHttp().getRequest<AuthenticatedRequest>();
+    if (!req.auth?.user.isPlatformAdmin) {
+      throw new NotFoundException();
+    }
+    return true;
+  }
+}
+
+export const HiddenPlatformAdminOnly = () =>
+  UseGuards(HiddenPlatformAdminGuard);
