@@ -1908,6 +1908,161 @@ describe('Tenant isolation (M1-25)', () => {
     });
   });
 
+  describe('Conversation inbox (M5-1, M5-2)', () => {
+    // A word only these seeded chats contain, so other tests' chats don't matter.
+    const word = `kumquat${run}`;
+    const convo = { a: '', aOld: '', aPreview: '', aEmpty: '', b: '' };
+
+    /** A stored conversation with one visitor turn and one answer. */
+    async function seed(
+      workspaceId: string,
+      chatbotId: string,
+      opts: {
+        text?: string;
+        startedAt?: Date;
+        rating?: number;
+        isPreview?: boolean;
+        empty?: boolean;
+      } = {},
+    ): Promise<string> {
+      const at = opts.startedAt ?? new Date();
+      const created = await inWorkspace(workspaceId, () =>
+        db.conversation.create({
+          data: {
+            workspaceId,
+            chatbotId,
+            visitorId: `v-${run}`,
+            isPreview: opts.isPreview ?? false,
+            originUrl: 'https://shop.example/products/wallet',
+            rating: opts.rating ?? null,
+            messageCount: opts.empty ? 0 : 2,
+            startedAt: at,
+            lastMessageAt: at,
+            messages: opts.empty
+              ? undefined
+              : {
+                  create: [
+                    {
+                      workspaceId,
+                      role: 'USER',
+                      content: opts.text ?? `Do you sell ${word}?`,
+                      createdAt: at,
+                    },
+                    {
+                      workspaceId,
+                      role: 'ASSISTANT',
+                      content: 'Yes, fresh every week.',
+                      sources: [
+                        { title: 'Fruit FAQ', page: null, similarity: 0.8 },
+                      ],
+                      answeredBy: 'llm',
+                      createdAt: new Date(at.getTime() + 1),
+                    },
+                  ],
+                },
+          },
+          select: { id: true },
+        }),
+      );
+      return created.id;
+    }
+
+    type Page = { items: { id: string }[]; nextCursor: string | null };
+    const list = async (cookie: string, query = '') =>
+      (await as(cookie).get(`/v1/conversations?q=${word}${query}`).expect(200))
+        .body as Page;
+
+    beforeAll(async () => {
+      convo.a = await seed(ids.a, ids.botA, { rating: 4 });
+      convo.aOld = await seed(ids.a, ids.botA, {
+        startedAt: new Date('2026-01-05T10:00:00Z'),
+      });
+      convo.aPreview = await seed(ids.a, ids.botA, { isPreview: true });
+      convo.aEmpty = await seed(ids.a, ids.botA, { empty: true });
+      convo.b = await seed(ids.b, ids.botB, { rating: 4 });
+    });
+
+    it("lists only the caller's live conversations, newest first", async () => {
+      const a = await list(cookies.ownerA);
+      expect(a.items.map((c) => c.id)).toEqual([convo.a, convo.aOld]);
+      const b = await list(cookies.ownerB);
+      expect(b.items.map((c) => c.id)).toEqual([convo.b]);
+
+      // Without a search, A's whole inbox still never has B's chat.
+      const all = (
+        await as(cookies.ownerA).get('/v1/conversations?limit=100').expect(200)
+      ).body as Page;
+      const allIds = all.items.map((c) => c.id);
+      expect(allIds).toContain(convo.a);
+      expect(allIds).not.toContain(convo.b);
+      expect(allIds).not.toContain(convo.aPreview);
+      expect(allIds).not.toContain(convo.aEmpty);
+    });
+
+    it('filters by date, rating and chatbot, and pages with a cursor', async () => {
+      const ids1 = async (query: string) =>
+        (await list(cookies.ownerA, query)).items.map((c) => c.id);
+      expect(await ids1('&from=2026-01-01&to=2026-01-05')).toEqual([
+        convo.aOld,
+      ]);
+      expect(await ids1('&rating=4')).toEqual([convo.a]);
+      expect(await ids1('&rating=none')).toEqual([convo.aOld]);
+      expect(await ids1(`&chatbotId=${ids.botA}`)).toHaveLength(2);
+      // B's chatbot ID finds nothing for A, not B's conversations.
+      expect(await ids1(`&chatbotId=${ids.botB}`)).toEqual([]);
+
+      const first = await list(cookies.ownerA, '&limit=1');
+      expect(first.items.map((c) => c.id)).toEqual([convo.a]);
+      const second = await list(
+        cookies.ownerA,
+        `&limit=1&cursor=${first.nextCursor}`,
+      );
+      expect(second).toEqual({
+        items: [expect.objectContaining({ id: convo.aOld })],
+        nextCursor: null,
+      });
+
+      await as(cookies.ownerA).get('/v1/conversations?rating=9').expect(400);
+      await as(cookies.ownerA).get('/v1/conversations?cursor=bad').expect(400);
+    });
+
+    it('opens the transcript with sources and origin URL; a viewer can too', async () => {
+      const res = await as(cookies.viewerA)
+        .get(`/v1/conversations/${convo.a}`)
+        .expect(200);
+      expect(res.body).toMatchObject({
+        id: convo.a,
+        originUrl: 'https://shop.example/products/wallet',
+        rating: 4,
+        messages: [
+          { role: 'user', text: `Do you sell ${word}?`, sources: [] },
+          {
+            role: 'assistant',
+            answeredBy: 'llm',
+            sources: [{ title: 'Fruit FAQ', page: null, similarity: 0.8 }],
+          },
+        ],
+      });
+    });
+
+    it("another workspace's conversation is a 404, and so is a preview one", async () => {
+      await as(cookies.ownerB).get(`/v1/conversations/${convo.a}`).expect(404);
+      await as(cookies.ownerA).get(`/v1/conversations/${convo.b}`).expect(404);
+      await as(cookies.ownerA)
+        .get(`/v1/conversations/${convo.aPreview}`)
+        .expect(404);
+      await as(cookies.ownerA)
+        .get(`/v1/conversations/${randomUUID()}`)
+        .expect(404);
+      await as(cookies.ownerA).get('/v1/conversations/not-a-uuid').expect(400);
+    });
+
+    it('needs a session (401)', async () => {
+      await request(http).get('/v1/conversations').expect(401);
+      await request(http).get(`/v1/conversations/${convo.a}`).expect(401);
+    });
+  });
+
   describe('tenant Prisma client', () => {
     it('lists only the current workspace', async () => {
       const bots = await inWorkspace(ids.a, () => db.chatbot.findMany());
