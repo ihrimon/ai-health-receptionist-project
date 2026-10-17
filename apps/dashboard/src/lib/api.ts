@@ -119,7 +119,8 @@ export type LlmProvider =
 export interface LlmCredential {
   id: string;
   provider: LlmProvider;
-  apiKey: string;
+  /** Last 4 characters only (or dots); the server never sends the full key. */
+  maskedKey: string;
   model: string;
   sortOrder: number;
   isActive: boolean;
