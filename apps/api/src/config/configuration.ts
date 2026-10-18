@@ -1,8 +1,15 @@
 import { usageCostConfigFromEnv } from '../modules/admin/usage-cost';
 import { join } from 'path';
 import { loadTestConfigFromEnv } from './load-test';
+import { assertProductionSecrets } from './required-secrets';
 
-export default () => ({
+// Stops the API from starting in production without its secrets (M7-27).
+export default () => {
+  assertProductionSecrets(process.env);
+  return buildConfiguration();
+};
+
+const buildConfiguration = () => ({
   // Fake LLM + scaled rate limits for the local load test (M7-5); throws at
   // start-up if switched on in production.
   loadTest: loadTestConfigFromEnv(process.env),

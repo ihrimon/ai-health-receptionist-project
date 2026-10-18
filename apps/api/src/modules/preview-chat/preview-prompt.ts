@@ -90,6 +90,17 @@ export function neutralize(text: string): string {
   );
 }
 
+/**
+ * Wraps text that came from outside the platform (product names and
+ * descriptions in a tool result, M7-28) in the knowledge tags, so the model
+ * treats it as data like retrieved knowledge.
+ */
+export function wrapUntrusted(text: string): string {
+  return `${KNOWLEDGE_OPEN}
+${neutralize(text)}
+${KNOWLEDGE_CLOSE}`;
+}
+
 function companySettings(config: ChatbotConfig): string {
   const { identity, business, behavior } = config;
   const lines: string[] = [
