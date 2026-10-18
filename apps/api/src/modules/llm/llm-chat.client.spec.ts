@@ -5,7 +5,7 @@ import {
   LlmKeyManager,
   NoLlmCredentialsConfiguredError,
 } from './llm-key-manager';
-import { LlmChatClient } from './llm-chat.client';
+import { LlmChatClient, describeProviderError } from './llm-chat.client';
 import { ProviderRegistry } from './providers/provider-registry';
 
 function assistantMessage(content: string) {
@@ -364,5 +364,23 @@ describe('LlmChatClient', () => {
         NoLlmCredentialsConfiguredError,
       );
     });
+  });
+});
+
+describe('describeProviderError', () => {
+  it('keeps only the error kind and status, never the message', () => {
+    const err = Object.assign(new Error('Incorrect API key: sk-secret-123'), {
+      name: 'AuthenticationError',
+      status: 401,
+    });
+    const text = describeProviderError(err);
+    expect(text).toBe('AuthenticationError (status 401)');
+    expect(text).not.toContain('sk-secret');
+  });
+
+  it('handles errors without a status and non-error values', () => {
+    expect(describeProviderError(new TypeError('boom sk-x'))).toBe('TypeError');
+    expect(describeProviderError('sk-leaky')).toBe('Error');
+    expect(describeProviderError(null)).toBe('Error');
   });
 });

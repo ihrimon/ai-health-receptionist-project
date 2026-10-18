@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type { PgBoss } from 'pg-boss';
+import { runsWorkers } from '../../queue/process-role';
 import { PG_BOSS, QUEUE_NAMES } from '../../queue/queue.constants';
 import { AuthService } from './auth.service';
 import {
@@ -32,6 +33,8 @@ export class PasswordResetProcessor implements OnApplicationBootstrap {
   ) {}
 
   async onApplicationBootstrap(): Promise<void> {
+    // API-only process (PROCESS_ROLE=api, M7-7): jobs are queued but run elsewhere.
+    if (!runsWorkers(this.config)) return;
     await this.boss.work<PasswordResetJobData>(
       QUEUE_NAMES.PASSWORD_RESET,
       {

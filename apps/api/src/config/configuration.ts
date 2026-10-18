@@ -1,8 +1,16 @@
+import { parseProcessRole } from '../queue/process-role';
 import { usageCostConfigFromEnv } from '../modules/admin/usage-cost';
 import { join } from 'path';
 import { loadTestConfigFromEnv } from './load-test';
+import { assertProductionSecrets } from './required-secrets';
 
-export default () => ({
+// Stops the API from starting in production without its secrets (M7-27).
+export default () => {
+  assertProductionSecrets(process.env);
+  return buildConfiguration();
+};
+
+const buildConfiguration = () => ({
   // Fake LLM + scaled rate limits for the local load test (M7-5); throws at
   // start-up if switched on in production.
   loadTest: loadTestConfigFromEnv(process.env),
@@ -54,6 +62,8 @@ export default () => ({
   // Background jobs run on pg-boss in the app's own Postgres (no Redis in
   // the MVP). Workers check for new jobs this often when idle.
   queue: {
+    // all (default) | api (no workers) | worker (workers only, see worker.ts). M7-7.
+    runWorkers: parseProcessRole(process.env.PROCESS_ROLE) !== 'api',
     pollingIntervalSeconds: parseFloat(
       process.env.QUEUE_POLLING_INTERVAL_SECONDS ?? '2',
     ),

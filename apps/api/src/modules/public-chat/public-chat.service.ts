@@ -325,17 +325,20 @@ export class PublicChatService {
   ): Promise<LiveBot> {
     // A visitor has no session; the publicId is what finds the workspace
     // (M7-1: the only lookup of this chat flow outside its workspace).
+    // One transaction for the chatbot and its two relations, not three (M7-32).
     const bot = await runAsSystem('find chatbot by public id', () =>
-      this.prisma.chatbot.findUnique({
-        where,
-        select: {
-          id: true,
-          workspaceId: true,
-          status: true,
-          workspace: { select: { status: true } },
-          publishedVersion: { select: { id: true, config: true } },
-        },
-      }),
+      this.prisma.$transaction((tx) =>
+        tx.chatbot.findUnique({
+          where,
+          select: {
+            id: true,
+            workspaceId: true,
+            status: true,
+            workspace: { select: { status: true } },
+            publishedVersion: { select: { id: true, config: true } },
+          },
+        }),
+      ),
     );
     if (
       !bot ||

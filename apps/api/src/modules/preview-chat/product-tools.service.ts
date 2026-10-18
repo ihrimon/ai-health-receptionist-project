@@ -1,6 +1,11 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { z } from 'zod';
-import { TENANT_PRISMA, type TenantPrisma } from '../../tenancy/tenant-prisma';
+import { wrapUntrusted } from './preview-prompt';
+import {
+  TENANT_PRISMA,
+  type TenantDb,
+  type TenantPrisma,
+} from '../../tenancy/tenant-prisma';
 import type { ChatCompletionTool } from '../llm/providers/provider-adapter.types';
 import {
   KnowledgeService,
@@ -83,6 +88,11 @@ export interface ToolRun {
   products: ProductHit[];
 }
 
+/** Tool results carry company-written text, so they get the untrusted tags (M7-28). */
+function toolContent(value: unknown): string {
+  return wrapUntrusted(JSON.stringify(value));
+}
+
 /** The words the model should use; the enum names read badly in an answer. */
 const STOCK_TEXT: Record<ProductHit['stockStatus'], string> = {
   IN_STOCK: 'in stock',
@@ -126,8 +136,11 @@ export class ProductToolsService {
   ) {}
 
   /** Tools are only offered to the model when there is something to find. */
-  async hasProducts(chatbotId: string): Promise<boolean> {
-    const count = await this.db.product.count({
+  async hasProducts(
+    chatbotId: string,
+    db: TenantDb = this.db,
+  ): Promise<boolean> {
+    const count = await db.product.count({
       where: { chatbotId, isActive: true },
     });
     return count > 0;
@@ -160,7 +173,7 @@ export class ProductToolsService {
         SEARCH_RESULTS,
       );
       return {
-        content: JSON.stringify({
+        content: toolContent({
           count: hits.length,
           products: hits.map((hit) => forModel(hit, false)),
           ...(hits.length === 0
@@ -179,12 +192,12 @@ export class ProductToolsService {
       const hit = await this.knowledge.getProduct(chatbotId, parsed.data.id);
       if (!hit) {
         return {
-          content: JSON.stringify({ error: 'No product with that id.' }),
+          content: toolContent({ error: 'No product with that id.' }),
           products: [],
         };
       }
       return {
-        content: JSON.stringify({ product: forModel(hit, true) }),
+        content: toolContent({ product: forModel(hit, true) }),
         products: [hit],
       };
     }
@@ -194,5 +207,5 @@ export class ProductToolsService {
 }
 
 function failure(message: string): ToolRun {
-  return { content: JSON.stringify({ error: message }), products: [] };
+  return { content: toolContent({ error: message }), products: [] };
 }

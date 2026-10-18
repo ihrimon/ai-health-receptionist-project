@@ -8,7 +8,11 @@ import { ConflictException, Inject, Injectable, Logger } from '@nestjs/common';
 import { SecretBox } from '../../common/secret-box';
 import type { WorkspaceLlmKey } from '../../generated/prisma/client';
 import { requireTenant } from '../../tenancy/tenant-context';
-import { TENANT_PRISMA, type TenantPrisma } from '../../tenancy/tenant-prisma';
+import {
+  TENANT_PRISMA,
+  type TenantDb,
+  type TenantPrisma,
+} from '../../tenancy/tenant-prisma';
 import { LlmChatClient } from '../llm/llm-chat.client';
 import type { LlmCredentialSnapshot } from '../llm/llm-key-manager';
 import { orNotFound } from '../knowledge-base/knowledge-errors';
@@ -103,8 +107,10 @@ export class LlmKeysService {
   }
 
   /** The current workspace's active keys, decrypted, oldest first: what chat uses. */
-  async activeCredentials(): Promise<LlmCredentialSnapshot[]> {
-    const rows = await this.db.workspaceLlmKey.findMany({
+  async activeCredentials(
+    db: TenantDb = this.db,
+  ): Promise<LlmCredentialSnapshot[]> {
+    const rows = await db.workspaceLlmKey.findMany({
       where: { isActive: true },
       orderBy: { createdAt: 'asc' },
     });

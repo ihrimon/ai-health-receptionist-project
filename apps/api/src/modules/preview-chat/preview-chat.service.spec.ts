@@ -9,6 +9,7 @@ import {
   NoLlmCredentialsConfiguredError,
 } from '../llm/llm-key-manager';
 import { KnowledgeService } from '../knowledge/knowledge.service';
+import { TENANT_PRISMA } from '../../tenancy/tenant-prisma';
 import { UsageService } from '../usage/usage.service';
 import { LeadsService } from '../leads/leads.service';
 import { LeadToolService } from './lead-tool.service';
@@ -38,6 +39,9 @@ async function* llmStream(
   };
 }
 
+/** Stands in for the shared transaction handed to every read. */
+const TX = { tx: true };
+
 describe('PreviewChatService', () => {
   const config = defaultChatbotConfig('Rina Shop');
   const chatbot = { draft: jest.fn() };
@@ -59,6 +63,7 @@ describe('PreviewChatService', () => {
   const usage = { record: jest.fn() };
   const leads = { create: jest.fn() };
   const conversations = { recordTurn: jest.fn(), recentTurns: jest.fn() };
+  const db = { $transaction: jest.fn() };
   let service: PreviewChatService;
   let events: ChatStreamEvent[];
   const emit = (event: ChatStreamEvent) => {
@@ -87,6 +92,9 @@ describe('PreviewChatService', () => {
     usage.record.mockResolvedValue(undefined);
     conversations.recordTurn.mockResolvedValue('conv-1');
     conversations.recentTurns.mockResolvedValue([]);
+    db.$transaction.mockImplementation((fn: (tx: unknown) => unknown) =>
+      fn(TX),
+    );
     keys.activeCredentials.mockResolvedValue([ownKey]);
     keys.markUsed.mockResolvedValue(undefined);
     rateLimit.consume.mockResolvedValue(undefined);
@@ -101,6 +109,7 @@ describe('PreviewChatService', () => {
         { provide: ConversationsService, useValue: conversations },
         { provide: ProductToolsService, useValue: products },
         { provide: UsageService, useValue: usage },
+        { provide: TENANT_PRISMA, useValue: db },
         LeadToolService,
         { provide: LeadsService, useValue: leads },
       ],
@@ -135,7 +144,13 @@ describe('PreviewChatService', () => {
       undefined,
       true,
       [0.1, 0.2],
+      TX,
     );
+    // M7-32: credentials, custom answer, history, search and the product
+    // check all share one transaction.
+    expect(db.$transaction).toHaveBeenCalledTimes(1);
+    expect(keys.activeCredentials).toHaveBeenCalledWith(TX);
+    expect(products.hasProducts).toHaveBeenCalledWith('bot-1', TX);
     const [[credentials, messages]] = llm.streamWith.mock.calls as unknown[][];
     expect(credentials).toEqual([ownKey]);
     expect(JSON.stringify(messages)).toContain('30 days.');
@@ -166,6 +181,7 @@ describe('PreviewChatService', () => {
         isPreview: true,
       },
       expect.any(Number),
+      TX,
     );
     const [[, messages]] = llm.streamWith.mock.calls as unknown[][];
     const sent = JSON.stringify(messages);
@@ -633,6 +649,7 @@ describe('PreviewChatService', () => {
         'bot-1',
         'Can I return it?',
         [0.1, 0.2],
+        TX,
       );
       expect(conversations.recordTurn).toHaveBeenCalledWith(
         expect.objectContaining({

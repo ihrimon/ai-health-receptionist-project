@@ -7,6 +7,13 @@ type Embedder = (
 ) => Promise<{ data: ArrayLike<number> }>;
 
 /**
+ * M7-32: how many recent question embeddings are kept in memory. Visitors
+ * ask the same things ("opening hours?"), and one embedding costs about
+ * 23 ms of CPU. 384 floats each, so this is well under 1 MB.
+ */
+export const EMBED_CACHE_SIZE = 200;
+
+/**
  * Generates sentence embeddings fully locally via @xenova/transformers
  * (Transformers.js) — no API key, no request quota, unlike a hosted
  * embeddings API. Trade-off: downloads the model (~90MB) from the Hugging
@@ -19,6 +26,8 @@ export class EmbeddingService {
   /** Saved on every chunk (M2-14), so a model change can find old ones. */
   readonly modelName: string;
   private embedderPromise?: Promise<Embedder>;
+  /** Insertion-ordered, so the first key is the least recently used. */
+  private readonly recent = new Map<string, number[]>();
 
   constructor(private readonly configService: ConfigService) {
     this.modelName =
@@ -27,9 +36,24 @@ export class EmbeddingService {
   }
 
   async embed(text: string): Promise<number[]> {
+    // Exact text only (trimmed, spaces collapsed): the vector is a pure
+    // function of it, so a hit is identical to a fresh embedding. Nothing
+    // here is tenant data: same text, same vector, for everyone.
+    const key = text.trim().replace(/\s+/g, ' ');
+    const cached = this.recent.get(key);
+    if (cached) {
+      this.recent.delete(key);
+      this.recent.set(key, cached);
+      return cached.slice();
+    }
     const embedder = await this.getEmbedder();
     const output = await embedder(text, { pooling: 'mean', normalize: true });
-    return Array.from(output.data);
+    const vector = Array.from(output.data);
+    this.recent.set(key, vector);
+    if (this.recent.size > EMBED_CACHE_SIZE) {
+      this.recent.delete(this.recent.keys().next().value as string);
+    }
+    return vector.slice();
   }
 
   private getEmbedder(): Promise<Embedder> {
