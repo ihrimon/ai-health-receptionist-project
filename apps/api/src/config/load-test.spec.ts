@@ -57,6 +57,11 @@ describe('loadTestConfigFromEnv (M7-5)', () => {
 
 describe('the app configuration in load-test mode (M7-5)', () => {
   const saved = { ...process.env };
+  beforeEach(() => {
+    // Production needs its secrets to get as far as the load-test check (M7-27).
+    process.env.LLM_KEY_ENCRYPTION_KEY = 'test-key';
+    process.env.CONVERSATION_TOKEN_SECRET = 'test-secret';
+  });
   afterEach(() => {
     process.env = { ...saved };
   });
