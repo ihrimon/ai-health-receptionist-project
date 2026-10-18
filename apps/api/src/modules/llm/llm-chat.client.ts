@@ -26,6 +26,18 @@ export type LlmStreamEvent =
       model: string;
     };
 
+/**
+ * Safe-to-log summary of a provider error: its class name and HTTP status
+ * only. The raw message can echo the API key (e.g. "Incorrect API key
+ * provided: sk-..."), so it is never logged.
+ */
+export function describeProviderError(err: unknown): string {
+  const e = err as { name?: unknown; status?: unknown } | null;
+  const kind = typeof e?.name === 'string' ? e.name : 'Error';
+  const status = typeof e?.status === 'number' ? e.status : undefined;
+  return status === undefined ? kind : `${kind} (status ${status})`;
+}
+
 export interface ChatTurn {
   role: 'user' | 'model';
   text: string;
@@ -139,7 +151,7 @@ export class LlmChatClient {
         // production logs alone (is it actually a quota problem, or a
         // bad key, or a slow provider?).
         this.logger.warn(
-          `Credential ${credential.id} (${credential.provider}, ${credential.model}) failed: ${(err as Error).message}`,
+          `Credential ${credential.id} (${credential.provider}, ${credential.model}) failed: ${describeProviderError(err)}`,
         );
         await this.keyManager.recordUsage(
           credential.id,
@@ -194,7 +206,7 @@ export class LlmChatClient {
           throw err;
         }
         this.logger.warn(
-          `Workspace credential ${credential.id} (${credential.provider}, ${credential.model}) failed: ${(err as Error).message}`,
+          `Workspace credential ${credential.id} (${credential.provider}, ${credential.model}) failed: ${describeProviderError(err)}`,
         );
       }
     }
@@ -243,7 +255,7 @@ export class LlmChatClient {
           throw err;
         }
         this.logger.warn(
-          `Workspace credential ${credential.id} (${credential.provider}, ${credential.model}) failed: ${(err as Error).message}`,
+          `Workspace credential ${credential.id} (${credential.provider}, ${credential.model}) failed: ${describeProviderError(err)}`,
         );
       }
     }
