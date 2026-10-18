@@ -374,6 +374,9 @@ model Product {
   /// Embedding of name + category + description, filled by indexing (M2-13).
   embedding      Unsupported("vector(384)")?
   embeddingModel String?                     @map("embedding_model") @db.VarChar(100)
+  /// to_tsvector of name + category + description, generated and GIN-indexed
+  /// by the database for keyword search (M7-31). Never written by the app.
+  searchTsv      Unsupported("tsvector")?    @default(dbgenerated()) @map("search_tsv")
   createdAt      DateTime                    @default(now()) @map("created_at") @db.Timestamptz
   updatedAt      DateTime                    @updatedAt @map("updated_at") @db.Timestamptz
 
@@ -384,6 +387,7 @@ model Product {
   @@unique([chatbotId, sku])
   @@index([workspaceId, chatbotId, isActive])
   @@index([workspaceId, chatbotId, category])
+  @@index([searchTsv], type: Gin, map: "products_search_tsv_idx")
   @@map("products")
 }
 
@@ -601,6 +605,9 @@ model KnowledgeChunk {
   /// The model that made `embedding` (M2-14), so a model change can find
   /// and re-embed old chunks (M2-15).
   embeddingModel String                     @map("embedding_model") @db.VarChar(100)
+  /// to_tsvector('english', content), generated and GIN-indexed by the
+  /// database for keyword search (M7-31). Never written by the app.
+  contentTsv     Unsupported("tsvector")?   @default(dbgenerated()) @map("content_tsv")
   createdAt      DateTime                   @default(now()) @map("created_at") @db.Timestamptz
 
   workspace Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
@@ -611,6 +618,7 @@ model KnowledgeChunk {
   @@index([workspaceId, chatbotId])
   @@index([faqId])
   @@index([sourceId])
+  @@index([contentTsv], type: Gin, map: "knowledge_chunks_content_tsv_idx")
   @@map("knowledge_chunks")
 }
 
