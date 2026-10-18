@@ -10,6 +10,7 @@ import {
 
 describe('ConversationsService', () => {
   const db = {
+    $transaction: jest.fn(),
     conversation: { create: jest.fn(), updateMany: jest.fn() },
     message: { createMany: jest.fn(), findMany: jest.fn() },
   };
@@ -40,6 +41,9 @@ describe('ConversationsService', () => {
 
   beforeEach(async () => {
     jest.resetAllMocks();
+    db.$transaction.mockImplementation((fn: (tx: unknown) => unknown) =>
+      fn(db),
+    );
     db.conversation.create.mockResolvedValue({ id: 'conv-new' });
     const moduleRef = await Test.createTestingModule({
       providers: [
@@ -52,6 +56,8 @@ describe('ConversationsService', () => {
 
   it('starts a conversation with the visitor message and the answer', async () => {
     await expect(record(turn)).resolves.toBe('conv-new');
+    // M7-32: the whole write is one transaction.
+    expect(db.$transaction).toHaveBeenCalledTimes(1);
 
     const [[args]] = db.conversation.create.mock.calls as [
       [

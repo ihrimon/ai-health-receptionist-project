@@ -2,7 +2,11 @@ import type { PreviewChatSource } from '@brainstack/shared';
 import { Inject, Injectable } from '@nestjs/common';
 import { MessageRole } from '../../generated/prisma/client';
 import { requireTenant } from '../../tenancy/tenant-context';
-import { TENANT_PRISMA, type TenantPrisma } from '../../tenancy/tenant-prisma';
+import {
+  TENANT_PRISMA,
+  type TenantDb,
+  type TenantPrisma,
+} from '../../tenancy/tenant-prisma';
 
 export type AnsweredBy = 'llm' | 'custom_answer' | 'fallback';
 
@@ -114,8 +118,9 @@ export class ConversationsService {
       conversationId: string;
     },
     limit: number,
+    db: TenantDb = this.db,
   ): Promise<{ role: 'user' | 'assistant'; text: string }[]> {
-    const rows = await this.db.message.findMany({
+    const rows = await db.message.findMany({
       where: {
         conversationId: scope.conversationId,
         conversation: {
@@ -154,46 +159,50 @@ export class ConversationsService {
       },
     ];
 
-    // updateMany so a conversation of another chatbot, visitor or kind
-    // matches nothing and a new one starts instead.
-    if (turn.conversationId) {
-      const continued = await this.db.conversation.updateMany({
-        where: {
-          id: turn.conversationId,
+    // One transaction for the whole write (M7-32): one RLS round trip, not
+    // two, and the counter and the messages can't drift apart.
+    return this.db.$transaction(async (tx) => {
+      // updateMany so a conversation of another chatbot, visitor or kind
+      // matches nothing and a new one starts instead.
+      if (turn.conversationId) {
+        const continued = await tx.conversation.updateMany({
+          where: {
+            id: turn.conversationId,
+            chatbotId: turn.chatbotId,
+            visitorId: turn.visitorId,
+            isPreview: turn.isPreview,
+          },
+          data: { messageCount: { increment: 2 }, lastMessageAt: now },
+        });
+        if (continued.count === 1) {
+          await tx.message.createMany({
+            data: messages.map((m) => ({
+              ...m,
+              workspaceId,
+              conversationId: turn.conversationId!,
+            })),
+          });
+          return turn.conversationId;
+        }
+      }
+
+      const created = await tx.conversation.create({
+        data: {
+          workspaceId,
           chatbotId: turn.chatbotId,
           visitorId: turn.visitorId,
           isPreview: turn.isPreview,
+          versionId: turn.versionId ?? null,
+          messageCount: 2,
+          startedAt: now,
+          lastMessageAt: now,
+          messages: {
+            create: messages.map((m) => ({ ...m, workspaceId })),
+          },
         },
-        data: { messageCount: { increment: 2 }, lastMessageAt: now },
+        select: { id: true },
       });
-      if (continued.count === 1) {
-        await this.db.message.createMany({
-          data: messages.map((m) => ({
-            ...m,
-            workspaceId,
-            conversationId: turn.conversationId!,
-          })),
-        });
-        return turn.conversationId;
-      }
-    }
-
-    const created = await this.db.conversation.create({
-      data: {
-        workspaceId,
-        chatbotId: turn.chatbotId,
-        visitorId: turn.visitorId,
-        isPreview: turn.isPreview,
-        versionId: turn.versionId ?? null,
-        messageCount: 2,
-        startedAt: now,
-        lastMessageAt: now,
-        messages: {
-          create: messages.map((m) => ({ ...m, workspaceId })),
-        },
-      },
-      select: { id: true },
+      return created.id;
     });
-    return created.id;
   }
 }
