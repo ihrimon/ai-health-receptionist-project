@@ -145,14 +145,14 @@ async function main(): Promise<void> {
       ),
       keyword AS (
         SELECT c.id, ROW_NUMBER() OVER (
-          ORDER BY ts_rank_cd(to_tsvector('english', c.content), q.query) DESC
+          ORDER BY ts_rank_cd(c.content_tsv, q.query) DESC
         ) AS rank
         FROM knowledge_chunks c,
              to_tsquery('english', ${probe.keywords ?? ''}::text) AS q(query)
         WHERE ${probe.keywords !== null}
           AND c.workspace_id = ${bot.workspaceId}::uuid AND c.chatbot_id = ${bot.chatbotId}::uuid
-          AND to_tsvector('english', c.content) @@ q.query
-        ORDER BY ts_rank_cd(to_tsvector('english', c.content), q.query) DESC
+          AND c.content_tsv @@ q.query
+        ORDER BY ts_rank_cd(c.content_tsv, q.query) DESC
         LIMIT ${CANDIDATES}
       ),
       fused AS (
