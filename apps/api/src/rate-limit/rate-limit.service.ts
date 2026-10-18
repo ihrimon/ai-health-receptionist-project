@@ -32,6 +32,8 @@ export class RateLimitService {
   /** Replaceable in tests. */
   now: () => number = Date.now;
   random: () => number = Math.random;
+  sleep: (ms: number) => Promise<void> = (ms) =>
+    new Promise((resolve) => setTimeout(resolve, ms));
 
   constructor(private readonly prisma: PrismaService) {}
 
@@ -61,6 +63,39 @@ export class RateLimitService {
     }
     if (this.random() < CLEANUP_CHANCE) this.deleteExpired(now);
     if (retryAfter > 0) throw new RateLimitedException(retryAfter);
+  }
+
+  /**
+   * Counts one event in the current window and returns the new count,
+   * without ever refusing (for "slow down" rules, M7-23).
+   */
+  async hit(key: string, windowSeconds: number): Promise<number> {
+    const now = this.now();
+    const windowMs = windowSeconds * 1000;
+    const windowStart = new Date(Math.floor(now / windowMs) * windowMs);
+    const { count } = await this.prisma.rateLimit.upsert({
+      where: { key_windowStart: { key, windowStart } },
+      create: {
+        key,
+        windowStart,
+        expiresAt: new Date(windowStart.getTime() + windowMs),
+        count: 1,
+      },
+      update: { count: { increment: 1 } },
+      select: { count: true },
+    });
+    return count;
+  }
+
+  /** Events counted so far in the current window; 0 if none. */
+  async peek(key: string, windowSeconds: number): Promise<number> {
+    const windowMs = windowSeconds * 1000;
+    const windowStart = new Date(Math.floor(this.now() / windowMs) * windowMs);
+    const row = await this.prisma.rateLimit.findUnique({
+      where: { key_windowStart: { key, windowStart } },
+      select: { count: true },
+    });
+    return row?.count ?? 0;
   }
 
   /** Fire and forget: a failed cleanup just waits for the next one. */

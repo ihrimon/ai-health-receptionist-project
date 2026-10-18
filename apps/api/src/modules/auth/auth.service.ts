@@ -1,6 +1,5 @@
 import {
   BadRequestException,
-  ConflictException,
   Injectable,
   Logger,
   UnauthorizedException,
@@ -19,7 +18,11 @@ import { WorkspacesService } from '../workspaces/workspaces.service';
 import { runAsSystem } from '../../tenancy/tenant-context';
 import { WorkspaceAccessService } from '../../tenancy/workspace-access.service';
 import { PasswordResetQueue } from './password-reset.queue';
-import { resetPasswordMessage, verifyEmailMessage } from './auth-emails';
+import {
+  accountExistsMessage,
+  resetPasswordMessage,
+  verifyEmailMessage,
+} from './auth-emails';
 import { AuthContext } from './auth-context';
 import { RESET_PASSWORD_TTL_MS, VERIFY_EMAIL_TTL_MS } from './auth.constants';
 import { LoginDto } from './dto/login.dto';
@@ -35,6 +38,12 @@ import { IssuedSession, SessionsService } from './sessions.service';
 
 const MINUTE = 60;
 const HOUR = 60 * MINUTE;
+
+/** M7-23: failed logins per email (all IPs together) before replies slow. */
+const LOGIN_FREE_FAILURES = 5;
+const LOGIN_FAILURE_WINDOW_SECONDS = 15 * MINUTE;
+const LOGIN_DELAY_STEP_MS = 500;
+const LOGIN_DELAY_MAX_MS = 3000;
 
 export interface RequestMeta {
   ipAddress?: string;
@@ -70,43 +79,44 @@ export class AuthService {
   ) {}
 
   /**
-   * M1-16: user + workspace + OWNER membership + default chatbot + session
-   * in one transaction, then a verification email (best-effort, outside
-   * the transaction so a mail failure can't undo the signup).
+   * M1-16: user + workspace + OWNER membership + default chatbot in one
+   * transaction, then a verification email (best-effort, outside the
+   * transaction so a mail failure can't undo the signup).
+   *
+   * M7-21: the caller learns nothing about whether the address already had
+   * an account. A new address gets the verification mail, an existing one
+   * a "you already have an account" mail, and both get the same reply. No
+   * session is issued; the user signs in after confirming the email.
    */
-  async register(
-    dto: RegisterDto,
-    meta: RequestMeta,
-  ): Promise<{ user: User; workspace: Workspace; session: IssuedSession }> {
+  async register(dto: RegisterDto, meta: RequestMeta): Promise<void> {
     await this.rateLimit.consume({
       key: `register:ip:${meta.ipAddress}`,
       limit: 5,
       windowSeconds: HOUR,
     });
 
-    const taken = await this.prisma.user.findUnique({
-      where: { email: dto.email },
-      select: { id: true },
-    });
-    if (taken) throw this.emailTaken();
-
+    // Hash first on both paths so they cost about the same.
     const passwordHash = await hashPassword(dto.password);
-    let result: { user: User; workspace: Workspace; session: IssuedSession };
+    const existing = await this.prisma.user.findUnique({
+      where: { email: dto.email },
+    });
+    if (existing) {
+      await this.notifyAccountExists(existing);
+      return;
+    }
+
+    let user: User;
     try {
-      result = await runAsSystem('sign up', () =>
+      user = await runAsSystem('sign up', () =>
         this.prisma.$transaction(async (tx) => {
-          const user = await tx.user.create({
+          const created = await tx.user.create({
             data: { email: dto.email, name: dto.name, passwordHash },
           });
-          const workspace = await this.workspaces.createWithOwner(
-            { name: dto.companyName, ownerUserId: user.id },
+          await this.workspaces.createWithOwner(
+            { name: dto.companyName, ownerUserId: created.id },
             tx,
           );
-          const session = await this.sessions.create(
-            { userId: user.id, activeWorkspaceId: workspace.id, ...meta },
-            tx,
-          );
-          return { user, workspace, session };
+          return created;
         }),
       );
     } catch (err) {
@@ -115,13 +125,27 @@ export class AuthService {
         err instanceof Prisma.PrismaClientKnownRequestError &&
         err.code === 'P2002'
       ) {
-        throw this.emailTaken();
+        const winner = await this.prisma.user.findUnique({
+          where: { email: dto.email },
+        });
+        if (winner) await this.notifyAccountExists(winner);
+        return;
       }
       throw err;
     }
 
-    await this.sendVerificationEmail(result.user);
-    return result;
+    await this.sendVerificationEmail(user);
+  }
+
+  private async notifyAccountExists(user: User): Promise<void> {
+    await this.sendBestEffort(
+      accountExistsMessage(
+        user.email,
+        user.name,
+        this.dashboardLink('/login'),
+        this.dashboardLink('/forgot-password'),
+      ),
+    );
   }
 
   /** M1-17/M1-18: same error for unknown email and wrong password. */
@@ -134,6 +158,21 @@ export class AuthService {
       },
       { key: `login:ip:${meta.ipAddress}`, limit: 20, windowSeconds: HOUR },
     );
+
+    // M7-23: many wrong guesses at one address, from any mix of IPs, make
+    // every attempt at it slower. Nobody is locked out, so the real owner
+    // can still sign in, just later. Counted per email whether or not an
+    // account exists, so this doesn't reveal which addresses do.
+    const failKey = `login:fail:email:${dto.email}`;
+    const failures = await this.rateLimit.peek(
+      failKey,
+      LOGIN_FAILURE_WINDOW_SECONDS,
+    );
+    const delayMs = Math.min(
+      Math.max(0, failures - LOGIN_FREE_FAILURES) * LOGIN_DELAY_STEP_MS,
+      LOGIN_DELAY_MAX_MS,
+    );
+    if (delayMs > 0) await this.rateLimit.sleep(delayMs);
 
     // The user's first workspace is found before any workspace is active.
     const user = await runAsSystem('log in', () =>
@@ -148,6 +187,7 @@ export class AuthService {
       ? await verifyPassword(user.passwordHash, dto.password)
       : await burnPasswordCheck(dto.password);
     if (!user || !valid) {
+      await this.rateLimit.hit(failKey, LOGIN_FAILURE_WINDOW_SECONDS);
       throw new UnauthorizedException('Invalid email or password');
     }
 
@@ -385,9 +425,11 @@ export class AuthService {
     return record.userId;
   }
 
-  private dashboardLink(path: string, token: string): string {
+  private dashboardLink(path: string, token?: string): string {
     const base = this.config.get<string>('dashboardUrl');
-    return `${base}${path}?token=${encodeURIComponent(token)}`;
+    return token === undefined
+      ? `${base}${path}`
+      : `${base}${path}?token=${encodeURIComponent(token)}`;
   }
 
   private async sendBestEffort(message: OutgoingEmail): Promise<void> {
@@ -398,9 +440,5 @@ export class AuthService {
         `Could not send "${message.subject}" email: ${(err as Error).message}`,
       );
     }
-  }
-
-  private emailTaken(): ConflictException {
-    return new ConflictException('An account with this email already exists');
   }
 }
