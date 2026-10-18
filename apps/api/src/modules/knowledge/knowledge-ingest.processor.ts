@@ -7,6 +7,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import type { PgBoss } from 'pg-boss';
 import { WorkspaceRole } from '../../generated/prisma/client';
+import { runsWorkers } from '../../queue/process-role';
 import { PG_BOSS, QUEUE_NAMES } from '../../queue/queue.constants';
 import { runWithTenant } from '../../tenancy/tenant-context';
 import { IngestError } from './ingest-error';
@@ -39,6 +40,8 @@ export class KnowledgeIngestProcessor implements OnApplicationBootstrap {
   ) {}
 
   async onApplicationBootstrap(): Promise<void> {
+    // API-only process (PROCESS_ROLE=api, M7-7): jobs are queued but run elsewhere.
+    if (!runsWorkers(this.config)) return;
     await this.boss.work<IngestJobData>(
       QUEUE_NAMES.KNOWLEDGE_INGEST,
       {

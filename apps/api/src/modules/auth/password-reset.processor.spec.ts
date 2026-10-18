@@ -67,4 +67,21 @@ describe('PasswordResetQueue and PasswordResetProcessor (M7-24)', () => {
       expect.any(Function),
     );
   });
+  it('registers no worker in an API-only process (PROCESS_ROLE=api, M7-7)', async () => {
+    const moduleRef = await Test.createTestingModule({
+      providers: [
+        PasswordResetProcessor,
+        { provide: AuthService, useValue: { sendPasswordReset } },
+        { provide: PG_BOSS, useValue: { send, work } },
+        {
+          provide: ConfigService,
+          useValue: {
+            get: (k: string) => (k === 'queue.runWorkers' ? false : undefined),
+          },
+        },
+      ],
+    }).compile();
+    await moduleRef.get(PasswordResetProcessor).onApplicationBootstrap();
+    expect(work).not.toHaveBeenCalled();
+  });
 });

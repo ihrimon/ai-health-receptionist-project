@@ -34,4 +34,6 @@ EXPOSE 3001
 # with several replicas, run migrations as a separate deploy step (M7).
 # The prisma binary is called directly: pnpm (via corepack) would try to
 # write its own cache under the user's home at start.
+# Job workers can run in their own container from this same image: PROCESS_ROLE=api
+# on the API, and command `node dist/worker.js` on the worker (M7-7).
 CMD ["sh", "-c", "./node_modules/.bin/prisma migrate deploy && node dist/main.js"]

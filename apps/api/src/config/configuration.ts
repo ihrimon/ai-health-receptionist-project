@@ -1,3 +1,4 @@
+import { parseProcessRole } from '../queue/process-role';
 import { usageCostConfigFromEnv } from '../modules/admin/usage-cost';
 import { join } from 'path';
 import { loadTestConfigFromEnv } from './load-test';
@@ -61,6 +62,8 @@ const buildConfiguration = () => ({
   // Background jobs run on pg-boss in the app's own Postgres (no Redis in
   // the MVP). Workers check for new jobs this often when idle.
   queue: {
+    // all (default) | api (no workers) | worker (workers only, see worker.ts). M7-7.
+    runWorkers: parseProcessRole(process.env.PROCESS_ROLE) !== 'api',
     pollingIntervalSeconds: parseFloat(
       process.env.QUEUE_POLLING_INTERVAL_SECONDS ?? '2',
     ),
