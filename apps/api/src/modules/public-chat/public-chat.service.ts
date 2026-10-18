@@ -24,7 +24,10 @@ import {
   WorkspaceRole,
   WorkspaceStatus,
 } from '../../generated/prisma/client';
-import { RateLimitService } from '../../rate-limit/rate-limit.service';
+import {
+  RateLimitedException,
+  RateLimitService,
+} from '../../rate-limit/rate-limit.service';
 import { runAsSystem, runWithTenant } from '../../tenancy/tenant-context';
 import { ConversationsService } from '../conversations/conversations.service';
 import { PreviewChatService } from '../preview-chat/preview-chat.service';
@@ -43,6 +46,12 @@ export const PUBLIC_CHAT_LIMITS = {
   perIpMinute: { limit: 60, windowSeconds: 60 },
   perIpHour: { limit: 200, windowSeconds: 3600 },
   perBotMinute: { limit: 600, windowSeconds: 60 },
+  /**
+   * M7-22: a cap on what one chatbot can cost per UTC day, so a script
+   * spread over many IPs can't run up the company's bill. Lead's call
+   * (2026-10-18): 200 messages.
+   */
+  perBotDay: { limit: 200, windowSeconds: 86400 },
   /** Changing the stars a few times is fine; more is a script. */
   ratingPerConversationMinute: { limit: 10, windowSeconds: 60 },
 };
@@ -52,6 +61,8 @@ export const VISITOR_UNAVAILABLE_REPLY =
   "Sorry, this chat isn't available right now. Please try again later.";
 export const VISITOR_BUSY_REPLY =
   "Sorry, I'm a bit busy right now. Please try again in a minute.";
+export const VISITOR_DAILY_LIMIT_REPLY =
+  "We've received a lot of messages today and can't answer more right now. Please contact us directly or try again tomorrow.";
 export const VISITOR_LIMIT_REPLY =
   "We've reached the length limit for this chat. Please contact us directly and we'll be glad to help.";
 
@@ -169,6 +180,25 @@ export class PublicChatService {
       },
     );
 
+    // Counted apart from the rules above, so a visitor already turned away
+    // by those doesn't use up the chatbot's day. Over the cap the visitor
+    // gets a friendly answer pointing to the company, not an error.
+    try {
+      await this.rateLimit.consume({
+        key: `public:bot-day:${bot.id}`,
+        ...this.scaled(PUBLIC_CHAT_LIMITS.perBotDay),
+      });
+    } catch (err) {
+      if (!(err instanceof RateLimitedException)) throw err;
+      this.emitPointToCompany(
+        bot,
+        conversationId,
+        emit,
+        VISITOR_DAILY_LIMIT_REPLY,
+      );
+      return;
+    }
+
     await this.inBotWorkspace(bot, async () => {
       const conversation = await this.conversations.find(
         conversationId,
@@ -178,16 +208,7 @@ export class PublicChatService {
 
       // A long chat stops here; the visitor is pointed to the company.
       if (conversation.messageCount >= PUBLIC_CHAT_SIZES.conversationMessages) {
-        emit({ type: 'delta', text: VISITOR_LIMIT_REPLY });
-        const { type, value, label } = bot.config.behavior.handoff;
-        if (type !== 'none' && value) {
-          emit({ type: 'handoff', kind: type, value, label });
-        }
-        emit({
-          type: 'done',
-          conversationId,
-          answeredBy: 'fallback',
-        });
+        this.emitPointToCompany(bot, conversationId, emit, VISITOR_LIMIT_REPLY);
         return;
       }
 
@@ -229,6 +250,21 @@ export class PublicChatService {
         createdAt: m.createdAt.toISOString(),
       }));
     });
+  }
+
+  /** A fixed reply plus the company's handoff, with no model call. */
+  private emitPointToCompany(
+    bot: LiveBot,
+    conversationId: string,
+    emit: EmitChatEvent,
+    text: string,
+  ): void {
+    emit({ type: 'delta', text });
+    const { type, value, label } = bot.config.behavior.handoff;
+    if (type !== 'none' && value) {
+      emit({ type: 'handoff', kind: type, value, label });
+    }
+    emit({ type: 'done', conversationId, answeredBy: 'fallback' });
   }
 
   /** The visitor's 1–5 stars for their own conversation (FR-4.6, M5-7). */
