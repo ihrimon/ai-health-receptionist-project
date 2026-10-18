@@ -15,6 +15,9 @@ export const STRINGS = {
   ratingSkip: "Skip for now",
   ratingThanks: "Thanks for your feedback!",
   poweredBy: "Powered by BrainStack",
+  /** Shown under the messages (M7-14): who answers and what is kept. */
+  privacyNotice: "An AI assistant answers here, and this chat is saved so the business can follow up. Please don't share passwords or card numbers.",
+  privacyLink: "Privacy Policy",
   loading: "Loading…",
   unavailable: "This chat isn't available right now.",
   somethingWrong: "Sorry, something went wrong. Please try again.",

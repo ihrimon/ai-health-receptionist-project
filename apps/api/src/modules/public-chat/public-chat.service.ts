@@ -95,7 +95,14 @@ export class PublicChatService {
     // local run from one IP would otherwise stop at the per-IP limits.
     const loadTest = config?.get<LoadTestConfig>('loadTest');
     this.limitFactor = loadTest?.enabled ? loadTest.rateLimitFactor : 1;
+    const dashboardUrl = config?.get<string>('dashboardUrl');
+    this.privacyUrl =
+      typeof dashboardUrl === 'string' && dashboardUrl
+        ? `${dashboardUrl.replace(/\/+$/, '')}/privacy`
+        : undefined;
   }
+
+  private readonly privacyUrl: string | undefined;
 
   private readonly limitFactor: number;
 
@@ -119,6 +126,7 @@ export class PublicChatService {
           : config.widget.launcherIcon,
       quickReplies: config.widget.quickReplies,
       showBranding: config.widget.showBranding,
+      ...(this.privacyUrl && { privacyUrl: this.privacyUrl }),
     };
   }
 

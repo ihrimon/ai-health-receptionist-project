@@ -102,4 +102,18 @@ describe("ChatWindow", () => {
     expect(link.getAttribute("href")).toBe("mailto:help@acme.test");
     expect(link.previousElementSibling?.textContent).toBe("Sorry, I don't know.");
   });
+
+  it("tells the visitor an AI answers and the chat is saved (M7-14)", () => {
+    setup();
+    expect(screen.getByTestId("privacy-notice").textContent).toContain(STRINGS.privacyNotice);
+    expect(screen.queryByRole("link", { name: STRINGS.privacyLink })).toBeNull();
+  });
+
+  it("links the notice to the Privacy Policy when the API gives its address", () => {
+    setup({ privacyUrl: "https://app.example.com/privacy" });
+    const link = screen.getByRole("link", { name: STRINGS.privacyLink });
+    expect(link.getAttribute("href")).toBe("https://app.example.com/privacy");
+    expect(link.getAttribute("target")).toBe("_blank");
+    expect(link.getAttribute("rel")).toContain("noopener");
+  });
 });
