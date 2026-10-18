@@ -8,7 +8,8 @@ import {
   House,
   LogOut,
   KeyRound,
-  Settings,
+  Building2,
+  Coins,
 } from "lucide-react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -36,7 +37,9 @@ import {
 import { useSession } from "@/lib/session";
 
 const NAV_ITEMS = [
-  { title: "LLM keys", href: "/admin/settings", icon: KeyRound },
+  { title: "Workspaces", href: "/admin/workspaces", icon: Building2 },
+  { title: "Usage & cost", href: "/admin/usage", icon: Coins },
+  { title: "LLM keys", href: "/admin/llm-credentials", icon: KeyRound },
 ];
 
 export function AppSidebar() {
@@ -135,9 +138,9 @@ export function AppSidebar() {
                   />
                   <DropdownMenuItem
                     render={
-                      <Link href="/admin/settings">
-                        <Settings />
-                        Settings
+                      <Link href="/admin/llm-credentials">
+                        <KeyRound />
+                        LLM keys
                       </Link>
                     }
                   />

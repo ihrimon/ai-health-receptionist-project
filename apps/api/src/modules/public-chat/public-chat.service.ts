@@ -12,8 +12,11 @@ import {
 import {
   Injectable,
   NotFoundException,
+  Optional,
   UnauthorizedException,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import type { LoadTestConfig } from '../../config/load-test';
 import type { EmitChatEvent } from '../../common/sse';
 import { PrismaService } from '../../database/prisma.service';
 import {
@@ -21,8 +24,11 @@ import {
   WorkspaceRole,
   WorkspaceStatus,
 } from '../../generated/prisma/client';
-import { RateLimitService } from '../../rate-limit/rate-limit.service';
-import { runWithTenant } from '../../tenancy/tenant-context';
+import {
+  RateLimitedException,
+  RateLimitService,
+} from '../../rate-limit/rate-limit.service';
+import { runAsSystem, runWithTenant } from '../../tenancy/tenant-context';
 import { ConversationsService } from '../conversations/conversations.service';
 import { PreviewChatService } from '../preview-chat/preview-chat.service';
 import {
@@ -40,6 +46,12 @@ export const PUBLIC_CHAT_LIMITS = {
   perIpMinute: { limit: 60, windowSeconds: 60 },
   perIpHour: { limit: 200, windowSeconds: 3600 },
   perBotMinute: { limit: 600, windowSeconds: 60 },
+  /**
+   * M7-22: a cap on what one chatbot can cost per UTC day, so a script
+   * spread over many IPs can't run up the company's bill. Lead's call
+   * (2026-10-18): 200 messages.
+   */
+  perBotDay: { limit: 200, windowSeconds: 86400 },
   /** Changing the stars a few times is fine; more is a script. */
   ratingPerConversationMinute: { limit: 10, windowSeconds: 60 },
 };
@@ -49,6 +61,8 @@ export const VISITOR_UNAVAILABLE_REPLY =
   "Sorry, this chat isn't available right now. Please try again later.";
 export const VISITOR_BUSY_REPLY =
   "Sorry, I'm a bit busy right now. Please try again in a minute.";
+export const VISITOR_DAILY_LIMIT_REPLY =
+  "We've received a lot of messages today and can't answer more right now. Please contact us directly or try again tomorrow.";
 export const VISITOR_LIMIT_REPLY =
   "We've reached the length limit for this chat. Please contact us directly and we'll be glad to help.";
 
@@ -75,7 +89,26 @@ export class PublicChatService {
     private readonly preview: PreviewChatService,
     private readonly conversations: ConversationsService,
     private readonly tokens: ConversationTokenService,
-  ) {}
+    @Optional() config?: ConfigService,
+  ) {
+    // Load-test mode only (M7-5; the config refuses it in production): a
+    // local run from one IP would otherwise stop at the per-IP limits.
+    const loadTest = config?.get<LoadTestConfig>('loadTest');
+    this.limitFactor = loadTest?.enabled ? loadTest.rateLimitFactor : 1;
+    const dashboardUrl = config?.get<string>('dashboardUrl');
+    this.privacyUrl =
+      typeof dashboardUrl === 'string' && dashboardUrl
+        ? `${dashboardUrl.replace(/\/+$/, '')}/privacy`
+        : undefined;
+  }
+
+  private readonly privacyUrl: string | undefined;
+
+  private readonly limitFactor: number;
+
+  private scaled(rule: { limit: number; windowSeconds: number }) {
+    return { ...rule, limit: Math.ceil(rule.limit * this.limitFactor) };
+  }
 
   async config(publicId: string): Promise<PublicChatConfig> {
     const { config } = await this.liveBot({ publicId });
@@ -93,6 +126,7 @@ export class PublicChatService {
           : config.widget.launcherIcon,
       quickReplies: config.widget.quickReplies,
       showBranding: config.widget.showBranding,
+      ...(this.privacyUrl && { privacyUrl: this.privacyUrl }),
     };
   }
 
@@ -105,7 +139,7 @@ export class PublicChatService {
     const bot = await this.liveBot({ publicId });
     await this.rateLimit.consume({
       key: `public:new:${ip}`,
-      ...PUBLIC_CHAT_LIMITS.newConversationHour,
+      ...this.scaled(PUBLIC_CHAT_LIMITS.newConversationHour),
     });
 
     const conversationId = await this.inBotWorkspace(bot, () =>
@@ -138,12 +172,40 @@ export class PublicChatService {
     await this.rateLimit.consume(
       {
         key: `public:conv:${conversationId}`,
-        ...PUBLIC_CHAT_LIMITS.perConversationMinute,
+        ...this.scaled(PUBLIC_CHAT_LIMITS.perConversationMinute),
       },
-      { key: `public:ip:${ip}`, ...PUBLIC_CHAT_LIMITS.perIpMinute },
-      { key: `public:ip-hour:${ip}`, ...PUBLIC_CHAT_LIMITS.perIpHour },
-      { key: `public:bot:${bot.id}`, ...PUBLIC_CHAT_LIMITS.perBotMinute },
+      {
+        key: `public:ip:${ip}`,
+        ...this.scaled(PUBLIC_CHAT_LIMITS.perIpMinute),
+      },
+      {
+        key: `public:ip-hour:${ip}`,
+        ...this.scaled(PUBLIC_CHAT_LIMITS.perIpHour),
+      },
+      {
+        key: `public:bot:${bot.id}`,
+        ...this.scaled(PUBLIC_CHAT_LIMITS.perBotMinute),
+      },
     );
+
+    // Counted apart from the rules above, so a visitor already turned away
+    // by those doesn't use up the chatbot's day. Over the cap the visitor
+    // gets a friendly answer pointing to the company, not an error.
+    try {
+      await this.rateLimit.consume({
+        key: `public:bot-day:${bot.id}`,
+        ...this.scaled(PUBLIC_CHAT_LIMITS.perBotDay),
+      });
+    } catch (err) {
+      if (!(err instanceof RateLimitedException)) throw err;
+      this.emitPointToCompany(
+        bot,
+        conversationId,
+        emit,
+        VISITOR_DAILY_LIMIT_REPLY,
+      );
+      return;
+    }
 
     await this.inBotWorkspace(bot, async () => {
       const conversation = await this.conversations.find(
@@ -154,16 +216,7 @@ export class PublicChatService {
 
       // A long chat stops here; the visitor is pointed to the company.
       if (conversation.messageCount >= PUBLIC_CHAT_SIZES.conversationMessages) {
-        emit({ type: 'delta', text: VISITOR_LIMIT_REPLY });
-        const { type, value, label } = bot.config.behavior.handoff;
-        if (type !== 'none' && value) {
-          emit({ type: 'handoff', kind: type, value, label });
-        }
-        emit({
-          type: 'done',
-          conversationId,
-          answeredBy: 'fallback',
-        });
+        this.emitPointToCompany(bot, conversationId, emit, VISITOR_LIMIT_REPLY);
         return;
       }
 
@@ -207,6 +260,21 @@ export class PublicChatService {
     });
   }
 
+  /** A fixed reply plus the company's handoff, with no model call. */
+  private emitPointToCompany(
+    bot: LiveBot,
+    conversationId: string,
+    emit: EmitChatEvent,
+    text: string,
+  ): void {
+    emit({ type: 'delta', text });
+    const { type, value, label } = bot.config.behavior.handoff;
+    if (type !== 'none' && value) {
+      emit({ type: 'handoff', kind: type, value, label });
+    }
+    emit({ type: 'done', conversationId, answeredBy: 'fallback' });
+  }
+
   /** The visitor's 1–5 stars for their own conversation (FR-4.6, M5-7). */
   async rate(
     conversationId: string,
@@ -217,7 +285,7 @@ export class PublicChatService {
     const bot = await this.liveBot({ id: claims.chatbotId });
     await this.rateLimit.consume({
       key: `public:rating:${conversationId}`,
-      ...PUBLIC_CHAT_LIMITS.ratingPerConversationMinute,
+      ...this.scaled(PUBLIC_CHAT_LIMITS.ratingPerConversationMinute),
     });
     const rated = await this.inBotWorkspace(bot, () =>
       this.conversations.rate(conversationId, bot.id, request.rating),
@@ -255,16 +323,20 @@ export class PublicChatService {
   private async liveBot(
     where: { publicId: string } | { id: string },
   ): Promise<LiveBot> {
-    const bot = await this.prisma.chatbot.findUnique({
-      where,
-      select: {
-        id: true,
-        workspaceId: true,
-        status: true,
-        workspace: { select: { status: true } },
-        publishedVersion: { select: { id: true, config: true } },
-      },
-    });
+    // A visitor has no session; the publicId is what finds the workspace
+    // (M7-1: the only lookup of this chat flow outside its workspace).
+    const bot = await runAsSystem('find chatbot by public id', () =>
+      this.prisma.chatbot.findUnique({
+        where,
+        select: {
+          id: true,
+          workspaceId: true,
+          status: true,
+          workspace: { select: { status: true } },
+          publishedVersion: { select: { id: true, config: true } },
+        },
+      }),
+    );
     if (
       !bot ||
       bot.status !== ChatbotStatus.ENABLED ||

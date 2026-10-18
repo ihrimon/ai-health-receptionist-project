@@ -221,13 +221,11 @@ export class KnowledgeService {
       ),
       keyword AS (
         SELECT e.id, ROW_NUMBER() OVER (
-          ORDER BY ts_rank_cd(
-            to_tsvector('english', e.name || ' ' || coalesce(e.category, '') || ' ' || coalesce(e.description, '')),
-            q.query) DESC
+          ORDER BY ts_rank_cd(e.search_tsv, q.query) DESC
         ) AS rank
         FROM eligible e,
              to_tsquery('english', ${keywords ?? ''}::text) AS q(query)
-        WHERE to_tsvector('english', e.name || ' ' || coalesce(e.category, '') || ' ' || coalesce(e.description, '')) @@ q.query
+        WHERE e.search_tsv @@ q.query
         LIMIT ${candidates}
       ),
       fused AS (
@@ -367,14 +365,14 @@ export class KnowledgeService {
       ),
       keyword AS (
         SELECT c.id, ROW_NUMBER() OVER (
-          ORDER BY ts_rank_cd(to_tsvector('english', c.content), q.query) DESC
+          ORDER BY ts_rank_cd(c.content_tsv, q.query) DESC
         ) AS rank
         FROM knowledge_chunks c,
              to_tsquery('english', ${keywords ?? ''}::text) AS q(query)
         WHERE ${keywords !== null}
           AND c.workspace_id = ${workspaceId}::uuid AND c.chatbot_id = ${chatbotId}::uuid
-          AND to_tsvector('english', c.content) @@ q.query
-        ORDER BY ts_rank_cd(to_tsvector('english', c.content), q.query) DESC
+          AND c.content_tsv @@ q.query
+        ORDER BY ts_rank_cd(c.content_tsv, q.query) DESC
         LIMIT ${candidates}
       ),
       fused AS (

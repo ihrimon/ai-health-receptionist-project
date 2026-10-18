@@ -2,7 +2,7 @@ import type { ChatStreamEvent } from '@brainstack/shared';
 import { defaultChatbotConfig } from '@brainstack/shared';
 import { Test } from '@nestjs/testing';
 import { AppModule } from '../../src/app.module';
-import { PrismaService } from '../../src/database/prisma.service';
+import { createAdminPrisma } from '../integration/admin-prisma';
 import {
   type CaseMetrics,
   formatMetrics,
@@ -21,7 +21,7 @@ import type {
   EvalCase,
   FixtureCompany,
 } from '../../src/eval/eval-types';
-import { WorkspaceRole } from '../../src/generated/prisma/client';
+import { PrismaClient, WorkspaceRole } from '../../src/generated/prisma/client';
 import { CustomAnswersService } from '../../src/modules/knowledge-base/custom-answers.service';
 import { FaqsService } from '../../src/modules/knowledge-base/faqs.service';
 import { KnowledgeSourcesService } from '../../src/modules/knowledge-base/knowledge-sources.service';
@@ -148,7 +148,7 @@ function textOf(messages: ChatMessage[]): string {
 
 describe('Chat answer quality', () => {
   let moduleClose: () => Promise<void>;
-  let prisma: PrismaService;
+  let prisma: PrismaClient;
   let preview: PreviewChatService;
   let knowledge: KnowledgeService;
   let embedding: EmbeddingService;
@@ -292,7 +292,8 @@ describe('Chat answer quality', () => {
       await app.init();
       moduleClose = () => app.close();
       moduleRefGet = (token) => app.get(token as never);
-      prisma = app.get(PrismaService);
+      // Owner connection, to read across workspaces (the app runs under RLS).
+      prisma = createAdminPrisma();
       preview = app.get(PreviewChatService);
       knowledge = app.get(KnowledgeService);
       embedding = app.get(EmbeddingService);
@@ -335,6 +336,7 @@ describe('Chat answer quality', () => {
 
   afterAll(async () => {
     await moduleClose();
+    await prisma?.$disconnect();
   });
 
   async function run(

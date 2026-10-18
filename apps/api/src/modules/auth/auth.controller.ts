@@ -51,31 +51,16 @@ function requestMeta(req: Request): RequestMeta {
 export class AuthController {
   constructor(private readonly authService: AuthService) {}
 
+  /** M7-21: always 202, whether or not the email already has an account. */
   @Public()
   @Post('register')
+  @HttpCode(HttpStatus.ACCEPTED)
   async register(
     @Body() dto: RegisterDto,
     @Req() req: Request,
-    @Res({ passthrough: true }) res: Response,
-  ) {
-    const { user, workspace, session } = await this.authService.register(
-      dto,
-      requestMeta(req),
-    );
-    setSessionCookie(res, session);
-    return {
-      user: {
-        id: user.id,
-        email: user.email,
-        name: user.name,
-        emailVerifiedAt: user.emailVerifiedAt,
-      },
-      workspace: {
-        id: workspace.id,
-        name: workspace.name,
-        slug: workspace.slug,
-      },
-    };
+  ): Promise<{ status: 'check_email' }> {
+    await this.authService.register(dto, requestMeta(req));
+    return { status: 'check_email' };
   }
 
   @Public()
@@ -112,22 +97,32 @@ export class AuthController {
   @Public()
   @Post('forgot-password')
   @HttpCode(HttpStatus.NO_CONTENT)
-  forgotPassword(@Body() dto: ForgotPasswordDto): Promise<void> {
-    return this.authService.forgotPassword(dto.email);
+  forgotPassword(
+    @Body() dto: ForgotPasswordDto,
+    @Req() req: Request,
+  ): Promise<void> {
+    return this.authService.forgotPassword(dto.email, requestMeta(req));
   }
 
   @Public()
   @Post('reset-password')
   @HttpCode(HttpStatus.NO_CONTENT)
-  resetPassword(@Body() dto: ResetPasswordDto): Promise<void> {
-    return this.authService.resetPassword(dto.token, dto.newPassword);
+  resetPassword(
+    @Body() dto: ResetPasswordDto,
+    @Req() req: Request,
+  ): Promise<void> {
+    return this.authService.resetPassword(
+      dto.token,
+      dto.newPassword,
+      requestMeta(req),
+    );
   }
 
   @Public()
   @Post('verify-email')
   @HttpCode(HttpStatus.NO_CONTENT)
-  verifyEmail(@Body() dto: VerifyEmailDto): Promise<void> {
-    return this.authService.verifyEmail(dto.token);
+  verifyEmail(@Body() dto: VerifyEmailDto, @Req() req: Request): Promise<void> {
+    return this.authService.verifyEmail(dto.token, requestMeta(req));
   }
 
   @Post('resend-verification')

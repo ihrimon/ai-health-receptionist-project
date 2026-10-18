@@ -12,6 +12,8 @@ export default defineConfig({
     path: 'prisma/migrations',
   },
   datasource: {
-    url: process.env.DATABASE_URL,
+    // Migrations need the owner role (M7-1); DATABASE_URL is the restricted
+    // app role once production switches to it.
+    url: process.env.DATABASE_ADMIN_URL || process.env.DATABASE_URL,
   },
 });

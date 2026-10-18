@@ -40,6 +40,11 @@ export class SecretBox {
     this.key = secret ? createHash('sha256').update(secret).digest() : null;
   }
 
+  /** Whether a stored value is in this class's encrypted form (not legacy plain text). */
+  static isEncrypted(stored: string): boolean {
+    return /^v1:[A-Za-z0-9+/=]+:[A-Za-z0-9+/=]+:[A-Za-z0-9+/=]*$/.test(stored);
+  }
+
   encrypt(plain: string): string {
     const key = this.requireKey();
     const iv = randomBytes(12);

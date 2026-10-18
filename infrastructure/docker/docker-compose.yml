@@ -64,7 +64,15 @@ services:
       API_PORT: ${API_PORT:-3001}
       # Inside the compose network Postgres is `postgres:5432`, not the
       # host-mapped localhost:55432 from the root .env.
-      DATABASE_URL: postgresql://${POSTGRES_USER:-brainstack}:${POSTGRES_PASSWORD:-brainstack}@postgres:5432/${POSTGRES_DB:-brainstack_booking}
+      # Row-Level Security (M7-1): DATABASE_URL is what the API queries with and
+      # DATABASE_ADMIN_URL the owner (migrations, pg-boss). By default both are
+      # the owner, where RLS does not apply (a superuser skips policies). To run
+      # the API as the restricted brainstack_app role: after the first start (the
+      # migration creates the role without a login) run `pnpm --filter api
+      # db:app-role`, then set in the root .env
+      #   API_DATABASE_URL=postgresql://brainstack_app:brainstack_app@postgres:5432/<db>
+      DATABASE_URL: ${API_DATABASE_URL:-postgresql://${POSTGRES_USER:-brainstack}:${POSTGRES_PASSWORD:-brainstack}@postgres:5432/${POSTGRES_DB:-brainstack_booking}}
+      DATABASE_ADMIN_URL: postgresql://${POSTGRES_USER:-brainstack}:${POSTGRES_PASSWORD:-brainstack}@postgres:5432/${POSTGRES_DB:-brainstack_booking}
       # Inside the compose network MinIO is `minio:9000`. NODE_ENV is
       # production here, so bucket creation is switched on explicitly.
       S3_ENDPOINT: http://minio:9000

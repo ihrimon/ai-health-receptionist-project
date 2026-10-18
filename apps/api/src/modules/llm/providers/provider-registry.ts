@@ -1,4 +1,7 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Optional } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import type { LoadTestConfig } from '../../../config/load-test';
+import { FakeLlmAdapter } from './fake-llm.adapter';
 import { LlmProvider } from '../../../generated/prisma/client';
 import { AnthropicAdapter } from './anthropic.adapter';
 import { GeminiAdapter } from './gemini.adapter';
@@ -28,7 +31,21 @@ export class ProviderRegistry {
     [LlmProvider.unorouter]: new OpenAiSdkAdapter(UNOROUTER_BASE_URL),
   };
 
+  /** Set only in load-test mode (M7-5); stands in for every provider. */
+  private readonly fake?: LlmProviderAdapter;
+
+  constructor(@Optional() config?: ConfigService) {
+    const loadTest = config?.get<LoadTestConfig>('loadTest');
+    if (loadTest?.enabled) {
+      this.fake = new FakeLlmAdapter({
+        firstTokenMs: loadTest.fakeFirstTokenMs,
+        tokenMs: loadTest.fakeTokenMs,
+        tokens: loadTest.fakeTokens,
+      });
+    }
+  }
+
   get(provider: LlmProvider): LlmProviderAdapter {
-    return this.adapters[provider];
+    return this.fake ?? this.adapters[provider];
   }
 }

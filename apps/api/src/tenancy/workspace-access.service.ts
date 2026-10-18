@@ -1,10 +1,13 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../database/prisma.service';
-import { WorkspaceRole } from '../generated/prisma/client';
+import { WorkspaceRole, WorkspaceStatus } from '../generated/prisma/client';
+import { runAsSystem } from './tenant-context';
 
 export interface ActiveMembership {
   workspaceId: string;
   role: WorkspaceRole;
+  /** Suspended workspaces are blocked by WorkspaceGuard (M7-0). */
+  workspaceStatus: WorkspaceStatus;
 }
 
 /** Lowest to highest. */
@@ -29,7 +32,18 @@ export class WorkspaceAccessService {
    * removed) it falls back to their oldest membership and saves that on
    * the session. Null if they belong to no workspace at all.
    */
-  async resolveActive(session: {
+  resolveActive(session: {
+    id: string;
+    userId: string;
+    activeWorkspaceId: string | null;
+  }): Promise<ActiveMembership | null> {
+    // Runs before any workspace is chosen, so it can't be scoped to one (M7-1).
+    return runAsSystem('resolve active workspace', () =>
+      this.resolveActiveInner(session),
+    );
+  }
+
+  private async resolveActiveInner(session: {
     id: string;
     userId: string;
     activeWorkspaceId: string | null;
@@ -42,20 +56,32 @@ export class WorkspaceAccessService {
             userId: session.userId,
           },
         },
+        include: { workspace: { select: { status: true } } },
       });
-      if (member) return { workspaceId: member.workspaceId, role: member.role };
+      if (member) {
+        return {
+          workspaceId: member.workspaceId,
+          role: member.role,
+          workspaceStatus: member.workspace.status,
+        };
+      }
     }
 
     const fallback = await this.prisma.workspaceMember.findFirst({
       where: { userId: session.userId },
       orderBy: { createdAt: 'asc' },
+      include: { workspace: { select: { status: true } } },
     });
     if (!fallback) return null;
     await this.prisma.session.update({
       where: { id: session.id },
       data: { activeWorkspaceId: fallback.workspaceId },
     });
-    return { workspaceId: fallback.workspaceId, role: fallback.role };
+    return {
+      workspaceId: fallback.workspaceId,
+      role: fallback.role,
+      workspaceStatus: fallback.workspace.status,
+    };
   }
 
   /** The user's role in a workspace, or null if they aren't a member. */
@@ -63,9 +89,11 @@ export class WorkspaceAccessService {
     userId: string,
     workspaceId: string,
   ): Promise<WorkspaceRole | null> {
-    const member = await this.prisma.workspaceMember.findUnique({
-      where: { workspaceId_userId: { workspaceId, userId } },
-    });
+    const member = await runAsSystem('role in workspace', () =>
+      this.prisma.workspaceMember.findUnique({
+        where: { workspaceId_userId: { workspaceId, userId } },
+      }),
+    );
     return member?.role ?? null;
   }
 }

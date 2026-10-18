@@ -1,10 +1,16 @@
-import { assertTestDatabase, testDatabaseUrl } from './test-db';
+import { appDatabaseUrl, assertTestDatabase, testDatabaseUrl } from './test-db';
 
 // Runs before each test file: point the app (ConfigModule reads
 // process.env before .env) at the test database.
 const url = testDatabaseUrl();
 assertTestDatabase(url);
-process.env.DATABASE_URL = url;
+// The API runs as the restricted app role so Row-Level Security applies to
+// it (M7-1); migrations, fixtures and pg-boss use the owner connection.
+// Pinned, because DATABASE_URL changes below and every test file (same
+// process with --runInBand) would otherwise derive the "admin" URL from it.
+process.env.TEST_DATABASE_URL = url;
+process.env.DATABASE_ADMIN_URL = url;
+process.env.DATABASE_URL = appDatabaseUrl(url);
 
 // Uploads go to their own bucket, created on first use, so tests never
 // mix with files from local development.

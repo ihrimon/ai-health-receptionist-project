@@ -32,9 +32,11 @@ describe('WorkspaceGuard', () => {
   beforeEach(() => {
     reflector = { getAllAndOverride: jest.fn().mockReturnValue(undefined) };
     access = {
-      resolveActive: jest
-        .fn()
-        .mockResolvedValue({ workspaceId: 'ws-a', role: WorkspaceRole.ADMIN }),
+      resolveActive: jest.fn().mockResolvedValue({
+        workspaceId: 'ws-a',
+        role: WorkspaceRole.ADMIN,
+        workspaceStatus: 'ACTIVE',
+      }),
     };
     guard = new WorkspaceGuard(
       reflector as unknown as Reflector,
@@ -55,6 +57,23 @@ describe('WorkspaceGuard', () => {
       userId: 'u1',
       role: WorkspaceRole.ADMIN,
     });
+  });
+
+  it('403s with WORKSPACE_SUSPENDED for a suspended workspace, even for an owner', async () => {
+    access.resolveActive.mockResolvedValue({
+      workspaceId: 'ws-a',
+      role: WorkspaceRole.OWNER,
+      workspaceStatus: 'SUSPENDED',
+    });
+    const err: unknown = await guard
+      .canActivate(ctx())
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ForbiddenException);
+    expect((err as ForbiddenException).getResponse()).toMatchObject({
+      code: 'WORKSPACE_SUSPENDED',
+      message: expect.stringContaining('suspended') as string,
+    });
+    expect(req.tenant).toBeUndefined();
   });
 
   it('403s when the role is below the route minimum', async () => {

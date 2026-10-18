@@ -18,6 +18,11 @@ function fakePrisma() {
         counts.set(id, count);
         return Promise.resolve({ count });
       }),
+      findUnique: jest.fn(({ where }: Pick<UpsertArgs, 'where'>) => {
+        const { key, windowStart } = where.key_windowStart;
+        const count = counts.get(`${key}@${windowStart.toISOString()}`);
+        return Promise.resolve(count === undefined ? null : { count });
+      }),
       deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
     },
   };
@@ -89,6 +94,28 @@ describe('RateLimitService', () => {
 
     expect(prisma.rateLimit.deleteMany).toHaveBeenCalledWith({
       where: { expiresAt: { lt: new Date(NOW) } },
+    });
+  });
+
+  describe('hit and peek (slow-down counters, M7-23)', () => {
+    it('hit counts without ever refusing, and peek reads the count', async () => {
+      expect(await service.peek('slow:x', 900)).toBe(0);
+      for (let n = 1; n <= 10; n++) {
+        expect(await service.hit('slow:x', 900)).toBe(n);
+      }
+      expect(await service.peek('slow:x', 900)).toBe(10);
+    });
+
+    it('peek does not count', async () => {
+      await service.peek('slow:y', 900);
+      await service.peek('slow:y', 900);
+      expect(prisma.rateLimit.upsert).not.toHaveBeenCalled();
+    });
+
+    it('starts a fresh count in the next window', async () => {
+      await service.hit('slow:z', 900);
+      service.now = () => NOW + 900_000;
+      expect(await service.peek('slow:z', 900)).toBe(0);
     });
   });
 });

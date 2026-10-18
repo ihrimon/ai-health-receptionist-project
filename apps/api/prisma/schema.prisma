@@ -41,6 +41,15 @@ enum WorkspaceStatus {
   @@map("workspace_status")
 }
 
+/// Set by hand by the platform team until billing exists (M7-0; M6 replaces it with a plans table).
+enum WorkspacePlan {
+  BETA
+  STARTER
+  GROWTH
+
+  @@map("workspace_plan")
+}
+
 enum EmailTokenType {
   VERIFY_EMAIL
   RESET_PASSWORD
@@ -103,6 +112,7 @@ model User {
   updatedAt       DateTime  @updatedAt @map("updated_at") @db.Timestamptz
 
   memberships              WorkspaceMember[]
+  auditLogs                AuditLog[]
   sessions                 Session[]
   emailTokens              EmailToken[]
   /// Chatbot versions this user published.
@@ -118,6 +128,7 @@ model Workspace {
   name      String          @db.VarChar(100)
   slug      String          @unique @db.VarChar(60)
   status    WorkspaceStatus @default(ACTIVE)
+  plan      WorkspacePlan   @default(BETA)
   createdAt DateTime        @default(now()) @map("created_at") @db.Timestamptz
   updatedAt DateTime        @updatedAt @map("updated_at") @db.Timestamptz
 
@@ -363,6 +374,9 @@ model Product {
   /// Embedding of name + category + description, filled by indexing (M2-13).
   embedding      Unsupported("vector(384)")?
   embeddingModel String?                     @map("embedding_model") @db.VarChar(100)
+  /// to_tsvector of name + category + description, generated and GIN-indexed
+  /// by the database for keyword search (M7-31). Never written by the app.
+  searchTsv      Unsupported("tsvector")?    @default(dbgenerated()) @map("search_tsv")
   createdAt      DateTime                    @default(now()) @map("created_at") @db.Timestamptz
   updatedAt      DateTime                    @updatedAt @map("updated_at") @db.Timestamptz
 
@@ -373,6 +387,7 @@ model Product {
   @@unique([chatbotId, sku])
   @@index([workspaceId, chatbotId, isActive])
   @@index([workspaceId, chatbotId, category])
+  @@index([searchTsv], type: Gin, map: "products_search_tsv_idx")
   @@map("products")
 }
 
@@ -590,6 +605,9 @@ model KnowledgeChunk {
   /// The model that made `embedding` (M2-14), so a model change can find
   /// and re-embed old chunks (M2-15).
   embeddingModel String                     @map("embedding_model") @db.VarChar(100)
+  /// to_tsvector('english', content), generated and GIN-indexed by the
+  /// database for keyword search (M7-31). Never written by the app.
+  contentTsv     Unsupported("tsvector")?   @default(dbgenerated()) @map("content_tsv")
   createdAt      DateTime                   @default(now()) @map("created_at") @db.Timestamptz
 
   workspace Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
@@ -600,5 +618,29 @@ model KnowledgeChunk {
   @@index([workspaceId, chatbotId])
   @@index([faqId])
   @@index([sourceId])
+  @@index([contentTsv], type: Gin, map: "knowledge_chunks_content_tsv_idx")
   @@map("knowledge_chunks")
+}
+
+/// Platform-admin actions (M7-0). Platform data, not tenant-owned: it is
+/// written only by the admin module. The workspace id is a plain column
+/// (no relation) so the trail survives deleting a workspace.
+model AuditLog {
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  /// Null once the admin's account is deleted; the email below stays.
+  actorUserId   String?  @map("actor_user_id") @db.Uuid
+  actorEmail    String   @map("actor_email") @db.VarChar(255)
+  /// e.g. "workspace.suspend", "workspace.set_plan".
+  action        String   @db.VarChar(60)
+  workspaceId   String?  @map("workspace_id") @db.Uuid
+  workspaceName String?  @map("workspace_name") @db.VarChar(100)
+  /// What changed (before/after values, the reason); never message content.
+  details       Json     @default("{}")
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  actor User? @relation(fields: [actorUserId], references: [id], onDelete: SetNull)
+
+  @@index([createdAt(sort: Desc)])
+  @@index([workspaceId, createdAt(sort: Desc)])
+  @@map("audit_logs")
 }

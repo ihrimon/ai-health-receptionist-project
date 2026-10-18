@@ -1,6 +1,12 @@
+import { usageCostConfigFromEnv } from '../modules/admin/usage-cost';
 import { join } from 'path';
+import { loadTestConfigFromEnv } from './load-test';
 
 export default () => ({
+  // Fake LLM + scaled rate limits for the local load test (M7-5); throws at
+  // start-up if switched on in production.
+  loadTest: loadTestConfigFromEnv(process.env),
+
   nodeEnv: process.env.NODE_ENV ?? 'development',
   apiPort: parseInt(process.env.API_PORT ?? '3001', 10),
   dashboardUrl: process.env.DASHBOARD_URL ?? 'http://localhost:3000',
@@ -25,12 +31,24 @@ export default () => ({
     // Prisma connects with DATABASE_URL (the Prisma CLI reads it too, via
     // prisma.config.ts). Without it, the URL is built from the POSTGRES_*
     // parts docker-compose uses to create the Postgres container.
+    // Row-Level Security (M7-1): in production this is the restricted
+    // `brainstack_app` role, which the policies apply to.
     url: process.env.DATABASE_URL ?? buildDatabaseUrl(),
+    // The owner/migration role: Prisma migrations and pg-boss (its own
+    // `pgboss` schema holds no tenant data). Unset, DATABASE_URL is used for
+    // both, which is how local development and the old setup work.
+    adminUrl: process.env.DATABASE_ADMIN_URL ?? '',
     // Managed free-tier Postgres (Neon, Supabase, etc.) requires TLS and
     // usually can't present a cert the default Node trust store
     // recognizes — set POSTGRES_SSL=true for those; leave unset for a
     // local/Docker Postgres with no TLS at all.
     ssl: process.env.POSTGRES_SSL === 'true',
+    // Most connections the API's pool opens (node-postgres defaults to 10).
+    // Every tenant query is its own short transaction, so under load the
+    // pool size caps how many requests can be in the database at once
+    // (M7-5). Keep it below Postgres max_connections divided by the number
+    // of API instances.
+    poolMax: parseInt(process.env.DATABASE_POOL_MAX ?? '10', 10),
   },
 
   // Background jobs run on pg-boss in the app's own Postgres (no Redis in
@@ -85,6 +103,10 @@ export default () => ({
     // chat answers 503 without it.
     conversationTokenSecret: process.env.CONVERSATION_TOKEN_SECRET ?? '',
   },
+
+  // Price assumptions for the platform-admin usage and cost view (M6-12).
+  // Estimates only; see modules/admin/usage-cost.ts.
+  adminUsage: usageCostConfigFromEnv(process.env),
 
   knowledge: {
     embeddingModel:

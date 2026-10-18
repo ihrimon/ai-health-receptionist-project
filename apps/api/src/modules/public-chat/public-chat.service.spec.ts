@@ -6,13 +6,17 @@ import {
 import { NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { PrismaService } from '../../database/prisma.service';
-import { RateLimitService } from '../../rate-limit/rate-limit.service';
+import {
+  RateLimitedException,
+  RateLimitService,
+} from '../../rate-limit/rate-limit.service';
 import { currentTenant } from '../../tenancy/tenant-context';
 import { ConversationsService } from '../conversations/conversations.service';
 import { PreviewChatService } from '../preview-chat/preview-chat.service';
 import { ConversationTokenService } from './conversation-token.service';
 import {
   PUBLIC_CHAT_LIMITS,
+  VISITOR_DAILY_LIMIT_REPLY,
   PublicChatService,
   VISITOR_BUSY_REPLY,
   VISITOR_LIMIT_REPLY,
@@ -89,6 +93,12 @@ describe('PublicChatService', () => {
       headerTitle: config.widget.headerTitle,
       launcherIcon: 'chat',
     });
+  });
+
+  it('has no privacy link when the dashboard address is unknown (M7-14)', async () => {
+    await expect(service.config('cb_abc')).resolves.not.toHaveProperty(
+      'privacyUrl',
+    );
   });
 
   it('sends the chosen launcher icon, and the default for a custom one', async () => {
@@ -246,6 +256,50 @@ describe('PublicChatService', () => {
       expect(preview.answer).not.toHaveBeenCalled();
     });
 
+    describe("a chatbot's daily cap (M7-22)", () => {
+      it('is 200 messages per UTC day, counted per chatbot on its own', async () => {
+        await send();
+        expect(rateLimit.consume).toHaveBeenCalledWith({
+          key: 'public:bot-day:bot-1',
+          limit: 200,
+          windowSeconds: 86400,
+        });
+      });
+
+      it('over the cap, answers kindly without the model and without storing anything', async () => {
+        rateLimit.consume
+          .mockResolvedValueOnce(undefined)
+          .mockRejectedValueOnce(new RateLimitedException(3600));
+
+        await send();
+
+        expect(preview.answer).not.toHaveBeenCalled();
+        expect(conversations.find).not.toHaveBeenCalled();
+        expect(events[0]).toEqual({
+          type: 'delta',
+          text: VISITOR_DAILY_LIMIT_REPLY,
+        });
+        expect(events[events.length - 1]).toEqual({
+          type: 'done',
+          conversationId: CONVERSATION,
+          answeredBy: 'fallback',
+        });
+      });
+
+      it('is not used up by visitors the per-IP and per-conversation limits turn away', async () => {
+        rateLimit.consume.mockRejectedValueOnce(new RateLimitedException(30));
+        await expect(send()).rejects.toBeInstanceOf(RateLimitedException);
+        expect(rateLimit.consume).toHaveBeenCalledTimes(1);
+      });
+
+      it('passes other errors on', async () => {
+        rateLimit.consume
+          .mockResolvedValueOnce(undefined)
+          .mockRejectedValueOnce(new Error('db down'));
+        await expect(send()).rejects.toThrow('db down');
+      });
+    });
+
     it('points to the company, without the model, after 50 messages', async () => {
       conversations.find.mockResolvedValue({
         id: CONVERSATION,
@@ -330,6 +384,88 @@ describe('PublicChatService', () => {
     it('is a 404 when the conversation is not this chatbot’s', async () => {
       conversations.rate.mockResolvedValue(false);
       await expect(rate()).rejects.toThrow(NotFoundException);
+    });
+  });
+});
+
+describe('PublicChatService rate limits in load-test mode (M7-5)', () => {
+  it('scales the limits only when load-test mode is on', async () => {
+    const consume = jest.fn().mockResolvedValue(undefined);
+    const make = (loadTest: unknown) =>
+      new PublicChatService(
+        {
+          chatbot: {
+            findUnique: jest.fn().mockResolvedValue({
+              id: 'bot-1',
+              workspaceId: 'ws-1',
+              status: 'ENABLED',
+              workspace: { status: 'ACTIVE' },
+              publishedVersion: {
+                id: 'ver-1',
+                config: defaultChatbotConfig('Rina Shop'),
+              },
+            }),
+          },
+        } as never,
+        { consume } as never,
+        {} as never,
+        { start: jest.fn().mockResolvedValue('c1') } as never,
+        { sign: jest.fn().mockReturnValue('t') } as never,
+        { get: () => loadTest } as never,
+      );
+    const request = { visitorId: 'v1' } as never;
+
+    await make({ enabled: true, rateLimitFactor: 50 }).startConversation(
+      'pub',
+      '1.1.1.1',
+      request,
+    );
+    expect(consume).toHaveBeenLastCalledWith({
+      key: 'public:new:1.1.1.1',
+      limit: PUBLIC_CHAT_LIMITS.newConversationHour.limit * 50,
+      windowSeconds: PUBLIC_CHAT_LIMITS.newConversationHour.windowSeconds,
+    });
+
+    await make({ enabled: false, rateLimitFactor: 50 }).startConversation(
+      'pub',
+      '1.1.1.1',
+      request,
+    );
+    expect(consume).toHaveBeenLastCalledWith({
+      key: 'public:new:1.1.1.1',
+      ...PUBLIC_CHAT_LIMITS.newConversationHour,
+    });
+  });
+});
+
+describe('PublicChatService privacy link (M7-14)', () => {
+  it('points the widget at the dashboard privacy page', async () => {
+    const service = new PublicChatService(
+      {
+        chatbot: {
+          findUnique: jest.fn().mockResolvedValue({
+            id: 'bot-1',
+            workspaceId: 'ws-1',
+            status: 'ENABLED',
+            workspace: { status: 'ACTIVE' },
+            publishedVersion: {
+              id: 'ver-1',
+              config: defaultChatbotConfig('Rina Shop'),
+            },
+          }),
+        },
+      } as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {
+        get: (key: string) =>
+          key === 'dashboardUrl' ? 'https://app.test/' : undefined,
+      } as never,
+    );
+    await expect(service.config('cb_abc')).resolves.toMatchObject({
+      privacyUrl: 'https://app.test/privacy',
     });
   });
 });

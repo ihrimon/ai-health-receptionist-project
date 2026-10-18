@@ -22,6 +22,7 @@ import { UsageModule } from './modules/usage/usage.module';
 import { WidgetPageModule } from './modules/widget-page/widget-page.module';
 import { LeadsModule } from './modules/leads/leads.module';
 import { AnalyticsModule } from './modules/analytics/analytics.module';
+import { AdminModule } from './modules/admin/admin.module';
 
 @Module({
   imports: [
@@ -49,6 +50,7 @@ import { AnalyticsModule } from './modules/analytics/analytics.module';
     WidgetPageModule,
     LeadsModule,
     AnalyticsModule,
+    AdminModule,
   ],
   controllers: [AppController],
   providers: [AppService],

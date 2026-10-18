@@ -10,10 +10,13 @@ import * as path from 'path';
  * knowledge.service.ts adds workspace_id to every knowledge_chunks query;
  * the integration suite proves it (M2-12). analytics.service.ts adds it to
  * every table its day-grouping queries read (M5-8), proven the same way.
+ * app-role.script.ts is a CLI that touches no tenant table: it only reads
+ * pg_roles and runs ALTER ROLE for the app's database role (M7-1).
  */
 const ALLOWED = new Set([
   'modules/knowledge/knowledge.service.ts',
   'modules/analytics/analytics.service.ts',
+  'database/app-role.script.ts',
 ]);
 
 // A call such as .$queryRaw`…` or .$executeRawUnsafe(…), not a mention in

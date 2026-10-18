@@ -1,6 +1,5 @@
 import {
   BadRequestException,
-  ConflictException,
   Injectable,
   Logger,
   UnauthorizedException,
@@ -16,8 +15,14 @@ import {
 import { EmailService, OutgoingEmail } from '../email/email.service';
 import { RateLimitService } from '../../rate-limit/rate-limit.service';
 import { WorkspacesService } from '../workspaces/workspaces.service';
+import { runAsSystem } from '../../tenancy/tenant-context';
 import { WorkspaceAccessService } from '../../tenancy/workspace-access.service';
-import { resetPasswordMessage, verifyEmailMessage } from './auth-emails';
+import { PasswordResetQueue } from './password-reset.queue';
+import {
+  accountExistsMessage,
+  resetPasswordMessage,
+  verifyEmailMessage,
+} from './auth-emails';
 import { AuthContext } from './auth-context';
 import { RESET_PASSWORD_TTL_MS, VERIFY_EMAIL_TTL_MS } from './auth.constants';
 import { LoginDto } from './dto/login.dto';
@@ -33,6 +38,12 @@ import { IssuedSession, SessionsService } from './sessions.service';
 
 const MINUTE = 60;
 const HOUR = 60 * MINUTE;
+
+/** M7-23: failed logins per email (all IPs together) before replies slow. */
+const LOGIN_FREE_FAILURES = 5;
+const LOGIN_FAILURE_WINDOW_SECONDS = 15 * MINUTE;
+const LOGIN_DELAY_STEP_MS = 500;
+const LOGIN_DELAY_MAX_MS = 3000;
 
 export interface RequestMeta {
   ipAddress?: string;
@@ -64,59 +75,77 @@ export class AuthService {
     private readonly email: EmailService,
     private readonly config: ConfigService,
     private readonly access: WorkspaceAccessService,
+    private readonly resetQueue: PasswordResetQueue,
   ) {}
 
   /**
-   * M1-16: user + workspace + OWNER membership + default chatbot + session
-   * in one transaction, then a verification email (best-effort, outside
-   * the transaction so a mail failure can't undo the signup).
+   * M1-16: user + workspace + OWNER membership + default chatbot in one
+   * transaction, then a verification email (best-effort, outside the
+   * transaction so a mail failure can't undo the signup).
+   *
+   * M7-21: the caller learns nothing about whether the address already had
+   * an account. A new address gets the verification mail, an existing one
+   * a "you already have an account" mail, and both get the same reply. No
+   * session is issued; the user signs in after confirming the email.
    */
-  async register(
-    dto: RegisterDto,
-    meta: RequestMeta,
-  ): Promise<{ user: User; workspace: Workspace; session: IssuedSession }> {
+  async register(dto: RegisterDto, meta: RequestMeta): Promise<void> {
     await this.rateLimit.consume({
       key: `register:ip:${meta.ipAddress}`,
       limit: 5,
       windowSeconds: HOUR,
     });
 
-    const taken = await this.prisma.user.findUnique({
-      where: { email: dto.email },
-      select: { id: true },
-    });
-    if (taken) throw this.emailTaken();
-
+    // Hash first on both paths so they cost about the same.
     const passwordHash = await hashPassword(dto.password);
-    let result: { user: User; workspace: Workspace; session: IssuedSession };
+    const existing = await this.prisma.user.findUnique({
+      where: { email: dto.email },
+    });
+    if (existing) {
+      await this.notifyAccountExists(existing);
+      return;
+    }
+
+    let user: User;
     try {
-      result = await this.prisma.$transaction(async (tx) => {
-        const user = await tx.user.create({
-          data: { email: dto.email, name: dto.name, passwordHash },
-        });
-        const workspace = await this.workspaces.createWithOwner(
-          { name: dto.companyName, ownerUserId: user.id },
-          tx,
-        );
-        const session = await this.sessions.create(
-          { userId: user.id, activeWorkspaceId: workspace.id, ...meta },
-          tx,
-        );
-        return { user, workspace, session };
-      });
+      user = await runAsSystem('sign up', () =>
+        this.prisma.$transaction(async (tx) => {
+          const created = await tx.user.create({
+            data: { email: dto.email, name: dto.name, passwordHash },
+          });
+          await this.workspaces.createWithOwner(
+            { name: dto.companyName, ownerUserId: created.id },
+            tx,
+          );
+          return created;
+        }),
+      );
     } catch (err) {
       // Two signups with the same email racing past the check above.
       if (
         err instanceof Prisma.PrismaClientKnownRequestError &&
         err.code === 'P2002'
       ) {
-        throw this.emailTaken();
+        const winner = await this.prisma.user.findUnique({
+          where: { email: dto.email },
+        });
+        if (winner) await this.notifyAccountExists(winner);
+        return;
       }
       throw err;
     }
 
-    await this.sendVerificationEmail(result.user);
-    return result;
+    await this.sendVerificationEmail(user);
+  }
+
+  private async notifyAccountExists(user: User): Promise<void> {
+    await this.sendBestEffort(
+      accountExistsMessage(
+        user.email,
+        user.name,
+        this.dashboardLink('/login'),
+        this.dashboardLink('/forgot-password'),
+      ),
+    );
   }
 
   /** M1-17/M1-18: same error for unknown email and wrong password. */
@@ -130,16 +159,35 @@ export class AuthService {
       { key: `login:ip:${meta.ipAddress}`, limit: 20, windowSeconds: HOUR },
     );
 
-    const user = await this.prisma.user.findUnique({
-      where: { email: dto.email },
-      include: {
-        memberships: { orderBy: { createdAt: 'asc' }, take: 1 },
-      },
-    });
+    // M7-23: many wrong guesses at one address, from any mix of IPs, make
+    // every attempt at it slower. Nobody is locked out, so the real owner
+    // can still sign in, just later. Counted per email whether or not an
+    // account exists, so this doesn't reveal which addresses do.
+    const failKey = `login:fail:email:${dto.email}`;
+    const failures = await this.rateLimit.peek(
+      failKey,
+      LOGIN_FAILURE_WINDOW_SECONDS,
+    );
+    const delayMs = Math.min(
+      Math.max(0, failures - LOGIN_FREE_FAILURES) * LOGIN_DELAY_STEP_MS,
+      LOGIN_DELAY_MAX_MS,
+    );
+    if (delayMs > 0) await this.rateLimit.sleep(delayMs);
+
+    // The user's first workspace is found before any workspace is active.
+    const user = await runAsSystem('log in', () =>
+      this.prisma.user.findUnique({
+        where: { email: dto.email },
+        include: {
+          memberships: { orderBy: { createdAt: 'asc' }, take: 1 },
+        },
+      }),
+    );
     const valid = user
       ? await verifyPassword(user.passwordHash, dto.password)
       : await burnPasswordCheck(dto.password);
     if (!user || !valid) {
+      await this.rateLimit.hit(failKey, LOGIN_FAILURE_WINDOW_SECONDS);
       throw new UnauthorizedException('Invalid email or password');
     }
 
@@ -155,11 +203,14 @@ export class AuthService {
   }
 
   async me({ user, session }: AuthContext): Promise<MeResponse> {
-    const memberships = await this.prisma.workspaceMember.findMany({
-      where: { userId: user.id },
-      include: { workspace: true },
-      orderBy: { createdAt: 'asc' },
-    });
+    // All of the user's workspaces, not just the current one.
+    const memberships = await runAsSystem('list my workspaces', () =>
+      this.prisma.workspaceMember.findMany({
+        where: { userId: user.id },
+        include: { workspace: true },
+        orderBy: { createdAt: 'asc' },
+      }),
+    );
     // Same rule as WorkspaceGuard, so the dashboard shows the workspace
     // its requests will actually run in.
     const resolved = await this.access.resolveActive(session);
@@ -199,13 +250,33 @@ export class AuthService {
    * M1-19: always succeeds from the caller's point of view, so it can't be
    * used to find out which emails have accounts.
    */
-  async forgotPassword(email: string): Promise<void> {
-    await this.rateLimit.consume({
-      key: `forgot-password:email:${email}`,
-      limit: 3,
-      windowSeconds: HOUR,
-    });
+  async forgotPassword(email: string, meta: RequestMeta): Promise<void> {
+    // Per address (so one inbox isn't flooded) and per caller (so this
+    // can't be used to mail many strangers).
+    await this.rateLimit.consume(
+      {
+        key: `forgot-password:email:${email}`,
+        limit: 3,
+        windowSeconds: HOUR,
+      },
+      {
+        key: `forgot-password:ip:${meta.ipAddress}`,
+        limit: 10,
+        windowSeconds: HOUR,
+      },
+    );
 
+    // Known or not, the answer is the same and equally fast: the lookup,
+    // the token and the mail all happen in the queued job (M7-24).
+    await this.resetQueue.enqueue(email);
+  }
+
+  /**
+   * The queued half of forgotPassword (M7-24). Users and email tokens are
+   * platform tables (no workspace), so this needs no tenant context. A send
+   * that throws is retried by the queue.
+   */
+  async sendPasswordReset(email: string): Promise<void> {
     const user = await this.prisma.user.findUnique({ where: { email } });
     if (!user) return;
 
@@ -214,7 +285,7 @@ export class AuthService {
       EmailTokenType.RESET_PASSWORD,
       RESET_PASSWORD_TTL_MS,
     );
-    await this.sendBestEffort(
+    await this.email.send(
       resetPasswordMessage(
         user.email,
         user.name,
@@ -227,7 +298,18 @@ export class AuthService {
    * M1-19: sets the new password and logs out every session of that user
    * (D-2 §2.1). The link arrived by email, so it also proves the address.
    */
-  async resetPassword(token: string, newPassword: string): Promise<void> {
+  async resetPassword(
+    token: string,
+    newPassword: string,
+    meta: RequestMeta,
+  ): Promise<void> {
+    // Hashing a password is deliberately slow; without a limit an anonymous
+    // caller could keep the CPU busy with bad tokens (M7-2).
+    await this.rateLimit.consume({
+      key: `reset-password:ip:${meta.ipAddress}`,
+      limit: 10,
+      windowSeconds: HOUR,
+    });
     const passwordHash = await hashPassword(newPassword);
     await this.prisma.$transaction(async (tx) => {
       const userId = await this.consumeEmailToken(
@@ -248,7 +330,12 @@ export class AuthService {
   }
 
   /** M1-20 */
-  async verifyEmail(token: string): Promise<void> {
+  async verifyEmail(token: string, meta: RequestMeta): Promise<void> {
+    await this.rateLimit.consume({
+      key: `verify-email:ip:${meta.ipAddress}`,
+      limit: 30,
+      windowSeconds: HOUR,
+    });
     await this.prisma.$transaction(async (tx) => {
       const userId = await this.consumeEmailToken(
         tx,
@@ -338,9 +425,11 @@ export class AuthService {
     return record.userId;
   }
 
-  private dashboardLink(path: string, token: string): string {
+  private dashboardLink(path: string, token?: string): string {
     const base = this.config.get<string>('dashboardUrl');
-    return `${base}${path}?token=${encodeURIComponent(token)}`;
+    return token === undefined
+      ? `${base}${path}`
+      : `${base}${path}?token=${encodeURIComponent(token)}`;
   }
 
   private async sendBestEffort(message: OutgoingEmail): Promise<void> {
@@ -351,9 +440,5 @@ export class AuthService {
         `Could not send "${message.subject}" email: ${(err as Error).message}`,
       );
     }
-  }
-
-  private emailTaken(): ConflictException {
-    return new ConflictException('An account with this email already exists');
   }
 }

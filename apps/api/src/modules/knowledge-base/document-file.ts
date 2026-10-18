@@ -28,6 +28,51 @@ const GENERIC_MIME = new Set(['', 'application/octet-stream']);
 
 const ZIP_MAGIC = Buffer.from([0x50, 0x4b, 0x03, 0x04]);
 
+/**
+ * A .docx is a zip, and a small one can inflate to gigabytes (a zip bomb)
+ * while the text is extracted inside the API process. A real document with
+ * pictures stays far below these limits.
+ */
+export const DOCX_MAX_ENTRIES = 2000;
+export const DOCX_MAX_UNCOMPRESSED_BYTES = 150 * 1024 * 1024;
+
+/**
+ * What the zip's own central directory declares: the number of entries and
+ * the total uncompressed size, or null when there is no readable directory
+ * (the extractor then fails with its own message). Zip64 sizes (0xFFFFFFFF)
+ * count as too large.
+ */
+export function zipDeclaredSize(
+  file: Buffer,
+): { entries: number; bytes: number } | null {
+  // The end-of-central-directory record is within the last 64 KB + 22 bytes.
+  const from = Math.max(0, file.length - 22 - 0xffff);
+  let eocd = -1;
+  for (let i = file.length - 22; i >= from; i--) {
+    if (file.readUInt32LE(i) === 0x06054b50) {
+      eocd = i;
+      break;
+    }
+  }
+  if (eocd < 0) return null;
+  const entries = file.readUInt16LE(eocd + 10);
+  let offset = file.readUInt32LE(eocd + 16);
+  let bytes = 0;
+  let counted = 0;
+  while (counted < Math.min(entries, DOCX_MAX_ENTRIES + 1)) {
+    if (offset + 46 > file.length || file.readUInt32LE(offset) !== 0x02014b50) {
+      return null;
+    }
+    bytes += file.readUInt32LE(offset + 24);
+    const nameLength = file.readUInt16LE(offset + 28);
+    const extraLength = file.readUInt16LE(offset + 30);
+    const commentLength = file.readUInt16LE(offset + 32);
+    offset += 46 + nameLength + extraLength + commentLength;
+    counted++;
+  }
+  return { entries, bytes };
+}
+
 /** PDF: "%PDF-" near the start (some writers put a few bytes before it). */
 function looksLikePdf(file: Buffer): boolean {
   return file.subarray(0, 1024).includes('%PDF-');
@@ -42,6 +87,15 @@ function looksLikeDocx(file: Buffer): boolean {
     file.subarray(0, 4).equals(ZIP_MAGIC) &&
     file.includes('[Content_Types].xml') &&
     file.includes('word/document.xml')
+  );
+}
+
+function isZipBomb(file: Buffer): boolean {
+  const declared = zipDeclaredSize(file);
+  return (
+    declared !== null &&
+    (declared.entries > DOCX_MAX_ENTRIES ||
+      declared.bytes > DOCX_MAX_UNCOMPRESSED_BYTES)
   );
 }
 
@@ -107,6 +161,9 @@ export function checkDocumentFile(
   }
   if (!CONTENT_CHECKS[ext](file)) {
     throw rejected(`The file's content isn't a valid ${ext.toUpperCase()}`);
+  }
+  if (ext === 'docx' && isZipBomb(file)) {
+    throw rejected('The Word document is too large once unpacked');
   }
   return { extension: ext, mimeType: MIME_BY_EXTENSION[ext] };
 }

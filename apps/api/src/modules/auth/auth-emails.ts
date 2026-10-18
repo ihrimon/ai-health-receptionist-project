@@ -44,3 +44,23 @@ export function resetPasswordMessage(
     ),
   };
 }
+
+/** M7-21: sent instead of a verification mail when the address is taken. */
+export function accountExistsMessage(
+  to: string,
+  name: string,
+  loginLink: string,
+  resetLink: string,
+): OutgoingEmail {
+  return {
+    to,
+    subject: 'You already have an account',
+    html: `
+    <p>Hi ${escapeHtml(name)},</p>
+    <p>Someone tried to sign up with this email address, but it already has an account.</p>
+    <p><a href="${escapeHtml(loginLink)}">Sign in</a></p>
+    <p style="color:#666;font-size:13px">Forgot your password? <a href="${escapeHtml(resetLink)}">Reset it here</a>.</p>
+    <p style="color:#666;font-size:13px">If this wasn't you, you can ignore this email.</p>
+  `,
+  };
+}

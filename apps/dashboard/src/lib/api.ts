@@ -32,12 +32,31 @@ export const API_HEADERS = {
 const DASH_SESSION_COOKIE = "dash_session";
 const DASH_SESSION_MAX_AGE_SECONDS = 7 * 24 * 60 * 60; // matches the API's SESSION_TTL_MS
 
+/**
+ * `Secure` whenever the page itself is on https (every deployment), so the
+ * marker never travels over plain http. It is left off on http://localhost,
+ * where browsers may not store a Secure cookie (M7-30). The page's protocol
+ * is used rather than NODE_ENV so `next start` on http still works.
+ */
+const cookieSecure = () =>
+  typeof location !== "undefined" && location.protocol === "https:";
+
+/** The cookie string for the marker (exported for tests). */
+export function dashboardSessionCookie(secure: boolean): string {
+  return `${DASH_SESSION_COOKIE}=1; path=/; max-age=${DASH_SESSION_MAX_AGE_SECONDS}; samesite=lax${secure ? "; secure" : ""}`;
+}
+
+/** The cookie string that removes the marker (exported for tests). */
+export function clearedDashboardSessionCookie(secure: boolean): string {
+  return `${DASH_SESSION_COOKIE}=; path=/; max-age=0; samesite=lax${secure ? "; secure" : ""}`;
+}
+
 export function markDashboardSession() {
-  document.cookie = `${DASH_SESSION_COOKIE}=1; path=/; max-age=${DASH_SESSION_MAX_AGE_SECONDS}; samesite=lax`;
+  document.cookie = dashboardSessionCookie(cookieSecure());
 }
 
 export function clearDashboardSession() {
-  document.cookie = `${DASH_SESSION_COOKIE}=; path=/; max-age=0; samesite=lax`;
+  document.cookie = clearedDashboardSessionCookie(cookieSecure());
 }
 
 /** An API error, with the HTTP status so callers can react to 401/403. */
@@ -119,7 +138,8 @@ export type LlmProvider =
 export interface LlmCredential {
   id: string;
   provider: LlmProvider;
-  apiKey: string;
+  /** Last 4 characters only (or dots); the server never sends the full key. */
+  maskedKey: string;
   model: string;
   sortOrder: number;
   isActive: boolean;
