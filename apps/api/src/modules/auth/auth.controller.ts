@@ -51,31 +51,16 @@ function requestMeta(req: Request): RequestMeta {
 export class AuthController {
   constructor(private readonly authService: AuthService) {}
 
+  /** M7-21: always 202, whether or not the email already has an account. */
   @Public()
   @Post('register')
+  @HttpCode(HttpStatus.ACCEPTED)
   async register(
     @Body() dto: RegisterDto,
     @Req() req: Request,
-    @Res({ passthrough: true }) res: Response,
-  ) {
-    const { user, workspace, session } = await this.authService.register(
-      dto,
-      requestMeta(req),
-    );
-    setSessionCookie(res, session);
-    return {
-      user: {
-        id: user.id,
-        email: user.email,
-        name: user.name,
-        emailVerifiedAt: user.emailVerifiedAt,
-      },
-      workspace: {
-        id: workspace.id,
-        name: workspace.name,
-        slug: workspace.slug,
-      },
-    };
+  ): Promise<{ status: 'check_email' }> {
+    await this.authService.register(dto, requestMeta(req));
+    return { status: 'check_email' };
   }
 
   @Public()

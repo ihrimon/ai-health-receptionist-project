@@ -7,6 +7,7 @@ import type { App } from 'supertest/types';
 import { AppModule } from '../../src/app.module';
 import { configureApp } from '../../src/app.setup';
 import { EmbeddingService } from '../../src/modules/knowledge/embedding.service';
+import { createAdminPrisma } from './admin-prisma';
 import { fakeEmbeddingService } from './fake-embedding';
 
 /**
@@ -104,16 +105,85 @@ describe('Security review (M7-2)', () => {
     });
   });
 
+  describe('signup does not reveal registered emails (M7-21)', () => {
+    const body = (email: string) => ({
+      name: 'Enum Tester',
+      email,
+      password: 'a long enough password 1',
+      companyName: `Enum Co ${run}`,
+    });
+
+    it('answers a new and an already-registered email identically, and sets no session', async () => {
+      const email = `enum-${run}@example.test`;
+      const first = await post('/v1/auth/register', '10.9.0.1')
+        .send(body(email))
+        .expect(202);
+      const again = await post('/v1/auth/register', '10.9.0.2')
+        .send(body(email))
+        .expect(202);
+
+      expect(again.body).toEqual(first.body);
+      expect(first.body).toEqual({ status: 'check_email' });
+      expect(first.headers['set-cookie']).toBeUndefined();
+      expect(again.headers['set-cookie']).toBeUndefined();
+      const admin = createAdminPrisma();
+      try {
+        expect(await admin.user.count({ where: { email } })).toBe(1);
+      } finally {
+        await admin.$disconnect();
+      }
+    });
+  });
+
+  describe('login slows down, never locks, across IPs (M7-23)', () => {
+    it('makes wrong guesses at one email from many addresses slower, and the right password still works', async () => {
+      const email = `slow-${run}@example.test`;
+      const password = 'a long enough password 1';
+      await post('/v1/auth/register', '10.9.1.1')
+        .send({
+          name: 'Slow Tester',
+          email,
+          password,
+          companyName: `Slow Co ${run}`,
+        })
+        .expect(202);
+
+      // 5 free failures, each from a different address.
+      for (let n = 0; n < 5; n++) {
+        await post('/v1/auth/login', `10.9.2.${n + 1}`)
+          .send({ email, password: 'wrong password here' })
+          .expect(401);
+      }
+      // 2 more: the next attempt waits 2 x 500 ms.
+      for (let n = 5; n < 7; n++) {
+        await post('/v1/auth/login', `10.9.2.${n + 1}`)
+          .send({ email, password: 'wrong password here' })
+          .expect(401);
+      }
+      const started = Date.now();
+      await post('/v1/auth/login', '10.9.2.99')
+        .send({ email, password })
+        .expect(204);
+      expect(Date.now() - started).toBeGreaterThanOrEqual(1000);
+    }, 30_000);
+  });
+
   describe('Word uploads', () => {
     async function signUp(): Promise<string> {
-      const res = await post('/v1/auth/register')
+      await post('/v1/auth/register')
         .send({
           name: 'Zip Tester',
           email: `zip-${run}@example.test`,
           password: 'a long enough password 1',
           companyName: `Zip Co ${run}`,
         })
-        .expect(201);
+        .expect(202);
+      const res = await post('/v1/auth/login')
+        .send({
+          email: `zip-${run}@example.test`,
+          password: 'a long enough password 1',
+        })
+        .expect(204);
       const cookies = res.headers['set-cookie'] as unknown as string[];
       return cookies[0].split(';')[0];
     }

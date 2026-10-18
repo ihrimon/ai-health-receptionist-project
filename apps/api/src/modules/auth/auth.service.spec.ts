@@ -1,8 +1,4 @@
-import {
-  BadRequestException,
-  ConflictException,
-  UnauthorizedException,
-} from '@nestjs/common';
+import { BadRequestException, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Test, TestingModule } from '@nestjs/testing';
 import { PrismaService } from '../../database/prisma.service';
@@ -33,7 +29,7 @@ describe('AuthService', () => {
   };
   let sessions: Record<'create' | 'revoke' | 'revokeAllForUser', jest.Mock>;
   let workspaces: { createWithOwner: jest.Mock };
-  let rateLimit: { consume: jest.Mock };
+  let rateLimit: Record<'consume' | 'hit' | 'peek' | 'sleep', jest.Mock>;
   let email: { send: jest.Mock };
   let resetQueue: { enqueue: jest.Mock };
 
@@ -74,7 +70,12 @@ describe('AuthService', () => {
       revokeAllForUser: jest.fn(),
     };
     workspaces = { createWithOwner: jest.fn() };
-    rateLimit = { consume: jest.fn() };
+    rateLimit = {
+      consume: jest.fn(),
+      hit: jest.fn().mockResolvedValue(1),
+      peek: jest.fn().mockResolvedValue(0),
+      sleep: jest.fn().mockResolvedValue(undefined),
+    };
     email = { send: jest.fn() };
     resetQueue = { enqueue: jest.fn().mockResolvedValue(undefined) };
 
@@ -119,8 +120,8 @@ describe('AuthService', () => {
       workspaces.createWithOwner.mockResolvedValue({ id: 'ws1', name: 'Acme' });
     });
 
-    it('creates user, workspace and session in one transaction', async () => {
-      const result = await service.register(dto, meta);
+    it('creates user and workspace in one transaction, with no session', async () => {
+      await expect(service.register(dto, meta)).resolves.toBeUndefined();
 
       expect(prisma.$transaction).toHaveBeenCalled();
       const created = firstArg<{
@@ -131,11 +132,7 @@ describe('AuthService', () => {
         { name: 'Acme', ownerUserId: 'u1' },
         prisma,
       );
-      expect(sessions.create).toHaveBeenCalledWith(
-        { userId: 'u1', activeWorkspaceId: 'ws1', ...meta },
-        prisma,
-      );
-      expect(result.session).toBe(issued);
+      expect(sessions.create).not.toHaveBeenCalled();
     });
 
     it('rate-limits by IP (5/hour)', async () => {
@@ -157,26 +154,44 @@ describe('AuthService', () => {
 
     it('still succeeds when the email fails to send', async () => {
       email.send.mockRejectedValue(new Error('SMTP down'));
-      await expect(service.register(dto, meta)).resolves.toBeDefined();
+      await expect(service.register(dto, meta)).resolves.toBeUndefined();
     });
 
-    it('409s on an email that already has an account', async () => {
-      prisma.user.findUnique.mockResolvedValue({ id: 'other' });
-      await expect(service.register(dto, meta)).rejects.toBeInstanceOf(
-        ConflictException,
-      );
+    it('answers the same for an email that already has an account, and mails the owner (M7-21)', async () => {
+      prisma.user.findUnique.mockResolvedValue({
+        id: 'other',
+        email: 'rina@example.com',
+        name: 'Rina',
+      });
+      await expect(service.register(dto, meta)).resolves.toBeUndefined();
+
       expect(prisma.user.create).not.toHaveBeenCalled();
+      expect(workspaces.createWithOwner).not.toHaveBeenCalled();
+      expect(email.send).toHaveBeenCalledTimes(1);
+      expect(email.send).toHaveBeenCalledWith(
+        expect.objectContaining({
+          to: 'rina@example.com',
+          subject: 'You already have an account',
+        }),
+      );
+      expect(sentLink()).toBe('http://dash.test/login');
     });
 
-    it('409s when a concurrent signup wins the unique index', async () => {
+    it('answers the same when a concurrent signup wins the unique index', async () => {
       prisma.user.create.mockRejectedValue(
         new Prisma.PrismaClientKnownRequestError('duplicate', {
           code: 'P2002',
           clientVersion: 'test',
         }),
       );
-      await expect(service.register(dto, meta)).rejects.toBeInstanceOf(
-        ConflictException,
+      prisma.user.findUnique.mockResolvedValueOnce(null).mockResolvedValueOnce({
+        id: 'other',
+        email: 'rina@example.com',
+        name: 'Rina',
+      });
+      await expect(service.register(dto, meta)).resolves.toBeUndefined();
+      expect(email.send).toHaveBeenCalledWith(
+        expect.objectContaining({ subject: 'You already have an account' }),
       );
     });
   });
@@ -233,6 +248,59 @@ describe('AuthService', () => {
         },
         { key: 'login:ip:1.2.3.4', limit: 20, windowSeconds: 3600 },
       );
+    });
+
+    describe('slowing guesses at one email across all IPs (M7-23)', () => {
+      const wrongLogin = () =>
+        service.login(
+          { email: 'rina@example.com', password: 'nope nope nope' },
+          meta,
+        );
+
+      it('counts a failed login against the email, whether or not it has an account', async () => {
+        await wrongLogin().catch(() => undefined);
+        expect(rateLimit.hit).toHaveBeenCalledWith(
+          'login:fail:email:rina@example.com',
+          900,
+        );
+      });
+
+      it('does not count a successful login', async () => {
+        prisma.user.findUnique.mockResolvedValue(user());
+        await service.login(
+          { email: 'rina@example.com', password: 'correct horse battery' },
+          meta,
+        );
+        expect(rateLimit.hit).not.toHaveBeenCalled();
+      });
+
+      it('adds no delay for the first 5 failures', async () => {
+        rateLimit.peek.mockResolvedValue(5);
+        await wrongLogin().catch(() => undefined);
+        expect(rateLimit.sleep).not.toHaveBeenCalled();
+      });
+
+      it('waits 500 ms longer for each failure after that, up to 3 s', async () => {
+        rateLimit.peek.mockResolvedValue(7);
+        await wrongLogin().catch(() => undefined);
+        expect(rateLimit.sleep).toHaveBeenLastCalledWith(1000);
+
+        rateLimit.peek.mockResolvedValue(500);
+        await wrongLogin().catch(() => undefined);
+        expect(rateLimit.sleep).toHaveBeenLastCalledWith(3000);
+      });
+
+      it('never locks: the right password still signs in, only slower', async () => {
+        rateLimit.peek.mockResolvedValue(500);
+        prisma.user.findUnique.mockResolvedValue(user());
+        await expect(
+          service.login(
+            { email: 'rina@example.com', password: 'correct horse battery' },
+            meta,
+          ),
+        ).resolves.toBe(issued);
+        expect(rateLimit.sleep).toHaveBeenCalledWith(3000);
+      });
     });
   });
 
