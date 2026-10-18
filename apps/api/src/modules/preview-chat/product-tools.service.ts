@@ -1,7 +1,11 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { z } from 'zod';
 import { wrapUntrusted } from './preview-prompt';
-import { TENANT_PRISMA, type TenantPrisma } from '../../tenancy/tenant-prisma';
+import {
+  TENANT_PRISMA,
+  type TenantDb,
+  type TenantPrisma,
+} from '../../tenancy/tenant-prisma';
 import type { ChatCompletionTool } from '../llm/providers/provider-adapter.types';
 import {
   KnowledgeService,
@@ -132,8 +136,11 @@ export class ProductToolsService {
   ) {}
 
   /** Tools are only offered to the model when there is something to find. */
-  async hasProducts(chatbotId: string): Promise<boolean> {
-    const count = await this.db.product.count({
+  async hasProducts(
+    chatbotId: string,
+    db: TenantDb = this.db,
+  ): Promise<boolean> {
+    const count = await db.product.count({
       where: { chatbotId, isActive: true },
     });
     return count > 0;

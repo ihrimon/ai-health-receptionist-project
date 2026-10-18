@@ -4,10 +4,11 @@ import {
   type PreviewChatRequest,
   type PreviewChatSource,
 } from '@brainstack/shared';
-import { Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 import { sameText } from '../../common/same-text';
 import type { EmitChatEvent } from '../../common/sse';
 import { RateLimitService } from '../../rate-limit/rate-limit.service';
+import { TENANT_PRISMA, type TenantPrisma } from '../../tenancy/tenant-prisma';
 import { ChatbotService } from '../chatbot/chatbot.service';
 import {
   type AnsweredBy,
@@ -78,6 +79,7 @@ export class PreviewChatService {
     private readonly products: ProductToolsService,
     private readonly usage: UsageService,
     private readonly leadTool: LeadToolService,
+    @Inject(TENANT_PRISMA) private readonly db: TenantPrisma,
   ) {}
 
   async send(
@@ -123,22 +125,64 @@ export class PreviewChatService {
       });
     };
 
-    const credentials = await this.keys.activeCredentials();
-    if (credentials.length === 0) {
+    const startedAt = Date.now();
+    // The embedding is CPU only, so it runs before the database
+    // transaction instead of holding a connection (M7-32).
+    const vector = await this.knowledge.embedQuery(request.message);
+
+    // Everything read before the model call happens in ONE transaction
+    // (M7-32): each separate query cost its own RLS transaction (begin,
+    // set_config, query, commit), about 20 per message in all.
+    const prepared = await this.db.$transaction(async (tx) => {
+      const credentials = await this.keys.activeCredentials(tx);
       // No key, no LLM call: skip the search too.
+      if (credentials.length === 0) return { kind: 'no-credentials' } as const;
+
+      // A custom answer that matches wins, as written, without the model (M3-6).
+      const custom = await this.knowledge.matchCustomAnswer(
+        botId,
+        request.message,
+        vector,
+        tx,
+      );
+      if (custom) return { kind: 'custom', custom } as const;
+
+      const history = request.conversationId
+        ? await this.conversations.recentTurns(
+            {
+              conversationId: request.conversationId,
+              chatbotId: botId,
+              visitorId: context.visitorId,
+              isPreview: context.isPreview,
+            },
+            PREVIEW_CHAT_LIMITS.historyTurns,
+            tx,
+          )
+        : [];
+      const matches = await this.knowledge.search(
+        botId,
+        request.message,
+        undefined,
+        true,
+        vector,
+        tx,
+      );
+      const hasProducts = await this.products.hasProducts(botId, tx);
+      return {
+        kind: 'llm',
+        credentials,
+        history,
+        matches,
+        hasProducts,
+      } as const;
+    });
+
+    if (prepared.kind === 'no-credentials') {
       unstored(context.noCredentialsReply);
       return;
     }
-    const startedAt = Date.now();
-    const vector = await this.knowledge.embedQuery(request.message);
-
-    // A custom answer that matches wins, as written, without the model (M3-6).
-    const custom = await this.knowledge.matchCustomAnswer(
-      botId,
-      request.message,
-      vector,
-    );
-    if (custom) {
+    if (prepared.kind === 'custom') {
+      const { custom } = prepared;
       const sources = [
         {
           title: custom.triggerQuestion,
@@ -160,25 +204,7 @@ export class PreviewChatService {
       emit({ type: 'done', conversationId, answeredBy: 'custom_answer' });
       return;
     }
-
-    const history = request.conversationId
-      ? await this.conversations.recentTurns(
-          {
-            conversationId: request.conversationId,
-            chatbotId: botId,
-            visitorId: context.visitorId,
-            isPreview: context.isPreview,
-          },
-          PREVIEW_CHAT_LIMITS.historyTurns,
-        )
-      : [];
-    const matches = await this.knowledge.search(
-      botId,
-      request.message,
-      undefined,
-      true,
-      vector,
-    );
+    const { credentials, history, matches, hasProducts } = prepared;
     const sources = matches.map(toSource);
     if (context.includeSources) emit({ type: 'sources', sources });
 
@@ -188,7 +214,6 @@ export class PreviewChatService {
     // on: the answer may come from the product tools (M3-8). So does one
     // with questions to ask: the message may be the visitor's answer (M5-4).
     const smallTalk = isSmallTalk(request.message);
-    const hasProducts = await this.products.hasProducts(botId);
     const hasLeadTool = LeadToolService.offered(config);
     if (matches.length === 0 && !smallTalk && !hasProducts && !hasLeadTool) {
       await this.sendFallback(botId, config, request, emit, context, startedAt);

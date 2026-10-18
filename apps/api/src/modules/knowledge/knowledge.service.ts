@@ -1,7 +1,11 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { requireTenant } from '../../tenancy/tenant-context';
-import { TENANT_PRISMA, type TenantPrisma } from '../../tenancy/tenant-prisma';
+import {
+  TENANT_PRISMA,
+  type TenantDb,
+  type TenantPrisma,
+} from '../../tenancy/tenant-prisma';
 import type { ChunkMetadata } from './chunk-text';
 import { EmbeddingService } from './embedding.service';
 import { keywordQuery } from './keyword-query';
@@ -310,12 +314,13 @@ export class KnowledgeService {
     chatbotId: string,
     query: string,
     vector?: number[],
+    db: TenantDb = this.db,
   ): Promise<CustomAnswerMatch | null> {
     const { workspaceId } = requireTenant();
     const literal = toVectorLiteral(
       vector ?? (await this.embedding.embed(query)),
     );
-    const rows = await this.db.$queryRaw<CustomAnswerMatch[]>`
+    const rows = await db.$queryRaw<CustomAnswerMatch[]>`
       SELECT id::text AS id, trigger_question AS "triggerQuestion", answer,
              1 - (embedding <=> ${literal}::vector) AS similarity
       FROM custom_answers
@@ -347,6 +352,7 @@ export class KnowledgeService {
     topK = this.topK,
     onlyRelevant = true,
     queryVector?: number[],
+    db: TenantDb = this.db,
   ): Promise<KnowledgeMatch[]> {
     const { workspaceId } = requireTenant();
     const vector = toVectorLiteral(
@@ -355,7 +361,7 @@ export class KnowledgeService {
     const keywords = keywordQuery(query);
     const candidates = Math.max(topK * 4, MIN_CANDIDATES);
 
-    const rows = await this.db.$queryRaw<KnowledgeMatch[]>`
+    const rows = await db.$queryRaw<KnowledgeMatch[]>`
       WITH meaning AS (
         SELECT id, ROW_NUMBER() OVER (ORDER BY embedding <=> ${vector}::vector) AS rank
         FROM knowledge_chunks

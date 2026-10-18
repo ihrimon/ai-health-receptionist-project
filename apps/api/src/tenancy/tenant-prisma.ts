@@ -158,5 +158,13 @@ export function createTenantPrisma(prisma: PrismaService) {
 
 export type TenantPrisma = ReturnType<typeof createTenantPrisma>;
 
+/** The client inside `$transaction(async (tx) => …)`. */
+export type TenantTx = Parameters<
+  Parameters<TenantPrisma['$transaction']>[0]
+>[0];
+
+/** Either the client or one of its transactions: lets a caller share one transaction (M7-32). */
+export type TenantDb = TenantPrisma | TenantTx;
+
 /** Injection token for the TenantPrisma client. */
 export const TENANT_PRISMA = Symbol('TENANT_PRISMA');

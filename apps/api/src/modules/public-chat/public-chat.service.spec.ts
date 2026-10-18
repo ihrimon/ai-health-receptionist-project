@@ -25,6 +25,15 @@ import {
 
 const CONVERSATION = '5b0d3c1e-7a5c-4b88-9f0a-0a6f2f7d9a11';
 
+/** A prisma mock whose $transaction hands the same mock to the callback. */
+function withTx<T extends object>(mock: T) {
+  const self = {
+    ...mock,
+    $transaction: (fn: (tx: unknown) => unknown) => fn(self),
+  };
+  return self;
+}
+
 describe('PublicChatService', () => {
   const config = defaultChatbotConfig('Rina Shop');
   const liveRow = {
@@ -34,7 +43,10 @@ describe('PublicChatService', () => {
     workspace: { status: 'ACTIVE' },
     publishedVersion: { id: 'ver-1', config },
   };
-  const prisma = { chatbot: { findUnique: jest.fn() } };
+  const prisma = {
+    chatbot: { findUnique: jest.fn() },
+    $transaction: jest.fn(),
+  };
   const rateLimit = { consume: jest.fn() };
   const preview = { answer: jest.fn() };
   const conversations = {
@@ -54,6 +66,9 @@ describe('PublicChatService', () => {
   beforeEach(async () => {
     jest.resetAllMocks();
     events = [];
+    prisma.$transaction.mockImplementation((fn: (tx: unknown) => unknown) =>
+      fn(prisma),
+    );
     prisma.chatbot.findUnique.mockResolvedValue(liveRow);
     rateLimit.consume.mockResolvedValue(undefined);
     preview.answer.mockResolvedValue(undefined);
@@ -393,7 +408,7 @@ describe('PublicChatService rate limits in load-test mode (M7-5)', () => {
     const consume = jest.fn().mockResolvedValue(undefined);
     const make = (loadTest: unknown) =>
       new PublicChatService(
-        {
+        withTx({
           chatbot: {
             findUnique: jest.fn().mockResolvedValue({
               id: 'bot-1',
@@ -406,7 +421,7 @@ describe('PublicChatService rate limits in load-test mode (M7-5)', () => {
               },
             }),
           },
-        } as never,
+        }) as never,
         { consume } as never,
         {} as never,
         { start: jest.fn().mockResolvedValue('c1') } as never,
@@ -441,7 +456,7 @@ describe('PublicChatService rate limits in load-test mode (M7-5)', () => {
 describe('PublicChatService privacy link (M7-14)', () => {
   it('points the widget at the dashboard privacy page', async () => {
     const service = new PublicChatService(
-      {
+      withTx({
         chatbot: {
           findUnique: jest.fn().mockResolvedValue({
             id: 'bot-1',
@@ -454,7 +469,7 @@ describe('PublicChatService privacy link (M7-14)', () => {
             },
           }),
         },
-      } as never,
+      }) as never,
       {} as never,
       {} as never,
       {} as never,
