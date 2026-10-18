@@ -7,6 +7,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import type { PgBoss } from 'pg-boss';
 import { WorkspaceRole } from '../../generated/prisma/client';
+import { runsWorkers } from '../../queue/process-role';
 import { PG_BOSS, QUEUE_NAMES } from '../../queue/queue.constants';
 import { runWithTenant } from '../../tenancy/tenant-context';
 import {
@@ -41,6 +42,8 @@ export class LeadNotifyProcessor implements OnApplicationBootstrap {
   ) {}
 
   async onApplicationBootstrap(): Promise<void> {
+    // API-only process (PROCESS_ROLE=api, M7-7): jobs are queued but run elsewhere.
+    if (!runsWorkers(this.config)) return;
     await this.boss.work<LeadNotifyJobData>(
       QUEUE_NAMES.LEAD_NOTIFY,
       {
