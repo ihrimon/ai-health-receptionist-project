@@ -70,4 +70,6 @@ export interface PublicChatConfig {
   launcherIcon: LauncherIcon;
   quickReplies: string[];
   showBranding: boolean;
+  /** The Privacy Policy the widget's notice links to (M7-14); absent if the API doesn't know the dashboard's address. */
+  privacyUrl?: string;
 }

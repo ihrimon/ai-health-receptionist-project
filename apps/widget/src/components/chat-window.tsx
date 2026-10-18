@@ -33,6 +33,7 @@ export function ChatWindow({
   onSend,
   onClose,
   showBranding = true,
+  privacyUrl,
   focusSignal = 0,
   children,
 }: {
@@ -47,6 +48,8 @@ export function ChatWindow({
   onSend: (text: string) => void;
   onClose?: () => void;
   showBranding?: boolean;
+  /** Where the Privacy Policy is; the notice links to it when given (M7-14). */
+  privacyUrl?: string;
   /** Changes when the host page opens the panel: the message box takes focus again (M4-10). */
   focusSignal?: number;
   children?: ComponentChildren;
@@ -127,6 +130,17 @@ export function ChatWindow({
         {announced && <Markdown key={announced.id} text={announced.text} />}
       </div>
 
+      <p class="px-4 pb-1 text-[11px] leading-snug text-zinc-500" data-testid="privacy-notice">
+        {STRINGS.privacyNotice}
+        {privacyUrl && (
+          <>
+            {" "}
+            <a href={privacyUrl} target="_blank" rel="noopener noreferrer" class="underline">
+              {STRINGS.privacyLink}
+            </a>
+          </>
+        )}
+      </p>
       <MessageInput inputRef={inputRef} onSend={onSend} disabled={typing || busy} brand={brand} />
       {showBranding ? (
         <p class="pb-[max(0.5rem,env(safe-area-inset-bottom))] text-center text-[11px] text-zinc-400">

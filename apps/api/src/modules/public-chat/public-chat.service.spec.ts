@@ -95,6 +95,12 @@ describe('PublicChatService', () => {
     });
   });
 
+  it('has no privacy link when the dashboard address is unknown (M7-14)', async () => {
+    await expect(service.config('cb_abc')).resolves.not.toHaveProperty(
+      'privacyUrl',
+    );
+  });
+
   it('sends the chosen launcher icon, and the default for a custom one', async () => {
     const withIcon = (launcherIcon: typeof config.widget.launcherIcon) => ({
       ...liveRow,
@@ -428,6 +434,38 @@ describe('PublicChatService rate limits in load-test mode (M7-5)', () => {
     expect(consume).toHaveBeenLastCalledWith({
       key: 'public:new:1.1.1.1',
       ...PUBLIC_CHAT_LIMITS.newConversationHour,
+    });
+  });
+});
+
+describe('PublicChatService privacy link (M7-14)', () => {
+  it('points the widget at the dashboard privacy page', async () => {
+    const service = new PublicChatService(
+      {
+        chatbot: {
+          findUnique: jest.fn().mockResolvedValue({
+            id: 'bot-1',
+            workspaceId: 'ws-1',
+            status: 'ENABLED',
+            workspace: { status: 'ACTIVE' },
+            publishedVersion: {
+              id: 'ver-1',
+              config: defaultChatbotConfig('Rina Shop'),
+            },
+          }),
+        },
+      } as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {
+        get: (key: string) =>
+          key === 'dashboardUrl' ? 'https://app.test/' : undefined,
+      } as never,
+    );
+    await expect(service.config('cb_abc')).resolves.toMatchObject({
+      privacyUrl: 'https://app.test/privacy',
     });
   });
 });

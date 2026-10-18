@@ -83,12 +83,18 @@ export default function HomePage() {
         </div>
       </div>
 
-      <footer className="relative z-10 pb-4 text-center">
-        <Link
-          href="/login"
-          className="text-muted-foreground/70 hover:text-muted-foreground"
-        >
+      <footer className="relative z-10 flex flex-wrap items-center justify-center gap-x-5 gap-y-1 pb-4 text-center text-muted-foreground/70">
+        <Link href="/login" className="hover:text-muted-foreground">
           Sign in
+        </Link>
+        <Link href="/help" className="hover:text-muted-foreground">
+          Help
+        </Link>
+        <Link href="/terms" className="hover:text-muted-foreground">
+          Terms
+        </Link>
+        <Link href="/privacy" className="hover:text-muted-foreground">
+          Privacy
         </Link>
       </footer>
     </div>

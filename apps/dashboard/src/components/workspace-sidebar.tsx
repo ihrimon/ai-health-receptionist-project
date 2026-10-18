@@ -9,6 +9,7 @@ import {
   ChevronsUpDown,
   CircleHelp,
   House,
+  LifeBuoy,
   LogOut,
   MessagesSquare,
   Package,
@@ -52,6 +53,7 @@ const NAV_ITEMS = [
   { title: "Leads", href: "/app/leads", icon: UserRound },
   { title: "Unanswered", href: "/app/unanswered", icon: CircleHelp },
   { title: "Settings", href: "/app/settings", icon: Settings },
+  { title: "Help", href: "/help", icon: LifeBuoy },
 ];
 
 function initial(text: string): string {
