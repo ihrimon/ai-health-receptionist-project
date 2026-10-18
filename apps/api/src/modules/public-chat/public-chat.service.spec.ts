@@ -6,13 +6,17 @@ import {
 import { NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { PrismaService } from '../../database/prisma.service';
-import { RateLimitService } from '../../rate-limit/rate-limit.service';
+import {
+  RateLimitedException,
+  RateLimitService,
+} from '../../rate-limit/rate-limit.service';
 import { currentTenant } from '../../tenancy/tenant-context';
 import { ConversationsService } from '../conversations/conversations.service';
 import { PreviewChatService } from '../preview-chat/preview-chat.service';
 import { ConversationTokenService } from './conversation-token.service';
 import {
   PUBLIC_CHAT_LIMITS,
+  VISITOR_DAILY_LIMIT_REPLY,
   PublicChatService,
   VISITOR_BUSY_REPLY,
   VISITOR_LIMIT_REPLY,
@@ -244,6 +248,50 @@ describe('PublicChatService', () => {
         { key: 'public:bot:bot-1', ...PUBLIC_CHAT_LIMITS.perBotMinute },
       );
       expect(preview.answer).not.toHaveBeenCalled();
+    });
+
+    describe("a chatbot's daily cap (M7-22)", () => {
+      it('is 200 messages per UTC day, counted per chatbot on its own', async () => {
+        await send();
+        expect(rateLimit.consume).toHaveBeenCalledWith({
+          key: 'public:bot-day:bot-1',
+          limit: 200,
+          windowSeconds: 86400,
+        });
+      });
+
+      it('over the cap, answers kindly without the model and without storing anything', async () => {
+        rateLimit.consume
+          .mockResolvedValueOnce(undefined)
+          .mockRejectedValueOnce(new RateLimitedException(3600));
+
+        await send();
+
+        expect(preview.answer).not.toHaveBeenCalled();
+        expect(conversations.find).not.toHaveBeenCalled();
+        expect(events[0]).toEqual({
+          type: 'delta',
+          text: VISITOR_DAILY_LIMIT_REPLY,
+        });
+        expect(events[events.length - 1]).toEqual({
+          type: 'done',
+          conversationId: CONVERSATION,
+          answeredBy: 'fallback',
+        });
+      });
+
+      it('is not used up by visitors the per-IP and per-conversation limits turn away', async () => {
+        rateLimit.consume.mockRejectedValueOnce(new RateLimitedException(30));
+        await expect(send()).rejects.toBeInstanceOf(RateLimitedException);
+        expect(rateLimit.consume).toHaveBeenCalledTimes(1);
+      });
+
+      it('passes other errors on', async () => {
+        rateLimit.consume
+          .mockResolvedValueOnce(undefined)
+          .mockRejectedValueOnce(new Error('db down'));
+        await expect(send()).rejects.toThrow('db down');
+      });
     });
 
     it('points to the company, without the model, after 50 messages', async () => {
