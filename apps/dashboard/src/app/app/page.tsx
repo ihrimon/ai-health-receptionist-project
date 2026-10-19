@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { MailWarning } from "lucide-react";
 import { OnboardingChecklist } from "@/components/onboarding-checklist";
+import { OverviewHero } from "@/components/overview-hero";
 import { OverviewStats } from "@/components/overview-stats";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -28,7 +29,7 @@ export default function AppHomePage() {
   }, []);
 
   return (
-    <div className="mx-auto grid w-full max-w-3xl gap-4 p-4 sm:p-6">
+    <div className="mx-auto grid w-full max-w-6xl gap-4 p-4 sm:p-6">
       <div>
         <h2 className="text-2xl font-bold tracking-tight">Overview</h2>
         <p className="text-muted-foreground">
@@ -39,6 +40,8 @@ export default function AppHomePage() {
             : ". You don't belong to a workspace yet."}
         </p>
       </div>
+
+      {me.activeWorkspace && <OverviewHero key={`hero-${me.activeWorkspace.id}`} />}
 
       {!me.user.emailVerifiedAt && <VerifyEmailBanner email={me.user.email} />}
 

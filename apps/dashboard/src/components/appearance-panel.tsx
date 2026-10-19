@@ -16,9 +16,13 @@ import { useChatbot } from "@/lib/chatbot";
 import { useSession } from "@/lib/session";
 import {
   ACCENTS,
+  DENSITIES,
+  FONTS,
   RADII,
+  TEXT_SIZES,
   isHexColor,
   useThemeSettings,
+  type FontId,
 } from "@/lib/theme-settings";
 import { toastError, toastSuccess } from "@/lib/toast";
 import { cn } from "@/lib/utils";
@@ -163,11 +167,45 @@ function CustomColor({ withChatbot }: { withChatbot: boolean }) {
   );
 }
 
+function FontSelect({
+  label,
+  value,
+  onChange,
+  children,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <label className="grid gap-1 text-xs font-medium text-muted-foreground">
+      {label}
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="h-10 w-full rounded-lg border bg-card px-3 text-sm font-normal text-foreground outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
+      >
+        {children}
+      </select>
+    </label>
+  );
+}
+
 /** Header button + slide-over panel for mode, accent color and shape. */
 export function AppearancePanel({ withChatbot = false }: { withChatbot?: boolean }) {
   const [open, setOpen] = useState(false);
   const { theme, setTheme } = useTheme();
-  const { settings, setAccent, setRadius, reset } = useThemeSettings();
+  const {
+    settings,
+    setAccent,
+    setRadius,
+    setBodyFont,
+    setHeadingFont,
+    setTextSize,
+    setDensity,
+    reset,
+  } = useThemeSettings();
 
   return (
     <>
@@ -241,6 +279,65 @@ export function AppearancePanel({ withChatbot = false }: { withChatbot?: boolean
                     onClick={() => setRadius(r.id)}
                   >
                     {r.label}
+                  </Choice>
+                ))}
+              </div>
+            </Section>
+
+            <Section
+              title="Fonts"
+              hint="Pick one font for headings and one for paragraphs."
+            >
+              <FontSelect
+                label="Headings"
+                value={settings.headingFont ?? "same"}
+                onChange={(v) =>
+                  setHeadingFont(v === "same" ? null : (v as FontId))
+                }
+              >
+                <option value="same">Same as paragraphs</option>
+                {FONTS.map((f) => (
+                  <option key={f.id} value={f.id}>
+                    {f.label}
+                  </option>
+                ))}
+              </FontSelect>
+              <FontSelect
+                label="Paragraphs"
+                value={settings.bodyFont}
+                onChange={(v) => setBodyFont(v as FontId)}
+              >
+                {FONTS.map((f) => (
+                  <option key={f.id} value={f.id}>
+                    {f.label}
+                  </option>
+                ))}
+              </FontSelect>
+            </Section>
+
+            <Section title="Text size" hint="Scales text and spacing together.">
+              <div className="grid grid-cols-3 gap-2">
+                {TEXT_SIZES.map((t) => (
+                  <Choice
+                    key={t.id}
+                    selected={settings.textSize === t.id}
+                    onClick={() => setTextSize(t.id)}
+                  >
+                    {t.label}
+                  </Choice>
+                ))}
+              </div>
+            </Section>
+
+            <Section title="Spacing" hint="How tightly things are packed.">
+              <div className="grid grid-cols-3 gap-2">
+                {DENSITIES.map((d) => (
+                  <Choice
+                    key={d.id}
+                    selected={settings.density === d.id}
+                    onClick={() => setDensity(d.id)}
+                  >
+                    {d.label}
                   </Choice>
                 ))}
               </div>

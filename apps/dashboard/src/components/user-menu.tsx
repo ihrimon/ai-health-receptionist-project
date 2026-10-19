@@ -18,26 +18,23 @@ import { useSession } from "@/lib/session";
 /** The signed-in person, top right (moved here from the sidebar footer). */
 export function UserMenu() {
   const { me, logout } = useSession();
-  const { user, role } = me;
+  const { user } = me;
 
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
         render={
-          <Button variant="ghost" className="h-10 gap-2 px-1.5 sm:px-2">
-            <Avatar className="size-8 shrink-0">
+          <Button
+            variant="ghost"
+            size="icon"
+            className="rounded-full"
+            aria-label="Account menu"
+          >
+            <Avatar className="size-8">
               <AvatarFallback className="bg-primary text-primary-foreground">
                 {user.name.trim().charAt(0).toUpperCase() || "?"}
               </AvatarFallback>
             </Avatar>
-            <span className="hidden text-left leading-tight md:grid">
-              <span className="max-w-32 truncate text-sm font-medium">
-                {user.name}
-              </span>
-              <span className="text-xs font-normal text-muted-foreground capitalize">
-                {role?.toLowerCase() ?? "Member"}
-              </span>
-            </span>
           </Button>
         }
       />
