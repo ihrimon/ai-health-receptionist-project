@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { MailWarning } from "lucide-react";
 import { OnboardingChecklist } from "@/components/onboarding-checklist";
 import { OverviewStats } from "@/components/overview-stats";
@@ -17,15 +17,26 @@ import { toastError, toastSuccess } from "@/lib/toast";
 export default function AppHomePage() {
   const { me } = useSession();
   const firstName = me.user.name.split(" ")[0];
+  const [greeting, setGreeting] = useState("Welcome");
+
+  useEffect(() => {
+    // Local time, so it is set after mount (the server clock may differ).
+    const hour = new Date().getHours();
+    Promise.resolve(
+      hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening",
+    ).then(setGreeting);
+  }, []);
 
   return (
     <div className="mx-auto grid w-full max-w-3xl gap-4 p-4 sm:p-6">
       <div>
-        <h2 className="text-xl font-semibold">Welcome, {firstName}</h2>
-        <p className="text-sm text-muted-foreground">
+        <h2 className="text-2xl font-bold tracking-tight">Overview</h2>
+        <p className="text-muted-foreground">
+          {greeting},{" "}
+          <span className="font-medium text-foreground">{firstName}</span>
           {me.activeWorkspace
-            ? `You're in ${me.activeWorkspace.name}.`
-            : "You don't belong to a workspace yet."}
+            ? `. Here's how ${me.activeWorkspace.name} is doing.`
+            : ". You don't belong to a workspace yet."}
         </p>
       </div>
 

@@ -1,32 +1,36 @@
 "use client";
 
 import { usePathname } from "next/navigation";
-import { SidebarTrigger } from "@/components/ui/sidebar";
-import { Separator } from "@/components/ui/separator";
+import { PanelLeftClose, PanelLeftOpen } from "lucide-react";
+import { AppearancePanel } from "@/components/appearance-panel";
 import { ModeToggle } from "@/components/mode-toggle";
+import { PageSearch } from "@/components/page-search";
 import { PublishBanner } from "@/components/publish-banner";
+import { UserMenu } from "@/components/user-menu";
+import { Button } from "@/components/ui/button";
+import { useSidebar } from "@/components/ui/sidebar";
 
-const TITLES: { prefix: string; title: string }[] = [
-  { prefix: "/app/chatbot", title: "Chatbot" },
-  { prefix: "/app/knowledge", title: "Knowledge" },
-  { prefix: "/app/products", title: "Products" },
-  { prefix: "/app/conversations", title: "Conversations" },
-  { prefix: "/app/leads", title: "Leads" },
-  { prefix: "/app/unanswered", title: "Unanswered questions" },
-  { prefix: "/app/settings", title: "Settings" },
-  { prefix: "/admin/workspaces", title: "Workspaces" },
-  { prefix: "/admin/conversations", title: "Conversations" },
-  { prefix: "/admin/usage", title: "Usage & cost" },
-  { prefix: "/admin/llm-credentials", title: "LLM keys" },
-];
-
-function titleFor(pathname: string): string {
-  if (pathname === "/admin") return "Workspaces";
-  if (pathname === "/app") return "Home";
-  return TITLES.find((t) => pathname.startsWith(t.prefix))?.title ?? "Dashboard";
+function SidebarToggle() {
+  const { state, isMobile, toggleSidebar } = useSidebar();
+  const Icon = state === "expanded" && !isMobile ? PanelLeftClose : PanelLeftOpen;
+  return (
+    <Button
+      variant="ghost"
+      size="icon-sm"
+      aria-label="Toggle sidebar"
+      onClick={toggleSidebar}
+    >
+      <Icon />
+    </Button>
+  );
 }
 
-/** `withPublishBanner`: the company dashboard (/app) shows it, admin doesn't. */
+/**
+ * Top bar. Left: sidebar toggle and page search. Right: publish status,
+ * appearance, light/dark and the signed-in person. `withPublishBanner`: the
+ * company dashboard (/app) shows the banner and the chatbot color shortcut,
+ * admin doesn't.
+ */
 export function SiteHeader({
   withPublishBanner = false,
 }: {
@@ -35,13 +39,16 @@ export function SiteHeader({
   const pathname = usePathname();
 
   return (
-    <header className="flex h-14 shrink-0 items-center gap-2 border-b px-4">
-      <SidebarTrigger className="-ml-1" />
-      <Separator orientation="vertical" className="mr-2 h-4" />
-      <h1 className="text-sm font-medium">{titleFor(pathname)}</h1>
-      <div className="ml-auto flex items-center gap-3">
+    <header className="sticky top-0 z-20 flex h-16 shrink-0 items-center gap-2 border-b bg-background/90 px-3 backdrop-blur sm:px-4">
+      <SidebarToggle />
+      <div className="flex min-w-0 flex-1 items-center">
+        <PageSearch admin={pathname.startsWith("/admin")} />
+      </div>
+      <div className="flex shrink-0 items-center gap-1">
         {withPublishBanner && <PublishBanner />}
+        <AppearancePanel withChatbot={withPublishBanner} />
         <ModeToggle />
+        <UserMenu />
       </div>
     </header>
   );

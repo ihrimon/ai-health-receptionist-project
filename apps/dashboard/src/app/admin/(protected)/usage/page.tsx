@@ -80,7 +80,7 @@ export default function AdminUsagePage() {
   return (
     <div className="mx-auto grid w-full max-w-6xl content-start gap-4 overflow-y-auto p-4 sm:p-6">
       <div>
-        <h2 className="text-lg font-semibold">Usage &amp; cost</h2>
+        <h2 className="text-2xl font-bold tracking-tight">Usage &amp; cost</h2>
         <p className="text-sm text-muted-foreground">
           {data ? `This month (${data.period}, UTC). ` : ""}
           All money values are estimates, not real billing. Counts only; no
