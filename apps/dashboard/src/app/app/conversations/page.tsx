@@ -120,7 +120,7 @@ export default function ConversationsPage() {
   return (
     <div className="mx-auto grid w-full max-w-4xl gap-4 p-4 sm:p-6">
       <div>
-        <h2 className="text-lg font-semibold">Conversations</h2>
+        <h2 className="text-2xl font-bold tracking-tight">Conversations</h2>
         <p className="text-sm text-muted-foreground">
           Every chat visitors had with your bot. Search what they asked, and open
           one to see the answers and the knowledge they came from.

@@ -150,7 +150,7 @@ function Editor({
     <div className="grid min-w-0 gap-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h2 className="text-lg font-semibold">Chatbot settings</h2>
+          <h2 className="text-2xl font-bold tracking-tight">Chatbot settings</h2>
           <p className="text-sm text-muted-foreground">
             Changes are saved as a draft. Visitors see them after you publish.
           </p>

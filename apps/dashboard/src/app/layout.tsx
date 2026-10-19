@@ -4,6 +4,10 @@ import { Inter, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { ThemeProvider } from "@/components/theme-provider";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import {
+  THEME_INIT_SCRIPT,
+  ThemeSettingsProvider,
+} from "@/lib/theme-settings";
 
 const inter = Inter({
   variable: "--font-sans",
@@ -32,6 +36,10 @@ export default async function RootLayout({ children }: LayoutProps<"/">) {
       suppressHydrationWarning
       className={`${inter.variable} ${geistMono.variable} h-full antialiased`}
     >
+      <head>
+        {/* Paints the saved accent color before React loads (no flash). */}
+        <script nonce={nonce} dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />
+      </head>
       <body className="flex h-full flex-col">
         <ThemeProvider
           attribute="class"
@@ -40,7 +48,9 @@ export default async function RootLayout({ children }: LayoutProps<"/">) {
           nonce={nonce}
           disableTransitionOnChange
         >
-          <TooltipProvider>{children}</TooltipProvider>
+          <ThemeSettingsProvider>
+            <TooltipProvider>{children}</TooltipProvider>
+          </ThemeSettingsProvider>
         </ThemeProvider>
       </body>
     </html>

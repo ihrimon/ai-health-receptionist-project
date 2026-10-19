@@ -47,7 +47,7 @@ export default function UnansweredPage() {
     <div className="mx-auto grid w-full max-w-4xl gap-4 p-4 sm:p-6">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h2 className="text-lg font-semibold">Unanswered questions</h2>
+          <h2 className="text-2xl font-bold tracking-tight">Unanswered questions</h2>
           <p className="text-sm text-muted-foreground">
             Questions your bot couldn&apos;t answer from its knowledge. Add the answer once
             and it will know next time.

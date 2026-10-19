@@ -132,7 +132,7 @@ export default function ProductsPage() {
     <div className="mx-auto grid w-full max-w-5xl gap-4 p-4 sm:p-6">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h2 className="text-lg font-semibold">Products</h2>
+          <h2 className="text-2xl font-bold tracking-tight">Products</h2>
           <p className="text-sm text-muted-foreground">
             What the bot can recommend, with prices and stock. Up to{" "}
             {KNOWLEDGE_LIMITS.products} products.
