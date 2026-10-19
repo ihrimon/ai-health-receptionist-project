@@ -110,7 +110,7 @@ export default function KnowledgePage() {
   return (
     <div className="mx-auto grid w-full max-w-4xl gap-4 p-4 sm:p-6">
       <div>
-        <h2 className="text-lg font-semibold">Knowledge</h2>
+        <h2 className="text-2xl font-bold tracking-tight">Knowledge</h2>
         <p className="text-sm text-muted-foreground">
           What your chatbot answers from. Changes here are live right away.
         </p>

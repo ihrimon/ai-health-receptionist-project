@@ -142,7 +142,7 @@ export default function AdminWorkspacesPage() {
   return (
     <div className="mx-auto grid w-full max-w-6xl gap-4 p-4 sm:p-6">
       <div>
-        <h2 className="text-lg font-semibold">Workspaces</h2>
+        <h2 className="text-2xl font-bold tracking-tight">Workspaces</h2>
         <p className="text-sm text-muted-foreground">
           Every company on the platform. Message counts are totals only; their
           conversations are not visible here.
