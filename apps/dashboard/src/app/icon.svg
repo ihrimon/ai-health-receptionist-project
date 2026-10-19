@@ -1,19 +1,13 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="32" height="32">
-  <rect width="24" height="24" rx="6" fill="#008069" />
-  <path
-    d="M3 11h3a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-5Zm0 0a9 9 0 1 1 18 0m0 0v5a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3Z"
-    fill="none"
-    stroke="#ffffff"
-    stroke-width="2"
-    stroke-linecap="round"
-    stroke-linejoin="round"
-  />
-  <path
-    d="M21 16v2a4 4 0 0 1-4 4h-5"
-    fill="none"
-    stroke="#ffffff"
-    stroke-width="2"
-    stroke-linecap="round"
-    stroke-linejoin="round"
-  />
+  <rect width="24" height="24" rx="6" fill="#059669" />
+  <g fill="none" stroke="#ffffff" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M12 6.5V4.2" />
+    <circle cx="12" cy="3.6" r="0.9" fill="#ffffff" stroke="none" />
+    <rect x="5" y="6.5" width="14" height="10.5" rx="3.2" />
+    <path d="M3.2 11v2.4M20.8 11v2.4" />
+  </g>
+  <circle cx="9.4" cy="11.4" r="1.25" fill="#ffffff" />
+  <circle cx="14.6" cy="11.4" r="1.25" fill="#ffffff" />
+  <path d="M9.6 14.4h4.8" stroke="#ffffff" stroke-width="1.5" stroke-linecap="round" />
+  <path d="M9 17l-1.2 3 3.4-2.2" fill="#ffffff" />
 </svg>

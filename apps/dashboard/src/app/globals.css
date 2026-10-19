@@ -7,9 +7,9 @@
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-sans);
+  --font-sans: var(--app-font-body, var(--font-inter));
   --font-mono: var(--font-mono);
-  --font-heading: var(--font-sans);
+  --font-heading: var(--app-font-heading, var(--app-font-body, var(--font-inter)));
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -199,7 +199,7 @@
   --chart-3: color-mix(in oklab, var(--brand) 55%, #ffffff);
   --chart-4: color-mix(in oklab, var(--brand) 35%, #ffffff);
   --chart-5: color-mix(in oklab, var(--brand) 20%, #ffffff);
-  --radius: 0.75rem;
+  --radius: 0.375rem;
   --sidebar: #ffffff;
   --sidebar-foreground: #0f172a;
   --sidebar-primary: var(--brand);
@@ -210,12 +210,86 @@
   --sidebar-ring: var(--brand);
 }
 
-[data-radius="sharp"] {
-  --radius: 0.375rem;
+[data-radius="balanced"] {
+  --radius: 0.75rem;
 }
 
 [data-radius="rounded"] {
   --radius: 1.1rem;
+}
+
+/* Fonts, text size and spacing chosen in the appearance panel
+   (lib/theme-settings.tsx). The root layout loads the font families. */
+[data-font-body="inter"] {
+  --app-font-body: var(--font-inter);
+}
+
+[data-font-body="poppins"] {
+  --app-font-body: var(--font-poppins);
+}
+
+[data-font-body="jakarta"] {
+  --app-font-body: var(--font-jakarta);
+}
+
+[data-font-body="dm-sans"] {
+  --app-font-body: var(--font-dm-sans);
+}
+
+[data-font-body="manrope"] {
+  --app-font-body: var(--font-manrope);
+}
+
+[data-font-body="lora"] {
+  --app-font-body: var(--font-lora);
+}
+
+[data-font-body="system"] {
+  --app-font-body: ui-sans-serif, system-ui, sans-serif;
+}
+
+[data-font-heading="inter"] {
+  --app-font-heading: var(--font-inter);
+}
+
+[data-font-heading="poppins"] {
+  --app-font-heading: var(--font-poppins);
+}
+
+[data-font-heading="jakarta"] {
+  --app-font-heading: var(--font-jakarta);
+}
+
+[data-font-heading="dm-sans"] {
+  --app-font-heading: var(--font-dm-sans);
+}
+
+[data-font-heading="manrope"] {
+  --app-font-heading: var(--font-manrope);
+}
+
+[data-font-heading="lora"] {
+  --app-font-heading: var(--font-lora);
+}
+
+[data-font-heading="system"] {
+  --app-font-heading: ui-sans-serif, system-ui, sans-serif;
+}
+
+[data-text-size="small"] {
+  font-size: 15px;
+}
+
+[data-text-size="large"] {
+  font-size: 17px;
+}
+
+[data-density="compact"] {
+  --spacing: 0.22rem;
+}
+
+[data-density="relaxed"] {
+  --spacing: 0.28rem;
 }
 
 .dark {
@@ -254,6 +328,15 @@
   }
   html {
     @apply font-sans;
+  }
+  h1,
+  h2,
+  h3,
+  h4 {
+    font-family: var(
+      --app-font-heading,
+      var(--app-font-body, var(--font-inter))
+    );
   }
   /* Every clickable button should show a pointer cursor — browsers don't
      do this by default for <button> (only <a href> gets it for free),

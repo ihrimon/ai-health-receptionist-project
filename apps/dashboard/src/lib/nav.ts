@@ -4,6 +4,7 @@ import {
   Building2,
   CircleHelp,
   Code2,
+  Coins,
   FileText,
   KeyRound,
   LayoutDashboard,
@@ -103,8 +104,7 @@ export function flatNav(groups: NavGroup[] = NAV_GROUPS): SearchPage[] {
 
 export const ADMIN_PAGES: SearchPage[] = [
   { title: "Workspaces", href: "/admin/workspaces", icon: Building2, section: "Platform admin" },
-  { title: "Conversations", href: "/admin/conversations", icon: MessagesSquare, section: "Platform admin" },
-  { title: "Usage & cost", href: "/admin/usage", icon: FileText, section: "Platform admin" },
+  { title: "Usage & cost", href: "/admin/usage", icon: Coins, section: "Platform admin" },
   { title: "LLM keys", href: "/admin/llm-credentials", icon: KeyRound, section: "Platform admin" },
 ];
 
