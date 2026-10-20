@@ -16,6 +16,7 @@ import { AllowedDomainsEditor } from "@/components/allowed-domains-editor";
 import { InstallGuides, SnippetBlock } from "@/components/install-guides";
 import { useChatbot } from "@/lib/chatbot";
 import { installStatus } from "@/lib/install-status";
+import { snippetForDomains } from "@/lib/install-snippet";
 import { useSession } from "@/lib/session";
 import { toastError } from "@/lib/toast";
 import { useAiKeyReady } from "@/lib/use-ai-key-ready";
@@ -72,6 +73,12 @@ export default function InstallPage() {
           },
         ]),
   ];
+
+  // The snippet names the site(s) it is for (M7-39).
+  const snippet = snippetForDomains(
+    chatbot.embedSnippet,
+    chatbot.allowedDomains,
+  );
 
   const status = installStatus(
     chatbot.installVerifiedAt,
@@ -135,12 +142,26 @@ export default function InstallPage() {
         <CardHeader>
           <CardTitle>2. Copy this code</CardTitle>
           <CardDescription>
-            It goes just before <code>&lt;/body&gt;</code> on every page where
+            {chatbot.allowedDomains.length > 0 ? (
+              <>
+                For{" "}
+                <strong className="text-foreground">
+                  {chatbot.allowedDomains.join(", ")}
+                </strong>
+                . It
+              </>
+            ) : (
+              <>
+                Add your website under Allowed domains first, so it is named
+                here. It
+              </>
+            )}{" "}
+            goes just before <code>&lt;/body&gt;</code> on every page where
             the chat should appear. A chat button shows up in the corner.
           </CardDescription>
         </CardHeader>
         <CardContent className="grid gap-3">
-          <SnippetBlock snippet={chatbot.embedSnippet} />
+          <SnippetBlock snippet={snippet} />
           <p className="text-xs text-muted-foreground">
             Does the chat button cover something at the bottom of your site?
             Add <code>data-bottom=&quot;96&quot;</code> to the tag to lift it
@@ -158,7 +179,7 @@ export default function InstallPage() {
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <InstallGuides snippet={chatbot.embedSnippet} />
+          <InstallGuides snippet={snippet} />
         </CardContent>
       </Card>
 
