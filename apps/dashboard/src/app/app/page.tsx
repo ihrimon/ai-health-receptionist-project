@@ -8,6 +8,7 @@ import { OverviewStats } from "@/components/overview-stats";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { apiFetch, ApiError } from "@/lib/api";
+import { EMAIL_FEATURES_ENABLED } from "@/lib/features";
 import { useSession } from "@/lib/session";
 import { toastError, toastSuccess } from "@/lib/toast";
 
@@ -43,7 +44,9 @@ export default function AppHomePage() {
 
       {me.activeWorkspace && <OverviewHero key={`hero-${me.activeWorkspace.id}`} />}
 
-      {!me.user.emailVerifiedAt && <VerifyEmailBanner email={me.user.email} />}
+      {EMAIL_FEATURES_ENABLED && !me.user.emailVerifiedAt && (
+        <VerifyEmailBanner email={me.user.email} />
+      )}
 
       {me.activeWorkspace && <OnboardingChecklist key={me.activeWorkspace.id} />}
 

@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { apiFetch, ApiError } from "@/lib/api";
+import { EMAIL_FEATURES_ENABLED } from "@/lib/features";
 
 /**
  * M1-26. The API answers 204 whether or not the email has an account, so
@@ -44,6 +45,19 @@ export default function ForgotPasswordPage() {
       Back to sign in
     </Link>
   );
+
+  // Email is off for now (M7-37): say so instead of promising a mail.
+  if (!EMAIL_FEATURES_ENABLED) {
+    return (
+      <AuthCard title="Reset your password" footer={backToLogin}>
+        <p className="text-sm text-muted-foreground">
+          Password reset by email isn&apos;t available yet. Please contact
+          support at contact.brainstack@gmail.com and we&apos;ll help you
+          get back in.
+        </p>
+      </AuthCard>
+    );
+  }
 
   if (sent) {
     return (
