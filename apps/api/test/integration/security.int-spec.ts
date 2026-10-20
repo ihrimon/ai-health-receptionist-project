@@ -57,6 +57,27 @@ describe('Security review (M7-2)', () => {
       expect(res.headers['x-powered-by']).toBeUndefined();
     });
 
+    it('a call refused for a missing X-Requested-With still carries the CORS headers (M7-38)', async () => {
+      const res = await request(http)
+        .post('/v1/auth/logout')
+        .set('Origin', 'http://localhost:3000')
+        .expect(403);
+      expect(res.headers['access-control-allow-origin']).toBe(
+        'http://localhost:3000',
+      );
+      expect(res.headers['access-control-allow-credentials']).toBe('true');
+    });
+
+    it('the preflight answer may be cached by the browser (M7-38)', async () => {
+      const res = await request(http)
+        .options('/v1/knowledge-sources/upload')
+        .set('Origin', 'http://localhost:3000')
+        .set('Access-Control-Request-Method', 'POST')
+        .set('Access-Control-Request-Headers', 'x-requested-with')
+        .expect(204);
+      expect(res.headers['access-control-max-age']).toBe('7200');
+    });
+
     it('the widget page keeps its own headers so a company site can frame it', async () => {
       const res = await request(http).get('/w/cb_doesnotexist').expect(404);
       expect(res.headers['x-frame-options']).toBeUndefined();
