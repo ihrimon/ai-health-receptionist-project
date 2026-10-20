@@ -141,7 +141,7 @@ export function OnboardingChecklist() {
               )}
             >
               {step.done ? (
-                <CircleCheck className="size-5 shrink-0 text-emerald-600" />
+                <CircleCheck className="size-5 shrink-0 text-primary" />
               ) : (
                 <Circle className="size-5 shrink-0 text-muted-foreground" />
               )}

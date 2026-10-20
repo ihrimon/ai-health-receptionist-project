@@ -11,6 +11,8 @@ import {
   limitInfo,
   moveItem,
   needsPolling,
+  pollDelay,
+  statusSignature,
   POLICY_TEMPLATES,
   statusBadge,
 } from "./knowledge";
@@ -110,5 +112,25 @@ describe("POLICY_TEMPLATES", () => {
       });
       expect(result.success).toBe(true);
     }
+  });
+});
+
+describe("pollDelay and statusSignature (M7-38)", () => {
+  it("starts at 3 seconds, grows while nothing changes, and stops at 15", () => {
+    expect(pollDelay(0)).toBe(3000);
+    expect(pollDelay(1)).toBe(4500);
+    expect(pollDelay(2)).toBeGreaterThan(pollDelay(1));
+    expect(pollDelay(20)).toBe(15_000);
+  });
+
+  it("changes when any source changes state, and only then", () => {
+    const a = [
+      { id: "1", status: "QUEUED" as const },
+      { id: "2", status: "READY" as const },
+    ];
+    expect(statusSignature(a)).toBe(statusSignature([...a]));
+    expect(statusSignature(a)).not.toBe(
+      statusSignature([{ id: "1", status: "READY" as const }, a[1]]),
+    );
   });
 });

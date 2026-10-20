@@ -51,11 +51,11 @@ describe("ChatWindow", () => {
 
   it("has a close button only when the page can close it", async () => {
     setup();
-    expect(screen.queryByRole("button", { name: STRINGS.closeChat })).toBeNull();
+    expect(screen.queryByRole("button", { name: STRINGS.minimizeChat })).toBeNull();
     const onClose = vi.fn();
     cleanup();
     const { user } = setup({ onClose });
-    await user.click(screen.getByRole("button", { name: STRINGS.closeChat }));
+    await user.click(screen.getByRole("button", { name: STRINGS.minimizeChat }));
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 

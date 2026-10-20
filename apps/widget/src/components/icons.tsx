@@ -8,7 +8,8 @@ export function SendIcon() {
   );
 }
 
-export function CloseIcon() {
+/** A hyphen: the window is minimized to the chat button, not destroyed. */
+export function MinimizeIcon() {
   return (
     <svg
       viewBox="0 0 24 24"
@@ -20,7 +21,7 @@ export function CloseIcon() {
       width="20"
       height="20"
     >
-      <path d="M18 6 6 18M6 6l12 12" />
+      <path d="M5 12h14" />
     </svg>
   );
 }
