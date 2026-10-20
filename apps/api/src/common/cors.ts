@@ -1,5 +1,8 @@
 import type { CorsOptions } from '@nestjs/common/interfaces/external/cors-options.interface';
 
+/** How long a browser may reuse a CORS preflight answer. */
+export const PREFLIGHT_MAX_AGE_SECONDS = 7200;
+
 /** Path prefix of the widget's public API (D-2 §3), after the `/v1` prefix. */
 const PUBLIC_PREFIX = '/v1/public/';
 
@@ -16,7 +19,14 @@ export function corsOptionsFor(
   allowed: { dashboardUrl: string; widgetUrl: string },
 ): CorsOptions {
   if (origin === allowed.dashboardUrl) {
-    return { origin: true, credentials: true };
+    // The dashboard sends X-Requested-With, so every call is preflighted
+    // first. Letting the browser remember the answer (Chrome caps it at 2
+    // hours) saves a round trip per request after the first (M7-37).
+    return {
+      origin: true,
+      credentials: true,
+      maxAge: PREFLIGHT_MAX_AGE_SECONDS,
+    };
   }
   if (origin === allowed.widgetUrl && url.startsWith(PUBLIC_PREFIX)) {
     return { origin: true, credentials: false };

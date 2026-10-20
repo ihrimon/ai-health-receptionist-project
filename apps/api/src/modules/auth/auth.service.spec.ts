@@ -33,6 +33,10 @@ describe('AuthService', () => {
   let email: { send: jest.Mock };
   let resetQueue: { enqueue: jest.Mock };
 
+  /** Mail is sent after the answer (M7-37); let that work finish. */
+  const flush = () => new Promise<void>((resolve) => setImmediate(resolve));
+  let emailFeatures = true;
+
   const meta = { ipAddress: '1.2.3.4', userAgent: 'jest' };
   const issued = { token: 'raw-session', expiresAt: new Date() };
   let passwordHash: string;
@@ -42,6 +46,7 @@ describe('AuthService', () => {
   });
 
   beforeEach(async () => {
+    emailFeatures = true;
     prisma = {
       user: {
         findUnique: jest.fn().mockResolvedValue(null),
@@ -91,7 +96,12 @@ describe('AuthService', () => {
         { provide: WorkspaceAccessService, useValue: {} },
         {
           provide: ConfigService,
-          useValue: { get: () => 'http://dash.test' },
+          useValue: {
+            get: (key: string) =>
+              key === 'email.featuresEnabled'
+                ? emailFeatures
+                : 'http://dash.test',
+          },
         },
       ],
     }).compile();
@@ -146,6 +156,7 @@ describe('AuthService', () => {
 
     it('emails a verification link to the dashboard', async () => {
       await service.register(dto, meta);
+      await flush();
       expect(email.send).toHaveBeenCalledWith(
         expect.objectContaining({ to: 'rina@example.com' }),
       );
@@ -155,6 +166,40 @@ describe('AuthService', () => {
     it('still succeeds when the email fails to send', async () => {
       email.send.mockRejectedValue(new Error('SMTP down'));
       await expect(service.register(dto, meta)).resolves.toBeUndefined();
+      await flush();
+    });
+
+    it('does not wait for the email to be sent (M7-37)', async () => {
+      email.send.mockReturnValue(new Promise(() => {})); // never finishes
+      await expect(service.register(dto, meta)).resolves.toBeUndefined();
+    });
+
+    describe('with email features off (M7-37)', () => {
+      beforeEach(() => {
+        emailFeatures = false;
+      });
+
+      it('marks the email verified and sends nothing', async () => {
+        await service.register(dto, meta);
+        await flush();
+        const created = firstArg<{ data: { emailVerifiedAt?: Date } }>(
+          prisma.user.create,
+        );
+        expect(created.data.emailVerifiedAt).toBeInstanceOf(Date);
+        expect(email.send).not.toHaveBeenCalled();
+        expect(prisma.emailToken.create).not.toHaveBeenCalled();
+      });
+
+      it('answers the same for an existing email and sends nothing', async () => {
+        prisma.user.findUnique.mockResolvedValue({
+          id: 'other',
+          email: 'rina@example.com',
+          name: 'Rina',
+        });
+        await expect(service.register(dto, meta)).resolves.toBeUndefined();
+        await flush();
+        expect(email.send).not.toHaveBeenCalled();
+      });
     });
 
     it('answers the same for an email that already has an account, and mails the owner (M7-21)', async () => {
@@ -164,6 +209,7 @@ describe('AuthService', () => {
         name: 'Rina',
       });
       await expect(service.register(dto, meta)).resolves.toBeUndefined();
+      await flush();
 
       expect(prisma.user.create).not.toHaveBeenCalled();
       expect(workspaces.createWithOwner).not.toHaveBeenCalled();
@@ -190,6 +236,7 @@ describe('AuthService', () => {
         name: 'Rina',
       });
       await expect(service.register(dto, meta)).resolves.toBeUndefined();
+      await flush();
       expect(email.send).toHaveBeenCalledWith(
         expect.objectContaining({ subject: 'You already have an account' }),
       );
@@ -325,6 +372,14 @@ describe('AuthService', () => {
       expect(resetQueue.enqueue).toHaveBeenCalledWith('rina@example.com');
       expect(prisma.user.findUnique).not.toHaveBeenCalled();
       expect(email.send).not.toHaveBeenCalled();
+    });
+
+    it('queues nothing while email features are off (M7-37)', async () => {
+      emailFeatures = false;
+      await expect(
+        service.forgotPassword('who@example.com', meta),
+      ).resolves.toBeUndefined();
+      expect(resetQueue.enqueue).not.toHaveBeenCalled();
     });
 
     it('is rate limited before anything is queued', async () => {
@@ -466,6 +521,13 @@ describe('AuthService', () => {
       await service.resendVerification({
         emailVerifiedAt: new Date(),
       } as never);
+      expect(rateLimit.consume).not.toHaveBeenCalled();
+      expect(email.send).not.toHaveBeenCalled();
+    });
+
+    it('is a no-op while email features are off (M7-37)', async () => {
+      emailFeatures = false;
+      await service.resendVerification({ emailVerifiedAt: null } as never);
       expect(rateLimit.consume).not.toHaveBeenCalled();
       expect(email.send).not.toHaveBeenCalled();
     });

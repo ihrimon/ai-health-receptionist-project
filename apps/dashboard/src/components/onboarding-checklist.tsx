@@ -19,6 +19,7 @@ import { onboardingProgress, onboardingSteps } from "@/lib/onboarding";
 import { productsApi } from "@/lib/products";
 import { useSession } from "@/lib/session";
 import { toastError, toastSuccess } from "@/lib/toast";
+import { overviewKey, takeOrFetch } from "@/lib/prefetch";
 import { useAiKeyReady } from "@/lib/use-ai-key-ready";
 
 interface Counts {
@@ -42,9 +43,9 @@ export function OnboardingChecklist() {
   useEffect(() => {
     let cancelled = false;
     Promise.all([
-      knowledgeApi.listFaqs(),
-      knowledgeApi.listSources(),
-      productsApi.list({ limit: 1 }),
+      takeOrFetch(overviewKey.faqs, () => knowledgeApi.listFaqs()),
+      takeOrFetch(overviewKey.sources, () => knowledgeApi.listSources()),
+      takeOrFetch(overviewKey.products, () => productsApi.list({ limit: 1 })),
     ]).then(
       ([faqs, sources, products]) => {
         if (cancelled) return;

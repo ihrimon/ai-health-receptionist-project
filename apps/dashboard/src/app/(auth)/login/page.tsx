@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { apiFetch, ApiError, markDashboardSession } from "@/lib/api";
+import { EMAIL_FEATURES_ENABLED } from "@/lib/features";
 import { safeNext } from "@/lib/session";
 
 /** M1-26, D-3 §1.1 */
@@ -21,7 +22,9 @@ export default function LoginPage() {
 
 function LoginForm() {
   const router = useRouter();
-  const next = safeNext(useSearchParams().get("next"));
+  const params = useSearchParams();
+  const next = safeNext(params.get("next"));
+  const justCreated = params.get("created") === "1";
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -51,6 +54,9 @@ function LoginForm() {
   return (
     <AuthCard
       title="Sign in"
+      description={
+        justCreated ? "Your account is ready. Sign in to continue." : undefined
+      }
       footer={
         <>
           New here?{" "}
@@ -76,12 +82,14 @@ function LoginForm() {
         <div className="grid gap-1.5">
           <div className="flex items-center justify-between">
             <Label htmlFor="password">Password</Label>
-            <Link
-              href="/forgot-password"
-              className="text-xs text-muted-foreground underline"
-            >
-              Forgot password?
-            </Link>
+            {EMAIL_FEATURES_ENABLED && (
+              <Link
+                href="/forgot-password"
+                className="text-xs text-muted-foreground underline"
+              >
+                Forgot password?
+              </Link>
+            )}
           </div>
           <Input
             id="password"

@@ -139,6 +139,11 @@ const buildConfiguration = () => ({
   // NOT the account's normal login password. Left unset, EmailService logs
   // once and no-ops. Production moves to Resend (M0 decision T10).
   email: {
+    // Verification and password-reset mail (M7-37). Off until a mail provider
+    // is chosen: signup then marks the email verified and sends nothing, so
+    // it does not wait on SMTP. Switch on with EMAIL_FEATURES_ENABLED=true
+    // (and NEXT_PUBLIC_EMAIL_FEATURES_ENABLED=true in the dashboard).
+    featuresEnabled: process.env.EMAIL_FEATURES_ENABLED === 'true',
     gmailUser: process.env.EMAIL_USER ?? '',
     gmailAppPassword: process.env.EMAIL_APP_PASSWORD ?? '',
     fromName: process.env.EMAIL_FROM_NAME ?? 'BrainStack AI Receptionist',

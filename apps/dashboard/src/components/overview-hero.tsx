@@ -17,6 +17,7 @@ import { analyticsApi, formatRate, metricValue, type OverviewMetric } from "@/li
 import { useChatbot } from "@/lib/chatbot";
 import { useSession } from "@/lib/session";
 import { toastError } from "@/lib/toast";
+import { overviewKey, takeOrFetch } from "@/lib/prefetch";
 import { useAiKeyReady } from "@/lib/use-ai-key-ready";
 import { cn } from "@/lib/utils";
 
@@ -174,7 +175,12 @@ export function OverviewHero() {
 
   useEffect(() => {
     let cancelled = false;
-    Promise.all([analyticsApi.overview(WEEK), analyticsApi.overview(WEEK * 2)]).then(
+    Promise.all([
+      takeOrFetch(overviewKey.analytics(WEEK), () => analyticsApi.overview(WEEK)),
+      takeOrFetch(overviewKey.analytics(WEEK * 2), () =>
+        analyticsApi.overview(WEEK * 2),
+      ),
+    ]).then(
       ([now, both]) => !cancelled && setWeeks({ now, both, for: workspaceId }),
       (err: Error) => !cancelled && toastError(err.message),
     );
