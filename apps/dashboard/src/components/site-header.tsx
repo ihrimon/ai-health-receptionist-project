@@ -26,8 +26,9 @@ function SidebarToggle() {
 }
 
 /**
- * Top bar. Left: sidebar toggle, page search and the light/dark button.
- * Right: publish status, appearance and the signed-in person (a circle). `withPublishBanner`: the
+ * Top bar. Left: sidebar toggle and page search. Right: publish status, the
+ * appearance (palette) button with the light/dark button next to it, and the
+ * signed-in person (a circle). `withPublishBanner`: the
  * company dashboard (/app) shows the banner and the chatbot color shortcut,
  * admin doesn't.
  */
@@ -43,11 +44,11 @@ export function SiteHeader({
       <SidebarToggle />
       <div className="flex min-w-0 flex-1 items-center gap-2">
         <PageSearch admin={pathname.startsWith("/admin")} />
-        <ModeToggle />
       </div>
       <div className="flex shrink-0 items-center gap-1">
         {withPublishBanner && <PublishBanner />}
         <AppearancePanel withChatbot={withPublishBanner} />
+        <ModeToggle />
         <UserMenu />
       </div>
     </header>
