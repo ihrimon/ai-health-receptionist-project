@@ -78,6 +78,33 @@ export class StorageService {
   }
 
   /**
+   * Deletes the files of a workspace that is being removed (platform admin,
+   * no tenant context). Each key must still sit under that workspace's
+   * prefix. One failed file is logged and skipped so the rest still go;
+   * returns how many were deleted.
+   */
+  async deleteForWorkspace(
+    workspaceId: string,
+    keys: string[],
+  ): Promise<number> {
+    let deleted = 0;
+    for (const key of keys) {
+      try {
+        assertWorkspaceKey(workspaceId, key);
+        await this.s3.send(
+          new DeleteObjectCommand({ Bucket: this.bucket, Key: key }),
+        );
+        deleted += 1;
+      } catch (err) {
+        this.logger.warn(
+          `Could not delete ${key}: ${err instanceof Error ? err.message : 'unknown error'}`,
+        );
+      }
+    }
+    return deleted;
+  }
+
+  /**
    * Creates the bucket on first use when `storage.createBucket` is on (by
    * default outside production), so a fresh local MinIO needs no setup.
    * Lazy rather than at startup: the API (and its tests) must start

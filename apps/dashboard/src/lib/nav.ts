@@ -104,6 +104,7 @@ export function flatNav(groups: NavGroup[] = NAV_GROUPS): SearchPage[] {
 
 export const ADMIN_PAGES: SearchPage[] = [
   { title: "Workspaces", href: "/admin/workspaces", icon: Building2, section: "Platform admin" },
+  { title: "Users", href: "/admin/users", icon: UserRound, section: "Platform admin" },
   { title: "Usage & cost", href: "/admin/usage", icon: Coins, section: "Platform admin" },
   { title: "LLM keys", href: "/admin/llm-credentials", icon: KeyRound, section: "Platform admin" },
 ];

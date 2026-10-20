@@ -1,5 +1,6 @@
 import { Transform } from 'class-transformer';
 import {
+  IsBoolean,
   IsEnum,
   IsInt,
   IsOptional,
@@ -52,6 +53,55 @@ export class UpdateWorkspaceDto {
   @IsOptional()
   @IsEnum(WorkspacePlan)
   plan?: WorkspacePlan;
+
+  /** Why, for the audit log. */
+  @IsOptional()
+  @Transform(trim)
+  @IsString()
+  @MaxLength(500)
+  reason?: string;
+}
+
+export class DeleteWorkspaceDto {
+  /** The workspace's slug, typed again so a wrong id can't delete anything. */
+  @Transform(trim)
+  @IsString()
+  @MaxLength(60)
+  confirmSlug!: string;
+
+  /** Why, for the audit log. */
+  @IsOptional()
+  @Transform(trim)
+  @IsString()
+  @MaxLength(500)
+  reason?: string;
+}
+
+export class ListUsersQueryDto {
+  /** Matches the user's name or email. */
+  @IsOptional()
+  @Transform(trim)
+  @IsString()
+  @MaxLength(100)
+  q?: string;
+
+  @IsOptional()
+  @IsUUID()
+  cursor?: string;
+
+  @IsOptional()
+  @Transform(({ value }: { value: unknown }) =>
+    typeof value === 'string' && value !== '' ? Number(value) : value,
+  )
+  @IsInt()
+  @Min(1)
+  @Max(100)
+  limit?: number;
+}
+
+export class UpdateUserDto {
+  @IsBoolean()
+  isPlatformAdmin!: boolean;
 
   /** Why, for the audit log. */
   @IsOptional()

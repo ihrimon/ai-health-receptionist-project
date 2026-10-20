@@ -15,17 +15,22 @@ function setup() {
     },
     auditLog: {
       createMany: jest.fn().mockReturnValue('audit-op'),
+      create: jest.fn().mockReturnValue('audit-op'),
       findMany: jest.fn().mockResolvedValue([]),
     },
     chatbot: { findMany: jest.fn().mockResolvedValue([{ publicId: 'cb_1' }]) },
     $transaction: jest.fn().mockResolvedValue([]),
   };
   const cache = { invalidate: jest.fn() };
-  const service = new AdminService(prisma as never, cache as never, {
-    get: () => undefined,
-  });
+  const storage = { deleteForWorkspace: jest.fn().mockResolvedValue(0) };
+  const service = new AdminService(
+    prisma as never,
+    cache as never,
+    { get: () => undefined } as never,
+    storage as never,
+  );
   service.now = () => new Date('2026-10-17T10:00:00Z');
-  return { prisma, cache, service };
+  return { prisma, cache, storage, service };
 }
 
 const row = (id: string) => ({
@@ -218,9 +223,12 @@ describe('AdminService usage (M6-12)', () => {
         count: jest.fn().mockResolvedValue(0),
       },
     });
-    const service = new AdminService(prisma as never, s.cache as never, {
-      get: () => config,
-    });
+    const service = new AdminService(
+      prisma as never,
+      s.cache as never,
+      { get: () => config } as never,
+      s.storage as never,
+    );
     service.now = () => new Date('2026-10-17T10:00:00Z');
     return { prisma, service };
   }
@@ -303,5 +311,113 @@ describe('AdminService usage (M6-12)', () => {
       revenueUsd: 99,
     });
     expect(res.months[0].messages).toBe(0);
+  });
+});
+
+describe('AdminService.deleteWorkspace (M7-35)', () => {
+  const target = {
+    id: 'w1',
+    name: 'Acme',
+    slug: 'acme',
+    plan: 'BETA',
+    _count: { chatbots: 1, members: 2 },
+    chatbots: [{ publicId: 'cb_1' }],
+    sources: [{ fileKey: 'workspaces/w1/documents/x/a.pdf' }],
+  };
+  function deleteSetup() {
+    const s = setup();
+    const prisma = Object.assign(s.prisma, {
+      workspace: {
+        ...s.prisma.workspace,
+        delete: jest.fn().mockReturnValue('delete-op'),
+      },
+    });
+    prisma.auditLog = Object.assign(prisma.auditLog, {
+      create: jest.fn().mockReturnValue('audit-op'),
+    });
+    prisma.workspace.findUnique.mockResolvedValue(target);
+    return { ...s, prisma };
+  }
+
+  it('refuses a missing workspace and a wrong slug, and changes nothing', async () => {
+    const { prisma, service, storage } = deleteSetup();
+    prisma.workspace.findUnique.mockResolvedValueOnce(null);
+    await expect(
+      service.deleteWorkspace(actor, 'w1', { confirmSlug: 'acme' }),
+    ).rejects.toBeInstanceOf(NotFoundException);
+
+    await expect(
+      service.deleteWorkspace(actor, 'w1', { confirmSlug: 'acme-x' }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+    expect(storage.deleteForWorkspace).not.toHaveBeenCalled();
+  });
+
+  it('audits and deletes in one transaction, then clears the widget cache and the files', async () => {
+    const { prisma, service, cache, storage } = deleteSetup();
+    storage.deleteForWorkspace.mockResolvedValue(1);
+
+    const res = await service.deleteWorkspace(actor, 'w1', {
+      confirmSlug: 'acme',
+      reason: 'Test account',
+    });
+
+    expect(res).toEqual({ deleted: true, filesDeleted: 1 });
+    expect(prisma.$transaction).toHaveBeenCalledWith(['audit-op', 'delete-op']);
+    const audit = (prisma.auditLog.create.mock.calls as unknown[][])[0][0] as {
+      data: { action: string; details: Record<string, unknown> };
+    };
+    expect(audit.data.action).toBe('workspace.delete');
+    expect(audit.data.details).toMatchObject({
+      slug: 'acme',
+      files: 1,
+      reason: 'Test account',
+    });
+    expect(cache.invalidate).toHaveBeenCalledWith('cb_1');
+    expect(storage.deleteForWorkspace).toHaveBeenCalledWith('w1', [
+      'workspaces/w1/documents/x/a.pdf',
+    ]);
+  });
+
+  it('still succeeds when the storage cleanup fails', async () => {
+    const { service, storage } = deleteSetup();
+    storage.deleteForWorkspace.mockRejectedValue(new Error('storage down'));
+
+    await expect(
+      service.deleteWorkspace(actor, 'w1', { confirmSlug: 'acme' }),
+    ).resolves.toEqual({ deleted: true, filesDeleted: 0 });
+  });
+});
+
+describe('AdminService.supportView (M7-35)', () => {
+  it('404s for a missing workspace', async () => {
+    const { prisma, service } = setup();
+    prisma.workspace.findUnique.mockResolvedValue(null);
+    await expect(service.supportView(actor, 'w1')).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
+  });
+
+  it('returns the setup and writes one audit row', async () => {
+    const s = setup();
+    const prisma = Object.assign(s.prisma, {
+      faq: { findMany: jest.fn().mockResolvedValue([{ id: 'f1' }]) },
+      customAnswer: { findMany: jest.fn().mockResolvedValue([]) },
+      knowledgeSource: { findMany: jest.fn().mockResolvedValue([]) },
+    });
+    prisma.auditLog = Object.assign(prisma.auditLog, {
+      create: jest.fn().mockResolvedValue({}),
+    });
+    prisma.workspace.findUnique.mockResolvedValue({ id: 'w1', name: 'Acme' });
+
+    const res = await s.service.supportView(actor, 'w1');
+
+    expect(res.faqs).toEqual([{ id: 'f1' }]);
+    expect(prisma.auditLog.create).toHaveBeenCalledTimes(1);
+    expect(
+      (prisma.auditLog.create.mock.calls as unknown[][])[0][0],
+    ).toMatchObject({
+      data: { action: 'workspace.support_view', workspaceId: 'w1' },
+    });
   });
 });
