@@ -26,7 +26,12 @@ export function DocumentsTab({
   documents,
   canEdit,
   onChanged,
-}: TabBase & { documents: KnowledgeSource[] }) {
+  onUploaded,
+}: TabBase & {
+  documents: KnowledgeSource[];
+  /** Called with each stored document so it shows up before the next one starts. */
+  onUploaded: (source: KnowledgeSource) => void;
+}) {
   const input = useRef<HTMLInputElement>(null);
   const [dragging, setDragging] = useState(false);
   const [uploading, setUploading] = useState<string | null>(null);
@@ -44,7 +49,7 @@ export function DocumentsTab({
       }
       setUploading(file.name);
       try {
-        await knowledgeApi.uploadDocument(file);
+        onUploaded(await knowledgeApi.uploadDocument(file));
         count++;
         toastSuccess(`"${file.name}" uploaded. Reading it now…`);
       } catch (err) {
@@ -53,7 +58,9 @@ export function DocumentsTab({
     }
     setUploading(null);
     if (input.current) input.current.value = "";
-    await onChanged();
+    // A failed refresh must not hide what was uploaded: each file is
+    // already in the list, and the status check keeps it current.
+    await onChanged().catch(() => {});
   }
 
   function onDrop(e: DragEvent) {

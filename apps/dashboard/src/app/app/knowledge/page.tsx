@@ -16,10 +16,10 @@ import {
   type KnowledgeSource,
   knowledgeApi,
   needsPolling,
+  pollDelay,
+  statusSignature,
 } from "@/lib/knowledge";
 import { useSession } from "@/lib/session";
-
-const POLL_MS = 3000;
 
 interface Lists {
   faqs: Faq[];
@@ -67,17 +67,52 @@ export default function KnowledgePage() {
     await refreshChatbot().catch(() => {});
   }, [refreshChatbot]);
 
-  // While a source is being indexed, check its status every few seconds.
+  /** A stored document appears in the list at once, before the next upload starts. */
+  const addSource = useCallback(
+    (source: KnowledgeSource) =>
+      setLists((l) =>
+        l && !l.sources.some((s) => s.id === source.id)
+          ? { ...l, sources: [...l.sources, source] }
+          : l,
+      ),
+    [],
+  );
+
+  // While a source is being indexed, check its status: every 3 s at first,
+  // slower while nothing changes, and not at all while the tab is hidden.
   const polling = lists ? needsPolling(lists.sources) : false;
   useEffect(() => {
     if (!polling) return;
-    const timer = setInterval(() => {
-      knowledgeApi.listSources().then(
-        (sources) => setLists((l) => (l ? { ...l, sources } : l)),
-        () => {},
-      );
-    }, POLL_MS);
-    return () => clearInterval(timer);
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout>;
+    let unchanged = 0;
+    let last = "";
+    const check = () => {
+      if (document.hidden) {
+        timer = setTimeout(check, pollDelay(unchanged));
+        return;
+      }
+      knowledgeApi
+        .listSources()
+        .then((sources) => {
+          if (cancelled) return;
+          const now = statusSignature(sources);
+          unchanged = now === last ? unchanged + 1 : 0;
+          last = now;
+          setLists((l) => (l ? { ...l, sources } : l));
+        })
+        .catch(() => {
+          unchanged += 1;
+        })
+        .finally(() => {
+          if (!cancelled) timer = setTimeout(check, pollDelay(unchanged));
+        });
+    };
+    timer = setTimeout(check, pollDelay(0));
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
   }, [polling]);
 
   if (!lists) {
@@ -154,6 +189,7 @@ export default function KnowledgePage() {
             documents={documents}
             canEdit={canEdit}
             onChanged={changed}
+            onUploaded={addSource}
           />
         </TabsContent>
       </Tabs>
