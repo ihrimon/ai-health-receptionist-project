@@ -1,4 +1,5 @@
 import {
+  parseTimings,
   type ConversationDetail,
   type ConversationListQuery,
   type ConversationMessage,
@@ -159,6 +160,8 @@ export class ConversationInboxService {
             content: true,
             sources: true,
             answeredBy: true,
+            latencyMs: true,
+            timings: true,
             createdAt: true,
           },
         },
@@ -172,6 +175,8 @@ export class ConversationInboxService {
       text: m.content,
       sources: toSources(m.sources),
       answeredBy: m.answeredBy,
+      latencyMs: m.latencyMs,
+      timings: parseTimings(m.timings),
       createdAt: m.createdAt.toISOString(),
     }));
     const firstUser = row.messages.find((m) => m.role === MessageRole.USER);

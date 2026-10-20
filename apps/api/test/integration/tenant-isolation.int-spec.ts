@@ -2591,6 +2591,12 @@ describe('Tenant isolation (M1-25)', () => {
       // The pg-boss worker in the app sends them (the delay is 0 in tests).
       await waitUntil('lead A notified', () => notifiedAt(leadA.id));
       await waitUntil('lead B notified', () => notifiedAt(leadB.id));
+      // The claim comes first and the send a moment later: wait for the mail.
+      await waitUntil('both emails sent', () =>
+        Promise.resolve(
+          sentFor(`${word}-a`).length > 0 && sentFor(`${word}-b`).length > 0,
+        ),
+      );
       const toA = sentFor(`${word}-a`);
       expect(toA).toHaveLength(1);
       expect(toA[0].to).toEqual([email('owner-a')]);
@@ -3102,6 +3108,196 @@ describe('Tenant isolation (M1-25)', () => {
         .get('/v1/analytics/unanswered?workspaceId=' + ids.b)
         .expect(400);
       await request(http).get('/v1/analytics/unanswered').expect(401);
+    });
+  });
+
+  describe('Response times (M7-40)', () => {
+    // May 2024: no other test writes here.
+    const at = (d: string) => new Date(`2024-05-${d}Z`);
+    type Times = {
+      count: number;
+      avgMs: number | null;
+      p50Ms: number | null;
+      p95Ms: number | null;
+      slowest: {
+        question: string;
+        latencyMs: number;
+        conversationId: string;
+        timings: { llmMs: number } | null;
+      }[];
+    };
+    const times = async (
+      cookie: string,
+      query = 'from=2024-05-01&to=2024-05-02',
+    ) =>
+      (
+        await as(cookie)
+          .get(`/v1/analytics/response-times?${query}`)
+          .expect(200)
+      ).body as Times;
+
+    /** One answered question: [visitor text, latency in ms, timings or null]. */
+    async function seedAnswer(
+      workspaceId: string,
+      chatbotId: string,
+      when: Date,
+      question: string,
+      latencyMs: number,
+      timings: object | null,
+      opts: { isPreview?: boolean } = {},
+    ) {
+      return inWorkspace(workspaceId, () =>
+        db.conversation.create({
+          data: {
+            workspaceId,
+            chatbotId,
+            visitorId: `v-${run}`,
+            isPreview: opts.isPreview ?? false,
+            messageCount: 2,
+            startedAt: when,
+            lastMessageAt: when,
+            messages: {
+              create: [
+                {
+                  workspaceId,
+                  role: 'USER' as const,
+                  content: question,
+                  createdAt: when,
+                },
+                {
+                  workspaceId,
+                  role: 'ASSISTANT' as const,
+                  content: 'Reply',
+                  answeredBy: 'llm',
+                  latencyMs,
+                  ...(timings ? { timings } : {}),
+                  createdAt: new Date(when.getTime() + 1000),
+                },
+              ],
+            },
+          },
+        }),
+      );
+    }
+
+    let slowChat: string;
+
+    beforeAll(async () => {
+      const parts = (llmMs: number) => ({
+        embedMs: 30,
+        prepareMs: 100,
+        firstTokenMs: 500,
+        llmMs,
+        toolMs: 0,
+        totalMs: llmMs + 130,
+      });
+      await seedAnswer(
+        ids.a,
+        ids.botA,
+        at('01T10:00:00'),
+        'Fast question',
+        1000,
+        parts(870),
+      );
+      const slow = await seedAnswer(
+        ids.a,
+        ids.botA,
+        at('02T10:00:00'),
+        'Slow question',
+        9000,
+        parts(8870),
+      );
+      slowChat = slow.id;
+      await seedAnswer(
+        ids.a,
+        ids.botA,
+        at('02T11:00:00'),
+        'Older answer, no timings',
+        3000,
+        null,
+      );
+      // Left out: a Test chat answer.
+      await seedAnswer(
+        ids.a,
+        ids.botA,
+        at('01T12:00:00'),
+        'Preview only question',
+        60000,
+        null,
+        {
+          isPreview: true,
+        },
+      );
+      // Workspace B is very slow: must never reach A.
+      for (let i = 0; i < 3; i++) {
+        await seedAnswer(
+          ids.b,
+          ids.botB,
+          at('01T13:00:00'),
+          'Secret B question',
+          30000,
+          null,
+        );
+      }
+    });
+
+    it("summarises the caller's live answers only, slowest first with their timings", async () => {
+      const a = await times(cookies.ownerA);
+      expect(a.count).toBe(3);
+      expect(a.p50Ms).toBe(3000);
+      expect(a.avgMs).toBe(4333);
+      expect(a.slowest.map((s) => s.question)).toEqual([
+        'Slow question',
+        'Older answer, no timings',
+        'Fast question',
+      ]);
+      expect(a.slowest[0]).toMatchObject({
+        latencyMs: 9000,
+        conversationId: slowChat,
+      });
+      expect(a.slowest[0].timings).toMatchObject({ llmMs: 8870 });
+      expect(a.slowest[1].timings).toBeNull();
+      const text = JSON.stringify(a);
+      expect(text).not.toContain('Secret B');
+      expect(text).not.toContain('Preview only');
+
+      const b = await times(cookies.ownerB);
+      expect(b).toMatchObject({ count: 3, p50Ms: 30000 });
+      expect(b.slowest.some((s) => s.conversationId === slowChat)).toBe(false);
+    });
+
+    it('honours the range and the limit; a viewer can read it', async () => {
+      const day1 = await times(
+        cookies.viewerA,
+        'from=2024-05-01&to=2024-05-01',
+      );
+      expect(day1.count).toBe(1);
+      expect(day1.slowest[0].question).toBe('Fast question');
+      const one = await times(
+        cookies.ownerA,
+        'from=2024-05-01&to=2024-05-02&limit=1',
+      );
+      expect(one.slowest).toHaveLength(1);
+      const empty = await times(
+        cookies.ownerA,
+        'from=2024-06-01&to=2024-06-02',
+      );
+      expect(empty).toMatchObject({
+        count: 0,
+        avgMs: null,
+        p95Ms: null,
+        slowest: [],
+      });
+    });
+
+    it('rejects a bad query (400) and needs a session (401)', async () => {
+      await as(cookies.ownerA)
+        .get('/v1/analytics/response-times?limit=0')
+        .expect(400);
+      await as(cookies.ownerA)
+        .get('/v1/analytics/response-times?workspaceId=' + ids.b)
+        .expect(400);
+      await request(http).get('/v1/analytics/response-times').expect(401);
     });
   });
 

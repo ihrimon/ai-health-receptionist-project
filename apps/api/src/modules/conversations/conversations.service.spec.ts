@@ -24,6 +24,14 @@ describe('ConversationsService', () => {
     tokensIn: 120,
     tokensOut: 8,
     latencyMs: 640,
+    timings: {
+      embedMs: 20,
+      prepareMs: 90,
+      firstTokenMs: 400,
+      llmMs: 500,
+      toolMs: 0,
+      totalMs: 640,
+    },
   };
   const turn: RecordTurn = {
     chatbotId: 'bot-1',
@@ -95,6 +103,10 @@ describe('ConversationsService', () => {
         tokensIn: 120,
         tokensOut: 8,
         latencyMs: 640,
+        timings: expect.objectContaining({
+          llmMs: 500,
+          totalMs: 640,
+        }) as object,
       }),
     ]);
   });

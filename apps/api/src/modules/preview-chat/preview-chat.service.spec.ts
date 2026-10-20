@@ -230,6 +230,13 @@ describe('PreviewChatService', () => {
         tokensIn: 120,
         tokensOut: 8,
         latencyMs: expect.any(Number) as number,
+        timings: expect.objectContaining({
+          embedMs: expect.any(Number) as number,
+          prepareMs: expect.any(Number) as number,
+          llmMs: expect.any(Number) as number,
+          toolMs: 0,
+          totalMs: expect.any(Number) as number,
+        }) as object,
       },
     });
   });
