@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Get,
   HttpCode,
   HttpStatus,
   Patch,
@@ -10,7 +11,7 @@ import { WorkspaceRole } from '../../generated/prisma/client';
 import { Roles } from '../../tenancy/workspace.guard';
 import type { AuthContext } from '../auth/auth-context';
 import { CurrentAuth } from '../auth/auth-context';
-import { RenameWorkspaceDto, SwitchWorkspaceDto } from './dto/workspace.dto';
+import { SwitchWorkspaceDto, UpdateWorkspaceDto } from './dto/workspace.dto';
 import { WorkspacesService } from './workspaces.service';
 
 @Controller()
@@ -27,10 +28,24 @@ export class WorkspacesController {
     return this.workspaces.switchActive(auth, dto.workspaceId);
   }
 
-  /** D-2 §2.7 */
+  /** The current workspace's profile (M7-42): any member. */
+  @Get('workspace')
+  @Roles(WorkspaceRole.VIEWER)
+  profile() {
+    return this.workspaces.profile();
+  }
+
+  /** D-2 §2.7: name, website, industry, contact and time zone; owner only. */
   @Patch('workspace')
   @Roles(WorkspaceRole.OWNER)
-  rename(@Body() dto: RenameWorkspaceDto) {
-    return this.workspaces.renameCurrent(dto.name);
+  update(@Body() dto: UpdateWorkspaceDto) {
+    return this.workspaces.updateCurrent(dto);
+  }
+
+  /** Who belongs to this workspace (M7-42): owner and admin. */
+  @Get('workspace/members')
+  @Roles(WorkspaceRole.ADMIN)
+  members() {
+    return this.workspaces.members();
   }
 }

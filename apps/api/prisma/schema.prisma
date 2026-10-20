@@ -129,6 +129,13 @@ model Workspace {
   slug      String          @unique @db.VarChar(60)
   status    WorkspaceStatus @default(ACTIVE)
   plan      WorkspacePlan   @default(BETA)
+  /// About the company, set by its owner in Settings → Workspace (M7-42).
+  website      String? @db.VarChar(200)
+  industry     String? @db.VarChar(80)
+  contactEmail String? @map("contact_email") @db.VarChar(255)
+  contactPhone String? @map("contact_phone") @db.VarChar(30)
+  /// IANA name, e.g. "Asia/Dhaka"; how dates are shown for this company later on.
+  timeZone     String  @default("UTC") @map("time_zone") @db.VarChar(64)
   createdAt DateTime        @default(now()) @map("created_at") @db.Timestamptz
   updatedAt DateTime        @updatedAt @map("updated_at") @db.Timestamptz
 

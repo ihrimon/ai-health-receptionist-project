@@ -25,6 +25,7 @@ import {
 } from './auth-emails';
 import { AuthContext } from './auth-context';
 import { RESET_PASSWORD_TTL_MS, VERIFY_EMAIL_TTL_MS } from './auth.constants';
+import type { ChangePasswordDto } from './dto/account.dto';
 import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
 import {
@@ -349,6 +350,42 @@ export class AuthService {
         },
       });
       await this.sessions.revokeAllForUser(userId, tx);
+    });
+  }
+
+  /** The signed-in person's own name (M7-42). */
+  async updateProfile(user: User, name: string): Promise<void> {
+    await this.prisma.user.update({ where: { id: user.id }, data: { name } });
+  }
+
+  /**
+   * M7-42: a new password for the signed-in person. It needs the current
+   * one (a stolen session alone can't lock them out), is rate limited, and
+   * ends every other session; the one used here stays.
+   */
+  async changePassword(
+    { user, session }: AuthContext,
+    dto: ChangePasswordDto,
+  ): Promise<void> {
+    await this.rateLimit.consume({
+      key: `change-password:user:${user.id}`,
+      limit: 5,
+      windowSeconds: 15 * MINUTE,
+    });
+    if (!(await verifyPassword(user.passwordHash, dto.currentPassword))) {
+      throw new BadRequestException('Your current password is not right');
+    }
+    if (dto.newPassword === dto.currentPassword) {
+      throw new BadRequestException(
+        'Choose a password different from the current one',
+      );
+    }
+    const passwordHash = await hashPassword(dto.newPassword);
+    await this.prisma.$transaction(async (tx) => {
+      await tx.user.update({ where: { id: user.id }, data: { passwordHash } });
+      await tx.session.deleteMany({
+        where: { userId: user.id, id: { not: session.id } },
+      });
     });
   }
 

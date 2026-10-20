@@ -439,6 +439,85 @@ describe('AuthService', () => {
     });
   });
 
+  describe('own account (M7-42)', () => {
+    const auth = () =>
+      ({
+        user: { id: 'u1', email: 'rina@example.com', passwordHash },
+        session: { id: 'session-now' },
+        token: 'raw',
+      }) as never;
+
+    it('renames the signed-in person and nobody else', async () => {
+      await service.updateProfile({ id: 'u1' } as never, 'Rina K.');
+      expect(prisma.user.update).toHaveBeenCalledWith({
+        where: { id: 'u1' },
+        data: { name: 'Rina K.' },
+      });
+    });
+
+    describe('changePassword', () => {
+      const change = (current: string, next: string) =>
+        service.changePassword(auth(), {
+          currentPassword: current,
+          newPassword: next,
+        });
+
+      beforeEach(() => {
+        (prisma as unknown as { session: { deleteMany: jest.Mock } }).session =
+          { deleteMany: jest.fn() };
+      });
+
+      it('sets the new password and ends every other session, keeping this one', async () => {
+        await change('correct horse battery', 'a brand new password');
+
+        const update = firstArg<{
+          where: { id: string };
+          data: { passwordHash: string };
+        }>(prisma.user.update);
+        expect(update.where).toEqual({ id: 'u1' });
+        expect(update.data.passwordHash.startsWith('$argon2id$')).toBe(true);
+        expect(update.data.passwordHash).not.toBe(passwordHash);
+        const { session } = prisma as unknown as {
+          session: { deleteMany: jest.Mock };
+        };
+        expect(session.deleteMany).toHaveBeenCalledWith({
+          where: { userId: 'u1', id: { not: 'session-now' } },
+        });
+      });
+
+      it('rate-limits per person (5 in 15 minutes)', async () => {
+        await change('correct horse battery', 'a brand new password');
+        expect(rateLimit.consume).toHaveBeenCalledWith({
+          key: 'change-password:user:u1',
+          limit: 5,
+          windowSeconds: 900,
+        });
+      });
+
+      it('says 400 (not 401, which would sign them out) for a wrong current password, and changes nothing', async () => {
+        await expect(
+          change('wrong password here', 'a brand new password'),
+        ).rejects.toBeInstanceOf(BadRequestException);
+        expect(prisma.user.update).not.toHaveBeenCalled();
+      });
+
+      it('refuses the same password again', async () => {
+        await expect(
+          change('correct horse battery', 'correct horse battery'),
+        ).rejects.toBeInstanceOf(BadRequestException);
+        expect(prisma.user.update).not.toHaveBeenCalled();
+      });
+
+      it('is stopped by the limit before anything is checked', async () => {
+        rateLimit.consume.mockRejectedValueOnce(new Error('limited'));
+        await expect(
+          change('correct horse battery', 'a brand new password'),
+        ).rejects.toThrow('limited');
+        expect(prisma.user.update).not.toHaveBeenCalled();
+      });
+    });
+  });
+
   describe('resetPassword', () => {
     it('400s on an invalid, used or expired token', async () => {
       prisma.emailToken.findFirst.mockResolvedValue(null);

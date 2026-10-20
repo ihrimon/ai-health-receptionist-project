@@ -41,6 +41,8 @@ const PUBLIC_ROUTES = new Set([
 /** Needs a login only: they act on the caller's own user or session. */
 const SESSION_ONLY_ROUTES = new Set([
   'AuthController.me',
+  'AuthController.updateProfile',
+  'AuthController.changePassword',
   'AuthController.resendVerification',
   'WorkspacesController.switch',
 ]);

@@ -85,6 +85,12 @@ export interface SupportView {
     slug: string;
     status: WorkspaceStatus;
     plan: WorkspacePlan;
+    /** What the company wrote about itself in Settings → Workspace (M7-42). */
+    website: string | null;
+    industry: string | null;
+    contactEmail: string | null;
+    contactPhone: string | null;
+    timeZone: string;
   };
   chatbots: {
     id: string;
