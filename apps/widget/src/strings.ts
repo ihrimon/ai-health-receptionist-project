@@ -23,6 +23,22 @@ export const STRINGS = {
   somethingWrong: "Sorry, something went wrong. Please try again.",
   tooFast: "You're sending messages quickly. Please wait a minute and try again.",
   quickReplies: "Suggested questions",
+  /** The contact form the bot shows when a visitor wants to buy or book (M7-41). */
+  leadForm: {
+    label: "Contact details",
+    intro: "Leave your details and we'll get back to you.",
+    name: "Your name",
+    email: "Email",
+    phone: "Phone",
+    message: "What do you need? (optional)",
+    submit: "Send my details",
+    sending: "Sending…",
+    nameRequired: "Please enter your name.",
+    contactRequired: "Please give an email address or a phone number.",
+    emailInvalid: "That email address doesn't look right.",
+    failed: "Sorry, we couldn't send that. Please try again.",
+    thanks: "Thanks! We've got your details and will get back to you soon.",
+  },
   /** The handoff button's text when the company gave none. */
   handoff: {
     email: "Email us",

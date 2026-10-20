@@ -52,6 +52,7 @@ export function PreviewChat({
     let started = false;
     let sources: PreviewChatSource[] = [];
     let handoff: Handoff | undefined;
+    let leadForm = false;
     const showAnswer = (text: string) => {
       const replace = started;
       setMessages((current) => {
@@ -60,6 +61,7 @@ export function PreviewChat({
           text,
           sources,
           handoff,
+          leadForm,
         };
         return replace ? [...current.slice(0, -1), answer] : [...current, answer];
       });
@@ -74,6 +76,9 @@ export function PreviewChat({
           text += event.text;
           showAnswer(text);
           started = true;
+        } else if (event.type === "lead_form") {
+          leadForm = true;
+          if (started) showAnswer(text);
         } else if (event.type === "handoff") {
           handoff = event;
           showAnswer(text);
@@ -126,6 +131,13 @@ export function PreviewChat({
           return (
             <div key={i} className="space-y-1">
               <Bubble role={m.role}>{m.text}</Bubble>
+              {m.leadForm && (
+                <p className="ml-1 rounded-md border border-dashed px-3 py-2 text-xs text-muted-foreground">
+                  A short contact form (name, email or phone, what they need)
+                  appears here for your visitors. Nothing is saved from this
+                  Test chat.
+                </p>
+              )}
               {m.handoff && (
                 <a
                   href={handoffHref(m.handoff)}

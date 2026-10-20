@@ -3,9 +3,10 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import { Markdown } from "../markdown";
 import { STRINGS } from "../strings";
 import type { Brand } from "../theme";
-import type { ChatMessage } from "../types";
+import type { ChatMessage, LeadFormFields } from "../types";
 import { HandoffButton } from "./handoff-button";
 import { MinimizeIcon } from "./icons";
+import { LeadForm } from "./lead-form";
 import { MessageBubble } from "./message-bubble";
 import { MessageInput } from "./message-input";
 import { TypingIndicator } from "./typing-indicator";
@@ -31,6 +32,7 @@ export function ChatWindow({
   busy = false,
   brand,
   onSend,
+  onSubmitLead,
   onClose,
   showBranding = true,
   privacyUrl,
@@ -46,6 +48,8 @@ export function ChatWindow({
   busy?: boolean;
   brand: Brand;
   onSend: (text: string) => void;
+  /** Saves the contact form's details; without it no form is shown (M7-41). */
+  onSubmitLead?: (fields: LeadFormFields) => Promise<void>;
   onClose?: () => void;
   showBranding?: boolean;
   /** Where the Privacy Policy is; the notice links to it when given (M7-14). */
@@ -119,6 +123,7 @@ export function ChatWindow({
               {m.role === "assistant" ? <Markdown text={m.text} streaming={m.streaming} /> : m.text}
             </MessageBubble>
             {m.handoff && <HandoffButton handoff={m.handoff} brand={brand} />}
+            {m.leadForm && onSubmitLead && <LeadForm brand={brand} onSubmit={onSubmitLead} />}
           </Fragment>
         ))}
         {typing && <TypingIndicator />}

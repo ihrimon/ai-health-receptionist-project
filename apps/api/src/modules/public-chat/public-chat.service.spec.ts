@@ -12,6 +12,7 @@ import {
 } from '../../rate-limit/rate-limit.service';
 import { currentTenant } from '../../tenancy/tenant-context';
 import { ConversationsService } from '../conversations/conversations.service';
+import { LeadsService } from '../leads/leads.service';
 import { PreviewChatService } from '../preview-chat/preview-chat.service';
 import { ConversationTokenService } from './conversation-token.service';
 import {
@@ -56,6 +57,7 @@ describe('PublicChatService', () => {
     rate: jest.fn(),
   };
   const tokens = { sign: jest.fn(), verify: jest.fn() };
+  const leads = { create: jest.fn() };
   let service: PublicChatService;
   let events: ChatStreamEvent[];
   const emit = (event: ChatStreamEvent) => {
@@ -91,6 +93,7 @@ describe('PublicChatService', () => {
         { provide: PreviewChatService, useValue: preview },
         { provide: ConversationsService, useValue: conversations },
         { provide: ConversationTokenService, useValue: tokens },
+        { provide: LeadsService, useValue: leads },
       ],
     }).compile();
     service = moduleRef.get(PublicChatService);
@@ -364,6 +367,78 @@ describe('PublicChatService', () => {
     });
   });
 
+  describe('contact form (M7-41)', () => {
+    const form = {
+      name: 'Ana',
+      email: 'ana@example.com',
+      message: 'A quote, please',
+    };
+    const submit = (token: string | null = 'signed-token') =>
+      service.submitLead(CONVERSATION, token, '1.2.3.4', form);
+
+    beforeEach(() => {
+      leads.create.mockResolvedValue({ id: 'lead-1' });
+    });
+
+    it("saves a lead in this conversation, in the chatbot's own workspace, with what they need", async () => {
+      await submit();
+
+      expect(leads.create).toHaveBeenCalledWith({
+        chatbotId: 'bot-1',
+        conversationId: CONVERSATION,
+        name: 'Ana',
+        email: 'ana@example.com',
+        phone: undefined,
+        answers: { request: 'A quote, please' },
+      });
+      expect(currentTenant()).toBeUndefined();
+    });
+
+    it('stores no answer when nothing was written under "what do you need"', async () => {
+      await service.submitLead(CONVERSATION, 'signed-token', '1.2.3.4', {
+        name: 'Ana',
+        phone: '+8801711000000',
+      });
+      expect(leads.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          answers: undefined,
+          phone: '+8801711000000',
+        }),
+      );
+    });
+
+    it("is a 401 without a valid token or with another conversation's", async () => {
+      await expect(submit(null)).rejects.toBeInstanceOf(UnauthorizedException);
+      tokens.verify.mockReturnValue(null);
+      await expect(submit('bad')).rejects.toBeInstanceOf(UnauthorizedException);
+      tokens.verify.mockReturnValue({
+        conversationId: 'another',
+        chatbotId: 'bot-1',
+      });
+      await expect(submit()).rejects.toBeInstanceOf(UnauthorizedException);
+      expect(leads.create).not.toHaveBeenCalled();
+    });
+
+    it('limits the form per conversation and per IP', async () => {
+      await submit();
+      expect(rateLimit.consume).toHaveBeenCalledWith(
+        {
+          key: `public:lead:${CONVERSATION}`,
+          ...PUBLIC_CHAT_LIMITS.leadPerConversationHour,
+        },
+        { key: 'public:lead-ip:1.2.3.4', ...PUBLIC_CHAT_LIMITS.leadPerIpHour },
+      );
+      rateLimit.consume.mockRejectedValue(new RateLimitedException(30));
+      await expect(submit()).rejects.toBeInstanceOf(RateLimitedException);
+    });
+
+    it("is a 404 when the conversation is not this chatbot's", async () => {
+      conversations.find.mockResolvedValue(null);
+      await expect(submit()).rejects.toBeInstanceOf(NotFoundException);
+      expect(leads.create).not.toHaveBeenCalled();
+    });
+  });
+
   describe('rating (M5-7)', () => {
     const rate = (token: string | null = 'signed-token') =>
       service.rate(CONVERSATION, token, { rating: 5 });
@@ -426,6 +501,7 @@ describe('PublicChatService rate limits in load-test mode (M7-5)', () => {
         {} as never,
         { start: jest.fn().mockResolvedValue('c1') } as never,
         { sign: jest.fn().mockReturnValue('t') } as never,
+        {} as never,
         { get: () => loadTest } as never,
       );
     const request = { visitorId: 'v1' } as never;
@@ -470,6 +546,7 @@ describe('PublicChatService privacy link (M7-14)', () => {
           }),
         },
       }) as never,
+      {} as never,
       {} as never,
       {} as never,
       {} as never,

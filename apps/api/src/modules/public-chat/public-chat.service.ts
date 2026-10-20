@@ -4,7 +4,9 @@ import {
   PUBLIC_CHAT_SIZES,
   type PublicChatConfig,
   type PublicConversation,
+  LEAD_REQUEST_ANSWER_ID,
   type PublicConversationRequest,
+  type PublicLeadRequest,
   type PublicMessageRequest,
   type PublicMessageView,
   type PublicRatingRequest,
@@ -30,6 +32,7 @@ import {
 } from '../../rate-limit/rate-limit.service';
 import { runAsSystem, runWithTenant } from '../../tenancy/tenant-context';
 import { ConversationsService } from '../conversations/conversations.service';
+import { LeadsService } from '../leads/leads.service';
 import { PreviewChatService } from '../preview-chat/preview-chat.service';
 import {
   type ConversationClaims,
@@ -54,6 +57,9 @@ export const PUBLIC_CHAT_LIMITS = {
   perBotDay: { limit: 200, windowSeconds: 86400 },
   /** Changing the stars a few times is fine; more is a script. */
   ratingPerConversationMinute: { limit: 10, windowSeconds: 60 },
+  /** A visitor fills the contact form once, maybe twice; more is a script (M7-41). */
+  leadPerConversationHour: { limit: 5, windowSeconds: 3600 },
+  leadPerIpHour: { limit: 20, windowSeconds: 3600 },
 };
 
 // Visitors don't manage keys: the dashboard wording would confuse them.
@@ -89,6 +95,7 @@ export class PublicChatService {
     private readonly preview: PreviewChatService,
     private readonly conversations: ConversationsService,
     private readonly tokens: ConversationTokenService,
+    private readonly leads: LeadsService,
     @Optional() config?: ConfigService,
   ) {
     // Load-test mode only (M7-5; the config refuses it in production): a
@@ -291,6 +298,49 @@ export class PublicChatService {
       this.conversations.rate(conversationId, bot.id, request.rating),
     );
     if (!rated) throw new NotFoundException('Conversation not found');
+  }
+
+  /**
+   * The contact form of the widget (M7-41): saves a lead in this very
+   * conversation, in the chatbot's own workspace. The chatbot and
+   * conversation come from the signed token, never from the request, so a
+   * visitor can only add a lead to their own chat.
+   */
+  async submitLead(
+    conversationId: string,
+    token: string | null,
+    ip: string,
+    request: PublicLeadRequest,
+  ): Promise<void> {
+    const claims = this.authorize(conversationId, token);
+    const bot = await this.liveBot({ id: claims.chatbotId });
+    await this.rateLimit.consume(
+      {
+        key: `public:lead:${conversationId}`,
+        ...this.scaled(PUBLIC_CHAT_LIMITS.leadPerConversationHour),
+      },
+      {
+        key: `public:lead-ip:${ip}`,
+        ...this.scaled(PUBLIC_CHAT_LIMITS.leadPerIpHour),
+      },
+    );
+    await this.inBotWorkspace(bot, async () => {
+      const conversation = await this.conversations.find(
+        conversationId,
+        bot.id,
+      );
+      if (!conversation) throw new NotFoundException('Conversation not found');
+      await this.leads.create({
+        chatbotId: bot.id,
+        conversationId,
+        name: request.name,
+        email: request.email,
+        phone: request.phone,
+        answers: request.message
+          ? { [LEAD_REQUEST_ANSWER_ID]: request.message }
+          : undefined,
+      });
+    });
   }
 
   /**

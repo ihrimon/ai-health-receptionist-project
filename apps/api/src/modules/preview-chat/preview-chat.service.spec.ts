@@ -338,7 +338,8 @@ describe('PreviewChatService', () => {
         '{"query":"trail shoe"}',
       );
       const [first, second] = llm.streamWith.mock.calls as unknown[][];
-      expect((first[2] as unknown[]).length).toBe(2);
+      // The two product tools and the contact form.
+      expect((first[2] as unknown[]).length).toBe(3);
       // The tool's JSON went back to the model as a tool message.
       expect(JSON.stringify(second[1])).toContain('49.90 USD');
       expect(JSON.stringify(second[1])).toContain('call_1');
@@ -413,11 +414,13 @@ describe('PreviewChatService', () => {
       expect(events.at(-1)).toMatchObject({ answeredBy: 'fallback' });
     });
 
-    it('does not offer tools to a chatbot without products', async () => {
+    it('offers no product tools to a chatbot without products', async () => {
       products.hasProducts.mockResolvedValue(false);
       await send();
       const [[, , tools]] = llm.streamWith.mock.calls as unknown[][];
-      expect(tools).toBeUndefined();
+      expect(
+        (tools as { function: { name: string } }[]).map((t) => t.function.name),
+      ).toEqual(['show_contact_form']);
     });
 
     it('takes the tools away after three rounds so the model has to answer', async () => {
@@ -539,7 +542,7 @@ describe('PreviewChatService', () => {
         answers: { budget: 'About 50 USD' },
       });
       const [first, second] = llm.streamWith.mock.calls as unknown[][];
-      expect(toolNames(first)).toEqual(['capture_lead']);
+      expect(toolNames(first)).toEqual(['capture_lead', 'show_contact_form']);
       expect(JSON.stringify(second[1])).toContain('\\"saved\\":true');
       // A saved lead grounds the reply: no fallback although no knowledge matched.
       expect(text()).toBe('Thanks, Ana! We will be in touch.');
@@ -591,6 +594,7 @@ describe('PreviewChatService', () => {
         'search_products',
         'get_product',
         'capture_lead',
+        'show_contact_form',
       ]);
       const messages = first[1] as { content: string }[];
       expect(messages[0].content).toContain('capture_lead');
@@ -621,10 +625,109 @@ describe('PreviewChatService', () => {
       ]);
       await send();
       const [first] = llm.streamWith.mock.calls as unknown[][];
-      expect(first[2]).toBeUndefined();
+      expect(toolNames(first)).toEqual(['show_contact_form']);
       expect((first[1] as { content: string }[])[0].content).not.toContain(
         'capture_lead',
       );
+    });
+  });
+
+  describe('contact form (M7-41)', () => {
+    const formCall = {
+      type: 'done',
+      message: {
+        role: 'assistant',
+        content: null,
+        tool_calls: [
+          {
+            id: 'call_form',
+            type: 'function',
+            function: { name: 'show_contact_form', arguments: '{}' },
+          },
+        ],
+      },
+      credentialId: 'key-1',
+      model: 'gpt',
+      usage: { inputTokens: 40, outputTokens: 3 },
+    };
+    async function* oneEvent(event: unknown): AsyncGenerator<unknown> {
+      await Promise.resolve();
+      yield event;
+    }
+    /** The model shows the form first, then asks the visitor to fill it in. */
+    const formThenAnswer = (answer: string) => {
+      let calls = 0;
+      llm.streamWith.mockImplementation(() => {
+        calls += 1;
+        return calls === 1 ? oneEvent(formCall) : llmStream([answer]);
+      });
+    };
+    const toolNames = (call: unknown[]) =>
+      ((call[2] as { function: { name: string } }[] | undefined) ?? []).map(
+        (t) => t.function.name,
+      );
+
+    it('offers show_contact_form and the prompt explains when to use it', async () => {
+      await send();
+      const [first] = llm.streamWith.mock.calls as unknown[][];
+      expect(toolNames(first)).toContain('show_contact_form');
+      expect((first[1] as { content: string }[])[0].content).toContain(
+        'show_contact_form',
+      );
+    });
+
+    it('emits lead_form before the answer, and keeps an answer no knowledge backs', async () => {
+      knowledge.search.mockResolvedValue([]);
+      formThenAnswer('Please fill in the form below and we will call you.');
+
+      await service.send(
+        'user-1',
+        { message: 'I want to book a service', history: [] },
+        emit,
+      );
+
+      const types = events.map((e) => e.type);
+      expect(types.indexOf('lead_form')).toBeGreaterThanOrEqual(0);
+      expect(types.indexOf('lead_form')).toBeLessThan(types.indexOf('delta'));
+      // The form grounds the reply: no fallback although nothing matched.
+      expect(text()).toBe(
+        'Please fill in the form below and we will call you.',
+      );
+      expect(events.at(-1)).toMatchObject({ type: 'done', answeredBy: 'llm' });
+    });
+
+    it('goes to the model for a visitor who wants to book, even without knowledge', async () => {
+      knowledge.search.mockResolvedValue([]);
+      formThenAnswer('Please fill in the form.');
+      await service.send(
+        'user-1',
+        { message: 'Can I get a quote?', history: [] },
+        emit,
+      );
+      expect(llm.streamWith).toHaveBeenCalled();
+    });
+
+    it('still falls back, without the model, for an unrelated question with no knowledge', async () => {
+      knowledge.search.mockResolvedValue([]);
+      await service.send(
+        'user-1',
+        { message: 'What is the capital of France?', history: [] },
+        emit,
+      );
+      expect(llm.streamWith).not.toHaveBeenCalled();
+      expect(text()).toBe(config.behavior.fallbackMessage);
+    });
+
+    it('does not show the form when the model only writes text without knowledge', async () => {
+      knowledge.search.mockResolvedValue([]);
+      llm.streamWith.mockImplementation(() => llmStream(['Sure, call us!']));
+      await service.send(
+        'user-1',
+        { message: 'I want to book a service', history: [] },
+        emit,
+      );
+      expect(events.some((e) => e.type === 'lead_form')).toBe(false);
+      expect(text()).toBe(config.behavior.fallbackMessage);
     });
   });
 

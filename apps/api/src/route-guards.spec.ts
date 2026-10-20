@@ -31,6 +31,8 @@ const PUBLIC_ROUTES = new Set([
   'PublicChatController.send',
   'PublicChatController.history',
   'PublicChatController.rate',
+  // The widget's contact form (M7-41): the conversation token is the key.
+  'PublicChatController.lead',
   'WidgetPageController.page',
   'WidgetPageController.asset',
   'WidgetPageController.loader',

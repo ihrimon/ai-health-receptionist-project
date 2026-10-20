@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import { ApiError, type Conversation, widgetApi } from "./api";
 import { loadStored, newVisitorId, saveStored } from "./storage";
 import { STRINGS } from "./strings";
-import type { ChatMessage, Handoff } from "./types";
+import type { ChatMessage, Handoff, LeadFormFields } from "./types";
 
 let lastId = 0;
 const newId = () => `m${++lastId}`;
@@ -88,12 +88,13 @@ export function useChat(publicId: string) {
     const answerId = newId();
     let answer = "";
     let handoff: Handoff | undefined;
+    let leadForm = false;
     let streaming = true;
     setMessages((current) => [...current, { id: newId(), role: "user", text: message }]);
 
     const showAnswer = () =>
       setMessages((current) => {
-        const shown: ChatMessage = { id: answerId, role: "assistant", text: answer, streaming, handoff };
+        const shown: ChatMessage = { id: answerId, role: "assistant", text: answer, streaming, handoff, leadForm };
         return current.some((m) => m.id === answerId)
           ? current.map((m) => (m.id === answerId ? shown : m))
           : [...current, shown];
@@ -109,6 +110,9 @@ export function useChat(publicId: string) {
         } else if (event.type === "handoff") {
           // Only after a fallback answer, when the company set a way to reach them.
           handoff = { kind: event.kind, value: event.value, label: event.label };
+        } else if (event.type === "lead_form") {
+          // The visitor wants to buy or book: the contact form comes with this answer.
+          leadForm = true;
         } else if (event.type === "error") {
           throw new ApiError(event.message, 200);
         }
@@ -133,6 +137,26 @@ export function useChat(publicId: string) {
   }
 
   /**
+   * The contact form's submit (M7-41): saves a lead in this conversation,
+   * then swaps the form for a thank-you. Throws when the API refuses, so the
+   * form can say so and stay.
+   */
+  async function submitLead(fields: LeadFormFields) {
+    const chat = conversationRef.current;
+    if (!chat) throw new ApiError("There is no conversation yet", 404);
+    try {
+      await widgetApi.lead(chat, fields);
+    } catch (err) {
+      if (isGone(err)) forget();
+      throw err;
+    }
+    setMessages((current) => [
+      ...current.map((m) => (m.leadForm ? { ...m, leadForm: false } : m)),
+      { id: newId(), role: "assistant", text: STRINGS.leadForm.thanks },
+    ]);
+  }
+
+  /**
    * Sends the visitor's stars and remembers that this conversation is
    * rated. A failed call is let go: the visitor already saw the thanks.
    */
@@ -144,7 +168,7 @@ export function useChat(publicId: string) {
     await widgetApi.rate(chat, stars).catch(() => undefined);
   }
 
-  return { messages, waiting, busy, send, answered, rated, rate };
+  return { messages, waiting, busy, send, answered, rated, rate, submitLead };
 }
 
 /** The conversation no longer exists for this visitor. */

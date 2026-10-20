@@ -5,6 +5,7 @@ import type {
   PublicMessageView,
 } from "@brainstack/shared";
 import { API_BASE } from "./env";
+import type { LeadFormFields } from "./types";
 
 /* The public chat API (D-2 §3). No cookies: the widget has no login, and
    the API opens CORS to the widget's origin for these routes only. A
@@ -57,7 +58,7 @@ function post(body: unknown, headers: Record<string, string> = {}): RequestInit 
 const bearer = (chat: Conversation) => ({ Authorization: `Bearer ${chat.conversationToken}` });
 
 const botPath = (publicId: string) => `/public/chatbots/${encodeURIComponent(publicId)}`;
-const conversationPath = (chat: Conversation, what: "messages" | "rating" = "messages") =>
+const conversationPath = (chat: Conversation, what: "messages" | "rating" | "lead" = "messages") =>
   `/public/conversations/${encodeURIComponent(chat.conversationId)}/${what}`;
 
 export const widgetApi = {
@@ -82,6 +83,11 @@ export const widgetApi = {
   /** The visitor's 1–5 stars for this conversation (FR-4.6, M5-7). */
   async rate(chat: Conversation, rating: number): Promise<void> {
     await call(conversationPath(chat, "rating"), post({ rating }, bearer(chat)));
+  },
+
+  /** The contact form: saves a lead in this conversation (M7-41). Throws ApiError on a refusal. */
+  async lead(chat: Conversation, fields: LeadFormFields): Promise<void> {
+    await call(conversationPath(chat, "lead"), post(fields, bearer(chat)));
   },
 
   /** The conversation so far, for a reloaded page. */
