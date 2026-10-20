@@ -3,7 +3,7 @@
  * launch). A later translation only swaps this object.
  */
 export const STRINGS = {
-  closeChat: "Close chat",
+  minimizeChat: "Minimize chat",
   /** The scrollable list of messages, for screen readers. */
   conversation: "Conversation",
   inputLabel: "Your message",

@@ -5,7 +5,7 @@ import { STRINGS } from "../strings";
 import type { Brand } from "../theme";
 import type { ChatMessage } from "../types";
 import { HandoffButton } from "./handoff-button";
-import { CloseIcon } from "./icons";
+import { MinimizeIcon } from "./icons";
 import { MessageBubble } from "./message-bubble";
 import { MessageInput } from "./message-input";
 import { TypingIndicator } from "./typing-indicator";
@@ -94,11 +94,11 @@ export function ChatWindow({
         {onClose && (
           <button
             type="button"
-            aria-label={STRINGS.closeChat}
+            aria-label={STRINGS.minimizeChat}
             class="-m-1 rounded-md p-2 opacity-80 hover:opacity-100"
             onClick={onClose}
           >
-            <CloseIcon />
+            <MinimizeIcon />
           </button>
         )}
       </header>

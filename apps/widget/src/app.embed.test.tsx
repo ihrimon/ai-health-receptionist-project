@@ -65,7 +65,7 @@ describe("App in the loader's iframe (M4-10)", () => {
 
   it("asks the host to close from the close button and from Escape", async () => {
     const { sent, user } = await embedded(true);
-    await user.click(await screen.findByRole("button", { name: STRINGS.closeChat }));
+    await user.click(await screen.findByRole("button", { name: STRINGS.minimizeChat }));
     expect(sent("close")).toHaveLength(1);
     await user.keyboard("{Escape}");
     expect(sent("close")).toHaveLength(2);
@@ -76,13 +76,13 @@ describe("App in the loader's iframe (M4-10)", () => {
     api();
     render(<App publicId="pub1" />);
     await screen.findByText(config.welcomeMessage);
-    expect(screen.queryByRole("button", { name: STRINGS.closeChat })).toBeNull();
+    expect(screen.queryByRole("button", { name: STRINGS.minimizeChat })).toBeNull();
   });
 
   it("focuses the message box each time the host opens the panel", async () => {
     const { deliver, user } = await embedded(true);
     const input = screen.getByRole("textbox", { name: STRINGS.inputLabel });
-    await user.click(screen.getByRole("button", { name: STRINGS.closeChat }));
+    await user.click(screen.getByRole("button", { name: STRINGS.minimizeChat }));
     input.blur();
     act(() => deliver(hostMessage("state", false), HOST));
     expect(document.activeElement).not.toBe(input);
