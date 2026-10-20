@@ -23,18 +23,54 @@ export const PROVIDER_KEY_PAGES: Record<LlmKeyProvider, string> = {
   groq: "https://console.groq.com/keys",
 };
 
-// Suggestions only: any model id the provider accepts can be typed, and
-// the API checks it with a real call before saving.
-export const SUGGESTED_MODELS: Record<LlmKeyProvider, string[]> = {
-  openai: ["gpt-4o-mini", "gpt-4.1-mini", "gpt-4o", "gpt-4.1"],
-  gemini: ["gemini-3.6-flash", "gemini-flash-latest", "gemini-3.6-pro"],
+export interface ModelOption {
+  id: string;
+  /** What to expect, shown next to the id. */
+  note: string;
+}
+
+/**
+ * The models offered for each provider, lowest tier first (M7-39): the first
+ * one is chosen for the company, so the default is the cheapest and fastest.
+ * The list is not exhaustive: "Other model…" takes any id the provider
+ * accepts, and the API checks the id with a real call before saving. Model
+ * names change, so fix this list when a provider retires one.
+ */
+export const MODEL_OPTIONS: Record<LlmKeyProvider, ModelOption[]> = {
+  gemini: [
+    { id: "gemini-3.1-flash-lite", note: "Lowest cost, fastest" },
+    { id: "gemini-3.6-flash", note: "Balanced" },
+    { id: "gemini-flash-latest", note: "Always the newest Flash" },
+    { id: "gemini-3.6-pro", note: "Most capable" },
+  ],
+  openai: [
+    { id: "gpt-4o-mini", note: "Lowest cost, fastest" },
+    { id: "gpt-4.1-mini", note: "Balanced" },
+    { id: "gpt-4o", note: "More capable" },
+    { id: "gpt-4.1", note: "Most capable" },
+  ],
   groq: [
-    "llama-3.3-70b-versatile",
-    "openai/gpt-oss-120b",
-    "openai/gpt-oss-20b",
-    "llama-3.1-8b-instant",
+    { id: "openai/gpt-oss-20b", note: "Lowest cost, fastest" },
+    { id: "llama-3.1-8b-instant", note: "Very fast, small" },
+    { id: "llama-3.3-70b-versatile", note: "More capable" },
+    { id: "openai/gpt-oss-120b", note: "Most capable" },
   ],
 };
+
+/** Just the ids, lowest tier first. */
+export const SUGGESTED_MODELS: Record<LlmKeyProvider, string[]> = {
+  gemini: MODEL_OPTIONS.gemini.map((m) => m.id),
+  openai: MODEL_OPTIONS.openai.map((m) => m.id),
+  groq: MODEL_OPTIONS.groq.map((m) => m.id),
+};
+
+/** The model chosen for a provider until the company picks another. */
+export function defaultModel(provider: LlmKeyProvider): string {
+  return MODEL_OPTIONS[provider][0].id;
+}
+
+/** Value of the "Other model…" choice in the picker. */
+export const CUSTOM_MODEL = "__custom__";
 
 /** "…abcd": enough to tell keys apart, never the key. */
 export function maskedKey(key: Pick<LlmKey, "keyLast4">): string {

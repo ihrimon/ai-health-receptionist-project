@@ -29,12 +29,14 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import {
   canChat,
+  CUSTOM_MODEL,
+  defaultModel,
   type LlmKey,
   llmKeysApi,
   maskedKey,
+  MODEL_OPTIONS,
   PROVIDER_KEY_PAGES,
   PROVIDER_LABELS,
-  SUGGESTED_MODELS,
 } from "@/lib/llm-keys";
 import { useSession } from "@/lib/session";
 import { toastError, toastSuccess } from "@/lib/toast";
@@ -199,16 +201,27 @@ function KeyRow({
 
 function AddKeyCard({ onAdded }: { onAdded: () => Promise<void> }) {
   const [provider, setProvider] = useState<LlmKeyProvider>("openai");
-  const [model, setModel] = useState(SUGGESTED_MODELS.openai[0]);
+  // The picker holds one of the listed ids or CUSTOM_MODEL; the typed id
+  // is only used for the latter.
+  const [picked, setPicked] = useState(defaultModel("openai"));
+  const [custom, setCustom] = useState("");
   const [apiKey, setApiKey] = useState("");
   const [saving, setSaving] = useState(false);
-  const modelsId = useId();
   const keyId = useId();
-  const modelId = useId();
+  const customId = useId();
+  const model = picked === CUSTOM_MODEL ? custom : picked;
+  const modelItems = [
+    ...MODEL_OPTIONS[provider].map((m) => ({
+      value: m.id,
+      label: `${m.id} · ${m.note}`,
+    })),
+    { value: CUSTOM_MODEL, label: "Other model…" },
+  ];
 
   function chooseProvider(next: LlmKeyProvider) {
     setProvider(next);
-    setModel(SUGGESTED_MODELS[next][0]);
+    setPicked(defaultModel(next));
+    setCustom("");
   }
 
   async function handleSubmit(e: FormEvent) {
@@ -261,22 +274,35 @@ function AddKeyCard({ onAdded }: { onAdded: () => Promise<void> }) {
           </Field>
           <Field
             label="Model"
-            htmlFor={modelId}
-            hint="Pick a suggestion or type any model your account can use."
+            hint="Lowest cost first. The first one is chosen for you; pick a stronger model if answers are not good enough."
           >
-            <Input
-              id={modelId}
-              required
-              maxLength={100}
-              list={modelsId}
-              value={model}
-              onChange={(e) => setModel(e.target.value)}
-            />
-            <datalist id={modelsId}>
-              {SUGGESTED_MODELS[provider].map((m) => (
-                <option key={m} value={m} />
-              ))}
-            </datalist>
+            <Select
+              items={modelItems}
+              value={picked}
+              onValueChange={(v) => v && setPicked(v)}
+            >
+              <SelectTrigger className="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {modelItems.map((item) => (
+                  <SelectItem key={item.value} value={item.value}>
+                    {item.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {picked === CUSTOM_MODEL && (
+              <Input
+                id={customId}
+                aria-label="Model id"
+                required
+                maxLength={100}
+                placeholder="A model id your account can use"
+                value={custom}
+                onChange={(e) => setCustom(e.target.value)}
+              />
+            )}
           </Field>
           <Field label="API key" htmlFor={keyId}>
             <Input
