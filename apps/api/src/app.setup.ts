@@ -40,7 +40,6 @@ export function configureApp(app: NestExpressApplication): void {
 
   app.use(securityHeaders);
   app.use(cookieParser());
-  app.use(requireFetchHeader);
 
   const allowed = {
     dashboardUrl: process.env.DASHBOARD_URL ?? 'http://localhost:3000',
@@ -53,6 +52,11 @@ export function configureApp(app: NestExpressApplication): void {
       corsOptionsFor(req.headers.origin, req.originalUrl ?? req.url, allowed),
     );
   });
+
+  // After CORS on purpose (M7-38): a call refused here (no X-Requested-With)
+  // must still carry the CORS headers, or the browser hides the real answer
+  // behind a generic "CORS error".
+  app.use(requireFetchHeader);
 
   app.useGlobalPipes(
     new ValidationPipe({

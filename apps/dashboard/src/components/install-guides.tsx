@@ -4,7 +4,18 @@ import { Check, Copy } from "lucide-react";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { INSTALL_GUIDES, splitInlineCode } from "@/lib/install-guides";
+import {
+  INSTALL_GUIDES,
+  splitInlineCode,
+  type InstallCode,
+} from "@/lib/install-guides";
+import {
+  nextLayoutCode,
+  nextPagesCode,
+  parseSnippet,
+  reactComponentCode,
+  type SnippetParts,
+} from "@/lib/install-snippet";
 import { toastError } from "@/lib/toast";
 
 function Rich({ text }: { text: string }) {
@@ -23,7 +34,7 @@ function Rich({ text }: { text: string }) {
   );
 }
 
-/** The company's snippet with a copy button (Install page, M4-13). */
+/** The company's snippet (or other code) with a copy button (Install page, M4-13). */
 export function SnippetBlock({ snippet }: { snippet: string }) {
   const [copied, setCopied] = useState(false);
 
@@ -50,8 +61,20 @@ export function SnippetBlock({ snippet }: { snippet: string }) {
   );
 }
 
+function codeFor(kind: InstallCode, parts: SnippetParts): string {
+  switch (kind) {
+    case "next-layout":
+      return nextLayoutCode(parts);
+    case "next-pages":
+      return nextPagesCode(parts);
+    case "react-component":
+      return reactComponentCode(parts);
+  }
+}
+
 /** Per-platform steps for pasting the snippet (FR-3.3, M4-15). */
 export function InstallGuides({ snippet }: { snippet: string }) {
+  const parts = parseSnippet(snippet);
   return (
     <Tabs defaultValue={INSTALL_GUIDES[0].id}>
       <TabsList className="h-auto w-full flex-wrap justify-start sm:w-fit">
@@ -75,6 +98,9 @@ export function InstallGuides({ snippet }: { snippet: string }) {
                     <Rich text={step.text} />
                   </p>
                   {step.snippet && <SnippetBlock snippet={snippet} />}
+                  {step.code && parts && (
+                    <SnippetBlock snippet={codeFor(step.code, parts)} />
+                  )}
                 </div>
               </li>
             ))}

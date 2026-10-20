@@ -25,6 +25,7 @@ import {
 } from './auth-emails';
 import { AuthContext } from './auth-context';
 import { RESET_PASSWORD_TTL_MS, VERIFY_EMAIL_TTL_MS } from './auth.constants';
+import type { ChangePasswordDto } from './dto/account.dto';
 import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
 import {
@@ -78,6 +79,11 @@ export class AuthService {
     private readonly resetQueue: PasswordResetQueue,
   ) {}
 
+  /** M7-37: verification and password-reset mail are off until a mail provider exists. */
+  private get emailFeatures(): boolean {
+    return this.config.get<boolean>('email.featuresEnabled') === true;
+  }
+
   /**
    * M1-16: user + workspace + OWNER membership + default chatbot in one
    * transaction, then a verification email (best-effort, outside the
@@ -101,7 +107,7 @@ export class AuthService {
       where: { email: dto.email },
     });
     if (existing) {
-      await this.notifyAccountExists(existing);
+      this.inBackground(() => this.notifyAccountExists(existing));
       return;
     }
 
@@ -110,7 +116,13 @@ export class AuthService {
       user = await runAsSystem('sign up', () =>
         this.prisma.$transaction(async (tx) => {
           const created = await tx.user.create({
-            data: { email: dto.email, name: dto.name, passwordHash },
+            data: {
+              email: dto.email,
+              name: dto.name,
+              passwordHash,
+              // No mail to confirm while email is off (M7-37).
+              emailVerifiedAt: this.emailFeatures ? undefined : new Date(),
+            },
           });
           await this.workspaces.createWithOwner(
             { name: dto.companyName, ownerUserId: created.id },
@@ -128,13 +140,23 @@ export class AuthService {
         const winner = await this.prisma.user.findUnique({
           where: { email: dto.email },
         });
-        if (winner) await this.notifyAccountExists(winner);
+        if (winner) this.inBackground(() => this.notifyAccountExists(winner));
         return;
       }
       throw err;
     }
 
-    await this.sendVerificationEmail(user);
+    // The mail is not awaited: sending takes seconds (SMTP) and the signup
+    // answer must not wait for it (M7-37).
+    this.inBackground(() => this.sendVerificationEmail(user));
+  }
+
+  /** Runs mail work after the answer; does nothing while email is off. */
+  private inBackground(work: () => Promise<void>): void {
+    if (!this.emailFeatures) return;
+    work().catch((err: unknown) =>
+      this.logger.error(`Background email failed: ${String(err)}`),
+    );
   }
 
   private async notifyAccountExists(user: User): Promise<void> {
@@ -267,7 +289,9 @@ export class AuthService {
     );
 
     // Known or not, the answer is the same and equally fast: the lookup,
-    // the token and the mail all happen in the queued job (M7-24).
+    // the token and the mail all happen in the queued job (M7-24). With
+    // email off nothing is queued, since nothing could be sent (M7-37).
+    if (!this.emailFeatures) return;
     await this.resetQueue.enqueue(email);
   }
 
@@ -329,6 +353,42 @@ export class AuthService {
     });
   }
 
+  /** The signed-in person's own name (M7-42). */
+  async updateProfile(user: User, name: string): Promise<void> {
+    await this.prisma.user.update({ where: { id: user.id }, data: { name } });
+  }
+
+  /**
+   * M7-42: a new password for the signed-in person. It needs the current
+   * one (a stolen session alone can't lock them out), is rate limited, and
+   * ends every other session; the one used here stays.
+   */
+  async changePassword(
+    { user, session }: AuthContext,
+    dto: ChangePasswordDto,
+  ): Promise<void> {
+    await this.rateLimit.consume({
+      key: `change-password:user:${user.id}`,
+      limit: 5,
+      windowSeconds: 15 * MINUTE,
+    });
+    if (!(await verifyPassword(user.passwordHash, dto.currentPassword))) {
+      throw new BadRequestException('Your current password is not right');
+    }
+    if (dto.newPassword === dto.currentPassword) {
+      throw new BadRequestException(
+        'Choose a password different from the current one',
+      );
+    }
+    const passwordHash = await hashPassword(dto.newPassword);
+    await this.prisma.$transaction(async (tx) => {
+      await tx.user.update({ where: { id: user.id }, data: { passwordHash } });
+      await tx.session.deleteMany({
+        where: { userId: user.id, id: { not: session.id } },
+      });
+    });
+  }
+
   /** M1-20 */
   async verifyEmail(token: string, meta: RequestMeta): Promise<void> {
     await this.rateLimit.consume({
@@ -351,7 +411,7 @@ export class AuthService {
 
   /** M1-20 */
   async resendVerification(user: User): Promise<void> {
-    if (user.emailVerifiedAt) return;
+    if (user.emailVerifiedAt || !this.emailFeatures) return;
     await this.rateLimit.consume({
       key: `resend-verification:email:${user.email}`,
       limit: 3,

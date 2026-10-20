@@ -2,17 +2,20 @@
 
 import { useState, type FormEvent } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { AuthCard, FormError } from "@/components/auth-card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { apiFetch } from "@/lib/api";
+import { EMAIL_FEATURES_ENABLED } from "@/lib/features";
 
 // Matches the API's rule (D-2 §2.1); the API also rejects common passwords.
 const PASSWORD_MIN_LENGTH = 10;
 
 /** M1-26, D-3 §1.1: creates the account, workspace and chatbot in one go. */
 export default function SignupPage() {
+  const router = useRouter();
   const [form, setForm] = useState({
     name: "",
     companyName: "",
@@ -39,7 +42,10 @@ export default function SignupPage() {
         method: "POST",
         body: JSON.stringify(form),
       });
-      setDone(true);
+      // Without email there is nothing to confirm: go straight to sign in
+      // (the same for a new and an existing address, M7-21).
+      if (EMAIL_FEATURES_ENABLED) setDone(true);
+      else router.replace("/login?created=1");
     } catch (err) {
       setError((err as Error).message);
       setLoading(false);

@@ -362,7 +362,18 @@ export class AdminService {
   private async supportViewInner(actor: AdminActor, id: string) {
     const workspace = await this.prisma.workspace.findUnique({
       where: { id },
-      select: { id: true, name: true, slug: true, status: true, plan: true },
+      select: {
+        id: true,
+        name: true,
+        slug: true,
+        status: true,
+        plan: true,
+        website: true,
+        industry: true,
+        contactEmail: true,
+        contactPhone: true,
+        timeZone: true,
+      },
     });
     if (!workspace) throw new NotFoundException('Workspace not found');
     const [chatbots, faqs, customAnswers, sources] = await Promise.all([

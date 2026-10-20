@@ -5,6 +5,17 @@ export const API_URL =
 export const API_BASE = `${API_URL}/v1`;
 
 /**
+ * Wakes the API: a free-plan host sleeps when idle and the first request
+ * then takes a long time. Called on the sign-in and sign-up pages so the
+ * wait overlaps with typing. Fire and forget; the answer is not needed.
+ */
+export function warmUpApi(): void {
+  fetch(`${API_URL}/health`, { mode: "no-cors", cache: "no-store" }).catch(
+    () => undefined,
+  );
+}
+
+/**
  * The API rejects state-changing requests without X-Requested-With: fetch
  * (its CSRF check, D-2 §1), so send it on every call.
  */

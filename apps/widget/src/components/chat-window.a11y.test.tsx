@@ -63,7 +63,7 @@ describe("ChatWindow: keyboard (M4-7)", () => {
       order.push(el.getAttribute("aria-label") ?? el.textContent);
     }
     // The send button is skipped while the box is empty (Enter sends).
-    expect(order).toEqual([STRINGS.closeChat, STRINGS.conversation, "our menu", STRINGS.inputLabel]);
+    expect(order).toEqual([STRINGS.minimizeChat, STRINGS.conversation, "our menu", STRINGS.inputLabel]);
   });
 
   it("moves focus back to the message box when the control that had it goes away", () => {
@@ -75,7 +75,7 @@ describe("ChatWindow: keyboard (M4-7)", () => {
 
   it("keeps focus where the visitor put it when a message arrives", () => {
     const { update } = setup({ onClose: vi.fn() });
-    const close = screen.getByRole("button", { name: STRINGS.closeChat });
+    const close = screen.getByRole("button", { name: STRINGS.minimizeChat });
     close.focus();
     update({ onClose: vi.fn(), messages: [{ id: "1", role: "assistant", text: "Hello" }] });
     expect(document.activeElement).toBe(close);
@@ -85,7 +85,7 @@ describe("ChatWindow: keyboard (M4-7)", () => {
 describe("ChatWindow: screen readers (M4-7)", () => {
   it("labels every control and keeps the message list out of the live region", () => {
     setup({ onClose: vi.fn() });
-    expect(screen.getByRole("button", { name: STRINGS.closeChat })).toBeTruthy();
+    expect(screen.getByRole("button", { name: STRINGS.minimizeChat })).toBeTruthy();
     expect(screen.getByRole("button", { name: STRINGS.send })).toBeTruthy();
     expect(screen.getByRole("textbox", { name: STRINGS.inputLabel })).toBeTruthy();
     const list = screen.getByRole("region", { name: STRINGS.conversation });

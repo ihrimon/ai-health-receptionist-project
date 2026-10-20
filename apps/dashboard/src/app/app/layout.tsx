@@ -1,6 +1,7 @@
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Toaster } from "@/components/ui/toast";
+import { OverviewPrefetch } from "@/components/overview-prefetch";
 import { SiteHeader } from "@/components/site-header";
 import { WorkspaceSidebar } from "@/components/workspace-sidebar";
 import { WorkspaceSuspendedGate } from "@/components/workspace-suspended-gate";
@@ -22,6 +23,8 @@ function LoadingShell() {
 /** M1-27: the signed-in company dashboard (D-3 §1.2). */
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   return (
+    <>
+    <OverviewPrefetch />
     <SessionProvider fallback={<LoadingShell />}>
       <WorkspaceSuspendedGate>
       <ChatbotProvider>
@@ -38,5 +41,6 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       </ChatbotProvider>
       </WorkspaceSuspendedGate>
     </SessionProvider>
+    </>
   );
 }

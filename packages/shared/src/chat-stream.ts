@@ -21,6 +21,12 @@ export type ChatStreamEvent =
       value: string;
       label: string | null;
     }
+  /**
+   * The visitor wants to buy, book or be contacted: the widget shows its
+   * short contact form below this answer, and submitting it saves a lead
+   * (M7-41). Carries nothing: the form's fields are fixed.
+   */
+  | { type: 'lead_form' }
   /** The answer is complete. `conversationId` is null when nothing was stored. */
   | {
       type: 'done';

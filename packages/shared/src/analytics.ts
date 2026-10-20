@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import { z } from "zod";
 
 /**
  * Overview analytics (D-2 §2.6, M5-8, FR-8.3). Days are calendar days in
@@ -6,7 +6,7 @@ import { z } from 'zod';
  * day bucket is a UTC day (decisions.md).
  */
 
-export const ANALYTICS_TIME_ZONE = 'UTC';
+export const ANALYTICS_TIME_ZONE = "UTC";
 /** The longest range one request may ask for, in days. */
 export const ANALYTICS_MAX_DAYS = 366;
 /** The range when the query names none: the last 30 days, today included. */
@@ -24,7 +24,7 @@ function isCalendarDay(v: string): boolean {
 const calendarDay = z
   .string()
   .trim()
-  .refine(isCalendarDay, { message: 'Use a real date like 2026-10-17' });
+  .refine(isCalendarDay, { message: "Use a real date like 2026-10-17" });
 
 /** "2026-10-17" of an instant, in UTC. */
 export function utcDay(date: Date): string {
@@ -33,7 +33,9 @@ export function utcDay(date: Date): string {
 
 /** The day `days` after (or before, if negative) a "YYYY-MM-DD" day. */
 export function addDays(day: string, days: number): string {
-  return utcDay(new Date(new Date(`${day}T00:00:00Z`).getTime() + days * DAY_MS));
+  return utcDay(
+    new Date(new Date(`${day}T00:00:00Z`).getTime() + days * DAY_MS),
+  );
 }
 
 /** Every day from `from` to `to`, both included. */
@@ -44,7 +46,10 @@ export function daysBetween(from: string, to: string): string[] {
 }
 
 /** The last `days` days ending today: `{ from, to }` for the overview query. */
-export function lastDays(days: number, now = new Date()): { from: string; to: string } {
+export function lastDays(
+  days: number,
+  now = new Date(),
+): { from: string; to: string } {
   const to = utcDay(now);
   return { from: addDays(to, -(days - 1)), to };
 }
@@ -69,15 +74,17 @@ export const analyticsOverviewQuerySchema = z
     to: calendarDay.optional(),
   })
   .refine(rangeNotReversed, {
-    message: '`from` must not be after `to`',
-    path: ['to'],
+    message: "`from` must not be after `to`",
+    path: ["to"],
   })
   .refine(rangeWithinMax, {
     message: `Pick at most ${ANALYTICS_MAX_DAYS} days`,
-    path: ['from'],
+    path: ["from"],
   });
 
-export type AnalyticsOverviewQuery = z.output<typeof analyticsOverviewQuerySchema>;
+export type AnalyticsOverviewQuery = z.output<
+  typeof analyticsOverviewQuerySchema
+>;
 
 /**
  * The range a query means: a missing `to` is today (or `from`, if that is
@@ -87,7 +94,9 @@ export function analyticsRange(
   query: AnalyticsOverviewQuery,
   now = new Date(),
 ): { from: string; to: string } {
-  const to = query.to ?? (query.from && query.from > utcDay(now) ? query.from : utcDay(now));
+  const to =
+    query.to ??
+    (query.from && query.from > utcDay(now) ? query.from : utcDay(now));
   const from = query.from ?? addDays(to, -(ANALYTICS_DEFAULT_DAYS - 1));
   return { from, to };
 }
@@ -140,18 +149,25 @@ export const analyticsTopQuestionsQuerySchema = z
   .strictObject({
     from: calendarDay.optional(),
     to: calendarDay.optional(),
-    limit: z.coerce.number().int().min(1).max(TOP_QUESTIONS_MAX_LIMIT).optional(),
+    limit: z.coerce
+      .number()
+      .int()
+      .min(1)
+      .max(TOP_QUESTIONS_MAX_LIMIT)
+      .optional(),
   })
   .refine(rangeNotReversed, {
-    message: '`from` must not be after `to`',
-    path: ['to'],
+    message: "`from` must not be after `to`",
+    path: ["to"],
   })
   .refine(rangeWithinMax, {
     message: `Pick at most ${ANALYTICS_MAX_DAYS} days`,
-    path: ['from'],
+    path: ["from"],
   });
 
-export type AnalyticsTopQuestionsQuery = z.output<typeof analyticsTopQuestionsQuerySchema>;
+export type AnalyticsTopQuestionsQuery = z.output<
+  typeof analyticsTopQuestionsQuerySchema
+>;
 
 /** One group of identical questions (same text after cleaning). */
 export interface TopQuestion {
@@ -176,7 +192,9 @@ export interface AnalyticsTopQuestions {
 
 /** GET /v1/analytics/unanswered query: same range and limit as top questions. */
 export const analyticsUnansweredQuerySchema = analyticsTopQuestionsQuerySchema;
-export type AnalyticsUnansweredQuery = z.output<typeof analyticsUnansweredQuerySchema>;
+export type AnalyticsUnansweredQuery = z.output<
+  typeof analyticsUnansweredQuerySchema
+>;
 
 /** One group of identical questions the bot answered with a fallback. */
 export interface UnansweredQuestion {
@@ -199,4 +217,98 @@ export interface AnalyticsUnanswered {
   questions: UnansweredQuestion[];
   /** True when the range had more fallback replies than the scan cap, so older ones were skipped. */
   truncated: boolean;
+}
+
+/* ─────────────── Response times (M7-40) ─────────────── */
+
+/**
+ * Where the time of one answer went, in milliseconds. `firstTokenMs` is
+ * what the visitor feels: how long until the first words appeared (null when
+ * nothing was streamed). The parts add up to roughly `totalMs`; the rest is
+ * overhead between them.
+ */
+export interface AnswerTimings {
+  /** Turning the question into a vector (CPU, in the API process). */
+  embedMs: number;
+  /** The database work before the model: keys, custom answer, history, search. */
+  prepareMs: number;
+  /** Until the first words of the answer, or null. */
+  firstTokenMs: number | null;
+  /** All time spent waiting on the AI model. */
+  llmMs: number;
+  /** Product and lead tools run between model calls. */
+  toolMs: number;
+  /** The whole answer, from the visitor's message to the end. */
+  totalMs: number;
+}
+
+/**
+ * Reads timings saved with a message; null for old messages or anything
+ * that is not a complete set of numbers.
+ */
+export function parseTimings(value: unknown): AnswerTimings | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const v = value as Record<string, unknown>;
+  const num = (key: string): number | null =>
+    typeof v[key] === "number" && Number.isFinite(v[key])
+      ? (v[key] as number)
+      : null;
+  const embedMs = num("embedMs");
+  const prepareMs = num("prepareMs");
+  const llmMs = num("llmMs");
+  const toolMs = num("toolMs");
+  const totalMs = num("totalMs");
+  if (
+    embedMs === null ||
+    prepareMs === null ||
+    llmMs === null ||
+    toolMs === null ||
+    totalMs === null
+  ) {
+    return null;
+  }
+  return {
+    embedMs,
+    prepareMs,
+    firstTokenMs: num("firstTokenMs"),
+    llmMs,
+    toolMs,
+    totalMs,
+  };
+}
+
+/** GET /v1/analytics/response-times query: the overview range plus `limit`. */
+export const analyticsResponseTimesQuerySchema =
+  analyticsTopQuestionsQuerySchema;
+export type AnalyticsResponseTimesQuery = z.output<
+  typeof analyticsResponseTimesQuerySchema
+>;
+
+/** One slow answer, with the question that caused it. */
+export interface SlowAnswer {
+  messageId: string;
+  conversationId: string;
+  /** The visitor's message right before the answer, cut to 200 characters. */
+  question: string;
+  latencyMs: number;
+  /** "llm" | "custom_answer" | "fallback". */
+  answeredBy: string | null;
+  /** Null for answers saved before timings were recorded. */
+  timings: AnswerTimings | null;
+  /** When the answer was given (ISO instant). */
+  at: string;
+}
+
+/** GET /v1/analytics/response-times response. */
+export interface AnalyticsResponseTimes {
+  from: string;
+  to: string;
+  timeZone: string;
+  /** Answers in the range that have a recorded time. */
+  count: number;
+  avgMs: number | null;
+  p50Ms: number | null;
+  p95Ms: number | null;
+  /** Slowest first. */
+  slowest: SlowAnswer[];
 }

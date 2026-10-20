@@ -67,6 +67,27 @@ export const CAPTURE_LEAD_TOOL: ChatCompletionTool = {
   },
 };
 
+/**
+ * Shows the visitor the widget's contact form (M7-41). It takes no
+ * arguments: the form's fields are fixed, and what the visitor types goes
+ * straight to the server, never through the model.
+ */
+export const SHOW_CONTACT_FORM_TOOL: ChatCompletionTool = {
+  type: 'function',
+  function: {
+    name: 'show_contact_form',
+    description:
+      'Show the visitor a short contact form (name, email or phone, and what they need) so the business can get back to them. Call it when the visitor wants to buy, book, order, get a quote or an appointment, or asks to be contacted or to speak to a person. Never call it for an ordinary question.',
+    parameters: { type: 'object', properties: {}, required: [] },
+  },
+};
+
+/** What goes back to the model once the form is on the visitor's screen. */
+export const CONTACT_FORM_RESULT = JSON.stringify({
+  shown: true,
+  note: 'The visitor now sees a short contact form below your message. Tell them in one short sentence to fill it in and that the team will get back to them. Do not ask for their name, email or phone in the chat.',
+});
+
 const captureArgs = z.object({
   name: z.string().nullish(),
   email: z.string().nullish(),

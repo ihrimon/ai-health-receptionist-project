@@ -1,4 +1,4 @@
-import { corsOptionsFor } from './cors';
+import { corsOptionsFor, PREFLIGHT_MAX_AGE_SECONDS } from './cors';
 
 const allowed = {
   dashboardUrl: 'http://localhost:3000',
@@ -11,6 +11,7 @@ describe('corsOptionsFor', () => {
       expect(corsOptionsFor(allowed.dashboardUrl, url, allowed)).toEqual({
         origin: true,
         credentials: true,
+        maxAge: PREFLIGHT_MAX_AGE_SECONDS,
       });
     }
   });

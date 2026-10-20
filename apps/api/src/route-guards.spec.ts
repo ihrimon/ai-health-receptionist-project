@@ -31,6 +31,8 @@ const PUBLIC_ROUTES = new Set([
   'PublicChatController.send',
   'PublicChatController.history',
   'PublicChatController.rate',
+  // The widget's contact form (M7-41): the conversation token is the key.
+  'PublicChatController.lead',
   'WidgetPageController.page',
   'WidgetPageController.asset',
   'WidgetPageController.loader',
@@ -39,6 +41,8 @@ const PUBLIC_ROUTES = new Set([
 /** Needs a login only: they act on the caller's own user or session. */
 const SESSION_ONLY_ROUTES = new Set([
   'AuthController.me',
+  'AuthController.updateProfile',
+  'AuthController.changePassword',
   'AuthController.resendVerification',
   'WorkspacesController.switch',
 ]);

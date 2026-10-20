@@ -1,9 +1,9 @@
 import { render, screen } from "@testing-library/preact";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { STRINGS } from "../strings";
 import { MESSAGE_MAX_CHARS } from "../types";
-import { MessageInput } from "./message-input";
+import { INPUT_MAX_HEIGHT_PX, MessageInput } from "./message-input";
 
 const brand = { background: "#000000", color: "#ffffff" };
 
@@ -13,7 +13,9 @@ function setup(disabled = false) {
   return {
     onSend,
     box: screen.getByLabelText(STRINGS.inputLabel) as HTMLTextAreaElement,
-    button: screen.getByRole("button", { name: STRINGS.send }) as HTMLButtonElement,
+    button: screen.getByRole("button", {
+      name: STRINGS.send,
+    }) as HTMLButtonElement,
     user: userEvent.setup(),
   };
 }
@@ -55,6 +57,36 @@ describe("MessageInput", () => {
     expect(button.disabled).toBe(true);
     // The typed text is kept for when sending is allowed again.
     expect(box.value).toBe("Hello");
+  });
+
+  describe("growing with the text", () => {
+    function fakeScrollHeight(px: number) {
+      Object.defineProperty(HTMLTextAreaElement.prototype, "scrollHeight", {
+        configurable: true,
+        get: () => px,
+      });
+    }
+    afterEach(() => {
+      delete (HTMLTextAreaElement.prototype as { scrollHeight?: number })
+        .scrollHeight;
+    });
+
+    it("takes the height of its text, so earlier lines stay visible", async () => {
+      fakeScrollHeight(88);
+      const { box, user } = setup();
+      await user.type(
+        box,
+        "one{Shift>}{Enter}{/Shift}two{Shift>}{Enter}{/Shift}three",
+      );
+      expect(box.style.height).toBe("88px");
+    });
+
+    it("stops growing at the maximum height and scrolls from there", async () => {
+      fakeScrollHeight(900);
+      const { box, user } = setup();
+      await user.type(box, "long");
+      expect(box.style.height).toBe(`${INPUT_MAX_HEIGHT_PX}px`);
+    });
   });
 
   it("limits the message to the API's length", () => {

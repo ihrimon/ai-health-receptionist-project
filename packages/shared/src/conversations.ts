@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import type { AnswerTimings } from './analytics';
 import type { PreviewChatSource } from './preview-chat';
 
 /**
@@ -97,6 +98,10 @@ export interface ConversationMessage {
   sources: PreviewChatSource[];
   /** "llm" | "custom_answer" | "fallback"; null for the visitor's messages. */
   answeredBy: string | null;
+  /** How long the answer took, in ms (assistant messages; null if not recorded). */
+  latencyMs: number | null;
+  /** Where that time went (assistant messages; null if not recorded). */
+  timings: AnswerTimings | null;
   createdAt: string;
 }
 

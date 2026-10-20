@@ -65,6 +65,22 @@ export default function AdminWorkspaceSupportPage() {
             </p>
           </div>
 
+          <section className="grid gap-1 rounded-lg border p-4 text-sm">
+            <h3 className="text-lg font-semibold">Company</h3>
+            {[
+              ["Website", view.workspace.website],
+              ["Industry", view.workspace.industry],
+              ["Contact email", view.workspace.contactEmail],
+              ["Contact phone", view.workspace.contactPhone],
+              ["Time zone", view.workspace.timeZone],
+            ].map(([label, value]) => (
+              <div key={label} className="flex gap-4">
+                <span className="w-28 shrink-0 text-muted-foreground">{label}</span>
+                <span className="break-all">{value ?? "—"}</span>
+              </div>
+            ))}
+          </section>
+
           <section className="grid gap-3">
             <h3 className="text-lg font-semibold">Chatbot</h3>
             {view.chatbots.length === 0 && (

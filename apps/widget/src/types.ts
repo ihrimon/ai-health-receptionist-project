@@ -13,6 +13,16 @@ export interface ChatMessage {
   streaming?: boolean;
   /** A fallback answer's handoff button (M4-6). */
   handoff?: Handoff;
+  /** The answer comes with the contact form below it (M7-41). */
+  leadForm?: boolean;
+}
+
+/** What the contact form sends (the API's `publicLeadRequestSchema`). */
+export interface LeadFormFields {
+  name: string;
+  email?: string;
+  phone?: string;
+  message?: string;
 }
 
 /**

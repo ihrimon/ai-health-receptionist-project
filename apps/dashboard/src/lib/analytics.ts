@@ -1,6 +1,7 @@
 import {
   type AnalyticsDay,
   type AnalyticsOverview,
+  type AnalyticsResponseTimes,
   type AnalyticsTopQuestions,
   type AnalyticsUnanswered,
   lastDays,
@@ -94,6 +95,10 @@ export function prefillQuestion(search: string): string | null {
 }
 
 export const analyticsApi = {
+  responseTimes: (days: number) =>
+    apiFetch<AnalyticsResponseTimes>(
+      `/analytics/response-times${overviewQueryString(days)}&limit=10`,
+    ),
   unanswered: (days: number) =>
     apiFetch<AnalyticsUnanswered>(
       `/analytics/unanswered${overviewQueryString(days)}&limit=50`,

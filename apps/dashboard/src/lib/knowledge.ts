@@ -164,7 +164,23 @@ export function statusBadge(status: IngestStatus): StatusBadge {
   }
 }
 
-/** Keep polling while any source is still being indexed (D-3: every 3 s). */
+/**
+ * Wait before the next status check: 3 s at first, then longer (up to 15 s)
+ * while nothing changes, so a slow indexing run does not mean hundreds of
+ * identical requests (M7-38).
+ */
+export function pollDelay(unchangedChecks: number): number {
+  return Math.min(3000 * 1.5 ** unchangedChecks, 15_000);
+}
+
+/** One word per source state; two equal strings mean nothing changed. */
+export function statusSignature(
+  sources: { id: string; status: IngestStatus }[],
+): string {
+  return sources.map((s) => `${s.id}:${s.status}`).join(",");
+}
+
+/** Keep polling while any source is still being indexed (D-3: every 3 s at first). */
 export function needsPolling(sources: { status: IngestStatus }[]): boolean {
   return sources.some(
     (s) => s.status === "QUEUED" || s.status === "PROCESSING",

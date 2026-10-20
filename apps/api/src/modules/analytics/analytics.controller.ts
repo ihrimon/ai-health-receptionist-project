@@ -1,5 +1,7 @@
 import {
   type AnalyticsOverviewQuery,
+  type AnalyticsResponseTimesQuery,
+  analyticsResponseTimesQuerySchema,
   type AnalyticsTopQuestionsQuery,
   type AnalyticsUnansweredQuery,
   analyticsUnansweredQuerySchema,
@@ -24,6 +26,15 @@ export class AnalyticsController {
     query: AnalyticsOverviewQuery,
   ) {
     return this.analytics.overview(query);
+  }
+
+  @Get('response-times')
+  @Roles(WorkspaceRole.VIEWER)
+  responseTimes(
+    @Query(new ZodBodyPipe(analyticsResponseTimesQuerySchema))
+    query: AnalyticsResponseTimesQuery,
+  ) {
+    return this.analytics.responseTimes(query);
   }
 
   @Get('top-questions')

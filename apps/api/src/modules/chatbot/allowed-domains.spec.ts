@@ -16,6 +16,33 @@ describe('checkAllowedDomains', () => {
     ).toEqual({ ok: true, domains: ['shop.example.com', '*.example.com'] });
   });
 
+  // Any ordinary business domain works, whatever its ending (M7-39).
+  it.each([
+    'knkoglobal.com',
+    'www.knkoglobal.com',
+    'shop.example.org',
+    'acme.net',
+    'site.dev',
+    'site.io',
+    'site.ai',
+    'site.xyz',
+    'site.online',
+    'site.shop',
+    'site.co.uk',
+    'site.com.bd',
+    'my-app.vercel.app',
+    '*.vercel.app',
+    'my-site.netlify.app',
+    'my-site.pages.dev',
+    'my-site.onrender.com',
+    'sub.domain.example.com',
+  ])('accepts %s', (domain) => {
+    expect(checkAllowedDomains([domain], false)).toEqual({
+      ok: true,
+      domains: [domain],
+    });
+  });
+
   it('accepts an empty list', () => {
     expect(checkAllowedDomains([], false)).toEqual({ ok: true, domains: [] });
   });
