@@ -26,7 +26,7 @@ afterEach(() => {
 });
 
 /** The API with a config, a new conversation per start, and `answer` streamed back. */
-function api(overrides: Partial<Record<"history" | "send" | "start" | "rate", FakeHandler>> = {}) {
+function api(overrides: Partial<Record<"history" | "send" | "start" | "rate" | "lead", FakeHandler>> = {}) {
   let started = 0;
   return fakeApi((req: FakeRequest) => {
     if (req.path === "/public/chatbots/pub1/config") return json(config);
@@ -35,6 +35,7 @@ function api(overrides: Partial<Record<"history" | "send" | "start" | "rate", Fa
       return overrides.start?.(req) ?? json({ conversationId: `c${started}`, conversationToken: `tok${started}` }, 201);
     }
     if (req.method === "GET") return overrides.history?.(req) ?? json([]);
+    if (req.path.endsWith("/lead")) return overrides.lead?.(req) ?? new Response(null, { status: 204 });
     if (req.path.endsWith("/rating")) return overrides.rate?.(req) ?? new Response(null, { status: 204 });
     return (
       overrides.send?.(req) ??
@@ -213,6 +214,54 @@ describe("App: streaming chat (M4-3)", () => {
     const user = await ready();
     await user.type(screen.getByLabelText(STRINGS.inputLabel), "Hi{Enter}");
     expect(await screen.findByText("We open at 9.")).toBeTruthy();
+  });
+});
+
+describe("App: contact form (M7-41)", () => {
+  const formAnswer = () =>
+    sseResponse([
+      sse("lead_form", {}),
+      sse("delta", { text: "Please fill in the form below." }),
+      sse("done", { conversationId: "c1", answeredBy: "llm" }),
+    ]);
+
+  it("shows the form under the answer, sends it with the conversation's token, then says thanks", async () => {
+    const { requests } = api({ send: formAnswer });
+    const user = await ready();
+    await user.type(screen.getByLabelText(STRINGS.inputLabel), "I want to book a service{Enter}");
+    await screen.findByText("Please fill in the form below.");
+
+    await user.type(await screen.findByLabelText(STRINGS.leadForm.name), "Ana");
+    await user.type(screen.getByLabelText(STRINGS.leadForm.email), "ana@example.com");
+    await user.type(screen.getByLabelText(STRINGS.leadForm.message), "A quote, please");
+    await user.click(screen.getByRole("button", { name: STRINGS.leadForm.submit }));
+
+    await screen.findByText(STRINGS.leadForm.thanks);
+    const sent = requests.find((r) => r.path === "/public/conversations/c1/lead")!;
+    expect(sent.method).toBe("POST");
+    expect(sent.headers.Authorization).toBe("Bearer tok1");
+    expect(sent.body).toEqual({ name: "Ana", email: "ana@example.com", message: "A quote, please" });
+    // The form is gone once the details are in.
+    expect(screen.queryByRole("form", { name: STRINGS.leadForm.label })).toBeNull();
+  });
+
+  it("shows no form after an ordinary answer", async () => {
+    api();
+    const user = await ready();
+    await user.type(screen.getByLabelText(STRINGS.inputLabel), "Opening hours?{Enter}");
+    await screen.findByText("We open at 9.");
+    expect(screen.queryByRole("form", { name: STRINGS.leadForm.label })).toBeNull();
+  });
+
+  it("keeps the form and says so when the API refuses it", async () => {
+    api({ send: formAnswer, lead: () => json({ message: "nope" }, 500) });
+    const user = await ready();
+    await user.type(screen.getByLabelText(STRINGS.inputLabel), "I want a quote{Enter}");
+    await user.type(await screen.findByLabelText(STRINGS.leadForm.name), "Ana");
+    await user.type(screen.getByLabelText(STRINGS.leadForm.phone), "+8801711000000");
+    await user.click(screen.getByRole("button", { name: STRINGS.leadForm.submit }));
+    await waitFor(() => expect(screen.getByRole("alert").textContent).toBe(STRINGS.leadForm.failed));
+    expect(screen.getByRole("form", { name: STRINGS.leadForm.label })).toBeTruthy();
   });
 });
 

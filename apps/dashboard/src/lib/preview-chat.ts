@@ -10,6 +10,8 @@ export interface PreviewMessage extends PreviewChatTurn {
   sources?: PreviewChatSource[];
   /** "Contact us" shown under a fallback answer. */
   handoff?: Handoff;
+  /** The visitor would see the contact form under this answer (M7-41). */
+  leadForm?: boolean;
 }
 
 /** The `handoff` event, without its `type`. */

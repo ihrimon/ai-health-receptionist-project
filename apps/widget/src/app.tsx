@@ -119,6 +119,7 @@ function Chat({
       showBranding={config.showBranding}
       privacyUrl={config.privacyUrl}
       onSend={send}
+      onSubmitLead={chat.submitLead}
       onClose={onClose}
       focusSignal={host.opened}
     >
