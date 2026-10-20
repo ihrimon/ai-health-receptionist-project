@@ -1,4 +1,4 @@
-import type { PreviewChatSource } from '@brainstack/shared';
+import type { AnswerTimings, PreviewChatSource } from '@brainstack/shared';
 import { Inject, Injectable } from '@nestjs/common';
 import { MessageRole } from '../../generated/prisma/client';
 import { requireTenant } from '../../tenancy/tenant-context';
@@ -19,6 +19,8 @@ export interface AnswerDetails {
   tokensIn: number | null;
   tokensOut: number | null;
   latencyMs: number;
+  /** Where the time went (M7-40). */
+  timings: AnswerTimings;
 }
 
 export interface RecordTurn {
@@ -156,6 +158,7 @@ export class ConversationsService {
         tokensIn: turn.answer.tokensIn,
         tokensOut: turn.answer.tokensOut,
         latencyMs: turn.answer.latencyMs,
+        timings: turn.answer.timings as unknown as object,
       },
     ];
 

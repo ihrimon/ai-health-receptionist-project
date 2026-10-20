@@ -2,6 +2,8 @@ import {
   type AnalyticsDay,
   type AnalyticsOverview,
   type AnalyticsOverviewQuery,
+  type AnalyticsResponseTimes,
+  type AnalyticsResponseTimesQuery,
   type AnalyticsTopQuestions,
   type AnalyticsTopQuestionsQuery,
   type AnalyticsUnanswered,
@@ -9,6 +11,7 @@ import {
   ANALYTICS_TIME_ZONE,
   analyticsRange,
   daysBetween,
+  parseTimings,
   TOP_QUESTIONS_DEFAULT_LIMIT,
   TOP_QUESTIONS_MIN_CHARS,
   TOP_QUESTIONS_SCAN_CAP,
@@ -85,6 +88,22 @@ export interface UnansweredRow {
   lastAskedAt: Date;
   conversationId: string;
   scanned: number;
+}
+
+export interface ResponseStatsRow {
+  count: number;
+  avg: number | null;
+  p50: number | null;
+  p95: number | null;
+}
+export interface SlowAnswerRow {
+  id: string;
+  conversationId: string;
+  latencyMs: number;
+  answeredBy: string | null;
+  timings: unknown;
+  at: Date;
+  question: string | null;
 }
 
 export interface TopQuestionRow {
@@ -286,6 +305,83 @@ export class AnalyticsService {
       })),
       // Only known when some rows came back (the scan size rides on them).
       truncated: (rows[0]?.scanned ?? 0) >= TOP_QUESTIONS_SCAN_CAP,
+    };
+  }
+
+  /**
+   * How fast answers were (M7-40): the average, the typical (median) and the
+   * slow-end (95th percentile) time of every live answer in the range, and
+   * the slowest answers with the question that caused each and where its
+   * time went. Test chats are left out, like everywhere else.
+   */
+  async responseTimes(
+    query: AnalyticsResponseTimesQuery,
+  ): Promise<AnalyticsResponseTimes> {
+    const { workspaceId } = requireTenant();
+    const range = analyticsRange(query, this.now());
+    const tz = ANALYTICS_TIME_ZONE;
+    const limit = query.limit ?? TOP_QUESTIONS_DEFAULT_LIMIT;
+
+    const [stats, slow] = await Promise.all([
+      this.db.$queryRaw<ResponseStatsRow[]>`
+        SELECT count(*)::int AS count,
+               avg(m.latency_ms)::float8 AS avg,
+               (percentile_cont(0.5) WITHIN GROUP (ORDER BY m.latency_ms))::float8 AS p50,
+               (percentile_cont(0.95) WITHIN GROUP (ORDER BY m.latency_ms))::float8 AS p95
+        FROM messages m
+        JOIN conversations c
+          ON c.id = m.conversation_id AND c.workspace_id = ${workspaceId}::uuid
+        WHERE m.workspace_id = ${workspaceId}::uuid
+          AND m.role = 'ASSISTANT' AND m.latency_ms IS NOT NULL
+          AND NOT c.is_preview AND c.message_count > 0
+          AND m.created_at >= (${range.from}::date)::timestamp AT TIME ZONE ${tz}
+          AND m.created_at < (${range.to}::date + 1)::timestamp AT TIME ZONE ${tz}`,
+      this.db.$queryRaw<SlowAnswerRow[]>`
+        SELECT m.id::text AS id,
+               m.conversation_id::text AS "conversationId",
+               m.latency_ms AS "latencyMs",
+               m.answered_by AS "answeredBy",
+               m.timings AS timings,
+               m.created_at AS "at",
+               (SELECT left(u.content, 200)
+                  FROM messages u
+                 WHERE u.conversation_id = m.conversation_id
+                   AND u.workspace_id = ${workspaceId}::uuid
+                   AND u.role = 'USER'
+                   AND u.created_at <= m.created_at
+                 ORDER BY u.created_at DESC
+                 LIMIT 1) AS question
+        FROM messages m
+        JOIN conversations c
+          ON c.id = m.conversation_id AND c.workspace_id = ${workspaceId}::uuid
+        WHERE m.workspace_id = ${workspaceId}::uuid
+          AND m.role = 'ASSISTANT' AND m.latency_ms IS NOT NULL
+          AND NOT c.is_preview AND c.message_count > 0
+          AND m.created_at >= (${range.from}::date)::timestamp AT TIME ZONE ${tz}
+          AND m.created_at < (${range.to}::date + 1)::timestamp AT TIME ZONE ${tz}
+        ORDER BY m.latency_ms DESC, m.created_at DESC
+        LIMIT ${limit}`,
+    ]);
+
+    const round = (n: number | null) => (n === null ? null : Math.round(n));
+    const row = stats[0];
+    return {
+      from: range.from,
+      to: range.to,
+      timeZone: tz,
+      count: row?.count ?? 0,
+      avgMs: row && row.count > 0 ? round(row.avg) : null,
+      p50Ms: row && row.count > 0 ? round(row.p50) : null,
+      p95Ms: row && row.count > 0 ? round(row.p95) : null,
+      slowest: slow.map((r) => ({
+        messageId: r.id,
+        conversationId: r.conversationId,
+        question: (r.question ?? '').trim(),
+        latencyMs: r.latencyMs,
+        answeredBy: r.answeredBy,
+        timings: parseTimings(r.timings),
+        at: r.at.toISOString(),
+      })),
     };
   }
 

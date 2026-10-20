@@ -30,6 +30,7 @@ import type {
   ChatCompletionMessageParam,
   ChatCompletionTool,
 } from '../llm/providers/provider-adapter.types';
+import { AnswerTimer } from './answer-timer';
 import { CAPTURE_LEAD_TOOL, LeadToolService } from './lead-tool.service';
 import { PRODUCT_TOOLS, ProductToolsService } from './product-tools.service';
 import { buildPreviewMessages } from './preview-prompt';
@@ -125,57 +126,62 @@ export class PreviewChatService {
       });
     };
 
-    const startedAt = Date.now();
+    const timer = new AnswerTimer();
     // The embedding is CPU only, so it runs before the database
     // transaction instead of holding a connection (M7-32).
-    const vector = await this.knowledge.embedQuery(request.message);
+    const vector = await timer.measure('embedMs', () =>
+      this.knowledge.embedQuery(request.message),
+    );
 
     // Everything read before the model call happens in ONE transaction
     // (M7-32): each separate query cost its own RLS transaction (begin,
     // set_config, query, commit), about 20 per message in all.
-    const prepared = await this.db.$transaction(async (tx) => {
-      const credentials = await this.keys.activeCredentials(tx);
-      // No key, no LLM call: skip the search too.
-      if (credentials.length === 0) return { kind: 'no-credentials' } as const;
+    const prepared = await timer.measure('prepareMs', () =>
+      this.db.$transaction(async (tx) => {
+        const credentials = await this.keys.activeCredentials(tx);
+        // No key, no LLM call: skip the search too.
+        if (credentials.length === 0)
+          return { kind: 'no-credentials' } as const;
 
-      // A custom answer that matches wins, as written, without the model (M3-6).
-      const custom = await this.knowledge.matchCustomAnswer(
-        botId,
-        request.message,
-        vector,
-        tx,
-      );
-      if (custom) return { kind: 'custom', custom } as const;
+        // A custom answer that matches wins, as written, without the model (M3-6).
+        const custom = await this.knowledge.matchCustomAnswer(
+          botId,
+          request.message,
+          vector,
+          tx,
+        );
+        if (custom) return { kind: 'custom', custom } as const;
 
-      const history = request.conversationId
-        ? await this.conversations.recentTurns(
-            {
-              conversationId: request.conversationId,
-              chatbotId: botId,
-              visitorId: context.visitorId,
-              isPreview: context.isPreview,
-            },
-            PREVIEW_CHAT_LIMITS.historyTurns,
-            tx,
-          )
-        : [];
-      const matches = await this.knowledge.search(
-        botId,
-        request.message,
-        undefined,
-        true,
-        vector,
-        tx,
-      );
-      const hasProducts = await this.products.hasProducts(botId, tx);
-      return {
-        kind: 'llm',
-        credentials,
-        history,
-        matches,
-        hasProducts,
-      } as const;
-    });
+        const history = request.conversationId
+          ? await this.conversations.recentTurns(
+              {
+                conversationId: request.conversationId,
+                chatbotId: botId,
+                visitorId: context.visitorId,
+                isPreview: context.isPreview,
+              },
+              PREVIEW_CHAT_LIMITS.historyTurns,
+              tx,
+            )
+          : [];
+        const matches = await this.knowledge.search(
+          botId,
+          request.message,
+          undefined,
+          true,
+          vector,
+          tx,
+        );
+        const hasProducts = await this.products.hasProducts(botId, tx);
+        return {
+          kind: 'llm',
+          credentials,
+          history,
+          matches,
+          hasProducts,
+        } as const;
+      }),
+    );
 
     if (prepared.kind === 'no-credentials') {
       unstored(context.noCredentialsReply);
@@ -191,6 +197,7 @@ export class PreviewChatService {
         },
       ];
       if (context.includeSources) emit({ type: 'sources', sources });
+      timer.firstToken();
       if (!emit({ type: 'delta', text: custom.answer })) return;
       const conversationId = await this.store(botId, request, context, {
         content: custom.answer,
@@ -199,7 +206,8 @@ export class PreviewChatService {
         model: null,
         tokensIn: null,
         tokensOut: null,
-        latencyMs: Date.now() - startedAt,
+        latencyMs: timer.elapsed(),
+        timings: timer.snapshot(),
       });
       emit({ type: 'done', conversationId, answeredBy: 'custom_answer' });
       return;
@@ -216,7 +224,7 @@ export class PreviewChatService {
     const smallTalk = isSmallTalk(request.message);
     const hasLeadTool = LeadToolService.offered(config);
     if (matches.length === 0 && !smallTalk && !hasProducts && !hasLeadTool) {
-      await this.sendFallback(botId, config, request, emit, context, startedAt);
+      await this.sendFallback(botId, config, request, emit, context, timer);
       return;
     }
     // With no knowledge match the text is held back until a tool has
@@ -253,6 +261,7 @@ export class PreviewChatService {
             ? offeredTools
             : undefined;
         let roundText = '';
+        const endModel = timer.begin('llmMs');
         let toolCalls: NonNullable<
           Extract<
             ChatCompletionMessageParam,
@@ -271,6 +280,7 @@ export class PreviewChatService {
             // any other.
             if (!needsToolData || grounded()) {
               streamed = true;
+              timer.firstToken();
               text += event.text;
               // The client has gone: stop, and store nothing.
               if (!emit({ type: 'delta', text: event.text })) return;
@@ -285,6 +295,7 @@ export class PreviewChatService {
             toolCalls = event.message.tool_calls ?? [];
           }
         }
+        endModel();
 
         if (toolCalls.length === 0) {
           if (needsToolData && !streamed) text = roundText;
@@ -296,6 +307,7 @@ export class PreviewChatService {
           tool_calls: toolCalls,
         });
         for (const call of toolCalls) {
+          const endTool = timer.begin('toolMs');
           let content: string;
           if (call.function.name === CAPTURE_LEAD_TOOL.function!.name) {
             // The chatbot and conversation come from the server (M5-4).
@@ -321,6 +333,7 @@ export class PreviewChatService {
             }
             content = run.content;
           }
+          endTool();
           messages.push({ role: 'tool', tool_call_id: call.id, content });
         }
       }
@@ -346,16 +359,10 @@ export class PreviewChatService {
     // text, so the server's fallback replaces whatever the model wrote.
     if (needsToolData) {
       if (!grounded()) {
-        await this.sendFallback(
-          botId,
-          config,
-          request,
-          emit,
-          context,
-          startedAt,
-        );
+        await this.sendFallback(botId, config, request, emit, context, timer);
         return;
       }
+      timer.firstToken();
       if (!streamed && !emit({ type: 'delta', text })) return;
     }
 
@@ -377,6 +384,7 @@ export class PreviewChatService {
     if (!reply) {
       reply = config.behavior.fallbackMessage;
       answeredBy = 'fallback';
+      timer.firstToken();
       emit({ type: 'delta', text: reply });
     } else if (sameText(reply, config.behavior.fallbackMessage)) {
       // The model followed the rule and gave the fallback itself.
@@ -391,7 +399,8 @@ export class PreviewChatService {
       model,
       tokensIn,
       tokensOut,
-      latencyMs: Date.now() - startedAt,
+      latencyMs: timer.elapsed(),
+      timings: timer.snapshot(),
     });
     emit({ type: 'done', conversationId, answeredBy });
   }
@@ -403,9 +412,10 @@ export class PreviewChatService {
     request: PreviewChatRequest,
     emit: EmitChatEvent,
     context: AnswerContext,
-    startedAt: number,
+    timer: AnswerTimer,
   ): Promise<void> {
     const reply = config.behavior.fallbackMessage;
+    timer.firstToken();
     if (!emit({ type: 'delta', text: reply })) return;
     emitHandoff(config, emit);
     const conversationId = await this.store(botId, request, context, {
@@ -415,7 +425,8 @@ export class PreviewChatService {
       model: null,
       tokensIn: null,
       tokensOut: null,
-      latencyMs: Date.now() - startedAt,
+      latencyMs: timer.elapsed(),
+      timings: timer.snapshot(),
     });
     emit({ type: 'done', conversationId, answeredBy: 'fallback' });
   }

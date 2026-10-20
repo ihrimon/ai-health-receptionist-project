@@ -193,3 +193,109 @@ describe('analyticsTopQuestionsQuerySchema', () => {
     }
   });
 });
+
+describe('AnalyticsService.responseTimes (M7-40)', () => {
+  async function setup(stats: unknown[], slow: unknown[]) {
+    const queryRaw = jest
+      .fn()
+      .mockResolvedValueOnce(stats)
+      .mockResolvedValueOnce(slow);
+    const moduleRef = await Test.createTestingModule({
+      providers: [
+        AnalyticsService,
+        { provide: TENANT_PRISMA, useValue: { $queryRaw: queryRaw } },
+      ],
+    }).compile();
+    const service = moduleRef.get(AnalyticsService);
+    service.now = () => NOW;
+    const run = <T>(fn: () => Promise<T>) =>
+      runWithTenant(
+        { workspaceId: 'ws-1', userId: 'u-1', role: WorkspaceRole.VIEWER },
+        fn,
+      );
+    return { service, queryRaw, run };
+  }
+
+  it('rounds the figures and shapes the slowest answers', async () => {
+    const { service, run } = await setup(
+      [{ count: 12, avg: 2480.4, p50: 1900, p95: 7300.6 }],
+      [
+        {
+          id: 'm1',
+          conversationId: 'c1',
+          latencyMs: 9100,
+          answeredBy: 'llm',
+          timings: {
+            embedMs: 40,
+            prepareMs: 200,
+            firstTokenMs: 2400,
+            llmMs: 8500,
+            toolMs: 300,
+            totalMs: 9100,
+          },
+          at: new Date('2026-10-17T10:00:00Z'),
+          question: '  How much is Growth?  ',
+        },
+        {
+          id: 'm2',
+          conversationId: 'c2',
+          latencyMs: 4000,
+          answeredBy: 'fallback',
+          timings: null,
+          at: new Date('2026-10-16T10:00:00Z'),
+          question: null,
+        },
+      ],
+    );
+
+    const res = await run(() => service.responseTimes({ limit: 5 }));
+
+    expect(res).toMatchObject({
+      count: 12,
+      avgMs: 2480,
+      p50Ms: 1900,
+      p95Ms: 7301,
+    });
+    expect(res.slowest[0]).toMatchObject({
+      messageId: 'm1',
+      question: 'How much is Growth?',
+      latencyMs: 9100,
+      timings: { llmMs: 8500, firstTokenMs: 2400 },
+    });
+    // An answer saved before timings existed still shows, without them.
+    expect(res.slowest[1]).toMatchObject({ question: '', timings: null });
+  });
+
+  it('reports nothing for a range without answers', async () => {
+    const { service, run } = await setup(
+      [{ count: 0, avg: null, p50: null, p95: null }],
+      [],
+    );
+    expect(await run(() => service.responseTimes({}))).toMatchObject({
+      count: 0,
+      avgMs: null,
+      p50Ms: null,
+      p95Ms: null,
+      slowest: [],
+    });
+  });
+
+  it("queries only the current workspace's live answers", async () => {
+    const { service, queryRaw, run } = await setup(
+      [{ count: 0, avg: null, p50: null, p95: null }],
+      [],
+    );
+    await run(() => service.responseTimes({ from: '2026-10-11' }));
+    expect(queryRaw).toHaveBeenCalledTimes(2);
+    for (const [sql, ...values] of queryRaw.mock.calls as [
+      TemplateStringsArray,
+      ...unknown[],
+    ][]) {
+      const text = sql.join('?');
+      expect(text).toContain('workspace_id = ?::uuid');
+      expect(text).toContain('NOT c.is_preview');
+      expect(values).toContain('ws-1');
+      expect(values).not.toContain('ws-2');
+    }
+  });
+});
