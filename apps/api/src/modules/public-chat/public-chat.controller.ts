@@ -1,6 +1,8 @@
 import {
   type PublicConversationRequest,
   publicConversationRequestSchema,
+  type PublicLeadRequest,
+  publicLeadRequestSchema,
   type PublicMessageRequest,
   publicMessageRequestSchema,
   type PublicRatingRequest,
@@ -85,5 +87,20 @@ export class PublicChatController {
     body: PublicRatingRequest,
   ) {
     return this.chat.rate(id, bearer(req), body);
+  }
+
+  /**
+   * 204: the widget's contact form saves a lead in this conversation (M7-41).
+   * The token must be this conversation's (401 otherwise).
+   */
+  @Post('conversations/:id/lead')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  lead(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Req() req: Request,
+    @Body(new ZodBodyPipe(publicLeadRequestSchema))
+    body: PublicLeadRequest,
+  ) {
+    return this.chat.submitLead(id, bearer(req), req.ip ?? 'unknown', body);
   }
 }

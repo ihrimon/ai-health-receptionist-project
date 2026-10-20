@@ -17,6 +17,14 @@ export const LEAD_LIMITS = {
   answerChars: 500,
 } as const;
 
+/**
+ * The answer id under which the contact form's free text ("What do you
+ * need?") is stored (M7-41), and the label the dashboard shows for it when
+ * the chatbot has no question of that id.
+ */
+export const LEAD_REQUEST_ANSWER_ID = 'request';
+export const LEAD_REQUEST_LABEL = 'What they need';
+
 const optionalText = (max: number) =>
   z
     .string()

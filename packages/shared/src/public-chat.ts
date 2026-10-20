@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { LEAD_LIMITS } from './leads';
 import { text } from './text';
 
 /**
@@ -45,6 +46,49 @@ export const publicRatingRequestSchema = z.strictObject({
   rating: z.number().int().min(1).max(5),
 });
 export type PublicRatingRequest = z.output<typeof publicRatingRequestSchema>;
+
+/** Longest "what do you need" text of the contact form. */
+export const PUBLIC_LEAD_MESSAGE_CHARS = 500;
+
+/**
+ * POST /v1/public/conversations/:id/lead: the widget's contact form (M7-41).
+ * A name, and an email or a phone number so the business can answer; what
+ * they need is optional. Saves a lead in this conversation (a second
+ * submit fills in the same lead).
+ */
+export const publicLeadRequestSchema = z
+  .strictObject({
+    name: z
+      .string()
+      .trim()
+      .min(1, 'Please enter your name')
+      .max(LEAD_LIMITS.name),
+    email: z
+      .string()
+      .trim()
+      .max(LEAD_LIMITS.email)
+      .transform((v) => v.toLowerCase() || undefined)
+      .pipe(z.email('Please enter a valid email address').optional())
+      .optional(),
+    phone: z
+      .string()
+      .trim()
+      .max(LEAD_LIMITS.phone)
+      .regex(/^[0-9+()\-.\s]*$/, 'Use digits, spaces and + ( ) - . only')
+      .transform((v) => v || undefined)
+      .optional(),
+    message: z
+      .string()
+      .trim()
+      .max(PUBLIC_LEAD_MESSAGE_CHARS)
+      .transform((v) => v || undefined)
+      .optional(),
+  })
+  .refine((v) => Boolean(v.email || v.phone), {
+    message: 'Please give an email address or a phone number',
+    path: ['email'],
+  });
+export type PublicLeadRequest = z.output<typeof publicLeadRequestSchema>;
 
 /** GET /v1/public/conversations/:id/messages: what a reload shows again. */
 export interface PublicMessageView {

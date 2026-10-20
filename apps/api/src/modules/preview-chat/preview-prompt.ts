@@ -78,6 +78,14 @@ export const LEAD_RULE =
   'knowledge: thank them and go on. Never ask for passwords, card numbers or ' +
   'other payment details.';
 
+/** The contact form (M7-41): when to show it. */
+export const FORM_RULE =
+  'When the visitor wants to buy, book, order, get a quote or an appointment, ' +
+  'or asks to be contacted or to speak to a person, call show_contact_form and ' +
+  'tell them in one short sentence to fill in the form that appears. Do not ' +
+  'ask for their contact details in the chat yourself, and never call it for ' +
+  'an ordinary question.';
+
 /**
  * Stops text from closing one of our delimiters early and starting its own
  * "instructions" outside it: the angle bracket of a lookalike tag is
@@ -171,6 +179,8 @@ export function buildPreviewMessages(
   withProductTools = false,
   /** capture_lead is offered this turn (M5-4). */
   withLeadTool = false,
+  /** show_contact_form is offered this turn (M7-41). */
+  withFormTool = false,
 ): ChatCompletionMessageParam[] {
   const knowledge = matches.length
     ? matches
@@ -185,6 +195,7 @@ export function buildPreviewMessages(
     PLATFORM_RULES,
     ...(withProductTools ? [TOOLS_RULE] : []),
     ...(withLeadTool ? [LEAD_RULE] : []),
+    ...(withFormTool ? [FORM_RULE] : []),
   ].join('\n');
 
   return [

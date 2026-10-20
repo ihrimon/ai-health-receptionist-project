@@ -31,7 +31,13 @@ import type {
   ChatCompletionTool,
 } from '../llm/providers/provider-adapter.types';
 import { AnswerTimer } from './answer-timer';
-import { CAPTURE_LEAD_TOOL, LeadToolService } from './lead-tool.service';
+import { wantsToBeContacted } from './contact-intent';
+import {
+  CAPTURE_LEAD_TOOL,
+  CONTACT_FORM_RESULT,
+  LeadToolService,
+  SHOW_CONTACT_FORM_TOOL,
+} from './lead-tool.service';
 import { PRODUCT_TOOLS, ProductToolsService } from './product-tools.service';
 import { buildPreviewMessages } from './preview-prompt';
 import { isSmallTalk } from './small-talk';
@@ -223,7 +229,16 @@ export class PreviewChatService {
     // with questions to ask: the message may be the visitor's answer (M5-4).
     const smallTalk = isSmallTalk(request.message);
     const hasLeadTool = LeadToolService.offered(config);
-    if (matches.length === 0 && !smallTalk && !hasProducts && !hasLeadTool) {
+    // A visitor who wants to buy or book goes to the model even without a
+    // knowledge match: it can show the contact form (M7-41).
+    const wantsContact = wantsToBeContacted(request.message);
+    if (
+      matches.length === 0 &&
+      !smallTalk &&
+      !hasProducts &&
+      !hasLeadTool &&
+      !wantsContact
+    ) {
       await this.sendFallback(botId, config, request, emit, context, timer);
       return;
     }
@@ -234,6 +249,7 @@ export class PreviewChatService {
     const offeredTools: ChatCompletionTool[] = [
       ...(hasProducts ? PRODUCT_TOOLS : []),
       ...(hasLeadTool ? [CAPTURE_LEAD_TOOL] : []),
+      SHOW_CONTACT_FORM_TOOL,
     ];
 
     const messages = buildPreviewMessages(
@@ -243,6 +259,7 @@ export class PreviewChatService {
       request.message,
       hasProducts,
       hasLeadTool,
+      true,
     );
 
     let text = '';
@@ -252,7 +269,8 @@ export class PreviewChatService {
     let tokensOut: number | null = null;
     const productHits = new Map<string, string>();
     let leadAccepted = false;
-    const grounded = () => productHits.size > 0 || leadAccepted;
+    let formShown = false;
+    const grounded = () => productHits.size > 0 || leadAccepted || formShown;
     try {
       for (let round = 0; ; round++) {
         // The last round has no tools, so the model has to answer.
@@ -309,7 +327,13 @@ export class PreviewChatService {
         for (const call of toolCalls) {
           const endTool = timer.begin('toolMs');
           let content: string;
-          if (call.function.name === CAPTURE_LEAD_TOOL.function!.name) {
+          if (call.function.name === SHOW_CONTACT_FORM_TOOL.function!.name) {
+            // The form is the widget's; what is typed in it never passes
+            // through the model (M7-41).
+            formShown = true;
+            emit({ type: 'lead_form' });
+            content = CONTACT_FORM_RESULT;
+          } else if (call.function.name === CAPTURE_LEAD_TOOL.function!.name) {
             // The chatbot and conversation come from the server (M5-4).
             const run = await this.leadTool.run(
               {

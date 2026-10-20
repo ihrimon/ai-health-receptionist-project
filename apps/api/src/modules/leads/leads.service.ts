@@ -1,5 +1,7 @@
 import {
   conversationRange,
+  LEAD_REQUEST_ANSWER_ID,
+  LEAD_REQUEST_LABEL,
   type LeadAnswer,
   type LeadExportQuery,
   type LeadInput,
@@ -296,7 +298,9 @@ export class LeadsService {
       storedAnswers(row.answers),
     ).map(([questionId, answer]) => ({
       questionId,
-      question: questions?.get(questionId) ?? null,
+      question:
+        questions?.get(questionId) ??
+        (questionId === LEAD_REQUEST_ANSWER_ID ? LEAD_REQUEST_LABEL : null),
       answer,
     }));
     return {
