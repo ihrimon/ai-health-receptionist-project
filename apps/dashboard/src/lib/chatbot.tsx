@@ -10,6 +10,7 @@ import {
   type ReactNode,
 } from "react";
 import { apiFetch } from "@/lib/api";
+import { overviewKey, takeOrFetch } from "@/lib/prefetch";
 import type { PublishInfo } from "@/lib/config-form";
 import { useSession } from "@/lib/session";
 
@@ -60,7 +61,8 @@ export function ChatbotProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!workspaceId) return;
     let cancelled = false;
-    load().then(
+    // The Overview page starts this request early (M7-37).
+    takeOrFetch(overviewKey.chatbot, load).then(
       (loaded) => {
         if (cancelled) return;
         setChatbot(loaded);

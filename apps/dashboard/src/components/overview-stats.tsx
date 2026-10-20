@@ -25,6 +25,7 @@ import {
   type RangePreset,
   shortDay,
 } from "@/lib/analytics";
+import { overviewKey, takeOrFetch } from "@/lib/prefetch";
 import { useSession } from "@/lib/session";
 import { toastError } from "@/lib/toast";
 
@@ -46,7 +47,9 @@ export function OverviewStats() {
   // A newer range can finish before an older one; only the latest counts.
   useEffect(() => {
     let cancelled = false;
-    analyticsApi.overview(days).then(
+    takeOrFetch(overviewKey.analytics(days), () =>
+      analyticsApi.overview(days),
+    ).then(
       (overview) => !cancelled && setData({ days, overview }),
       (err: Error) => !cancelled && toastError(err.message),
     );
@@ -295,7 +298,9 @@ function TopQuestions({ days }: { days: RangePreset }) {
 
   useEffect(() => {
     let cancelled = false;
-    analyticsApi.topQuestions(days).then(
+    takeOrFetch(overviewKey.topQuestions(days), () =>
+      analyticsApi.topQuestions(days),
+    ).then(
       (result) => !cancelled && setData({ days, result }),
       (err: Error) => !cancelled && toastError(err.message),
     );
