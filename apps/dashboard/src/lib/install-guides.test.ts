@@ -2,14 +2,34 @@ import { describe, expect, it } from "vitest";
 import { INSTALL_GUIDES, splitInlineCode } from "./install-guides";
 
 describe("INSTALL_GUIDES", () => {
-  it("covers plain HTML, Shopify and WooCommerce/WordPress, once each", () => {
-    expect(INSTALL_GUIDES.map((g) => g.id)).toEqual(["html", "shopify", "wordpress"]);
+  it("covers HTML, React, Next.js, Shopify and WooCommerce/WordPress, once each", () => {
+    expect(INSTALL_GUIDES.map((g) => g.id)).toEqual([
+      "html",
+      "react",
+      "nextjs",
+      "shopify",
+      "wordpress",
+    ]);
   });
 
-  it("shows the snippet exactly once in every guide", () => {
+  it("shows the company's code in every guide: the snippet, or ready-made framework code", () => {
     for (const g of INSTALL_GUIDES) {
-      expect(g.steps.filter((s) => s.snippet), g.id).toHaveLength(1);
+      const shown = g.steps.filter((s) => s.snippet || s.code);
+      expect(shown.length, g.id).toBeGreaterThan(0);
     }
+    for (const id of ["html", "shopify", "wordpress"]) {
+      const g = INSTALL_GUIDES.find((x) => x.id === id)!;
+      expect(g.steps.filter((s) => s.snippet), id).toHaveLength(1);
+    }
+  });
+
+  it("gives Next.js both routers and React a component", () => {
+    const codes = (id: string) =>
+      INSTALL_GUIDES.find((g) => g.id === id)!.steps.flatMap((s) =>
+        s.code ? [s.code] : [],
+      );
+    expect(codes("nextjs")).toEqual(["next-layout", "next-pages"]);
+    expect(codes("react")).toEqual(["react-component"]);
   });
 
   it("names where the code goes on each platform", () => {

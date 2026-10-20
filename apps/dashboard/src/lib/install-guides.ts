@@ -5,11 +5,20 @@
  * Text in `backticks` is shown as code; a step with `snippet: true` shows the
  * company's own snippet with a copy button under it.
  */
-export type InstallPlatform = "html" | "shopify" | "wordpress";
+export type InstallPlatform =
+  | "html"
+  | "react"
+  | "nextjs"
+  | "shopify"
+  | "wordpress";
+
+/** Ready-made code a step shows, filled in with the company's own snippet. */
+export type InstallCode = "next-layout" | "next-pages" | "react-component";
 
 export interface InstallStep {
   text: string;
   snippet?: boolean;
+  code?: InstallCode;
 }
 
 export interface InstallGuide {
@@ -46,6 +55,58 @@ export const INSTALL_GUIDES: InstallGuide[] = [
     ],
     tips: [
       "Without a shared footer file, repeat these steps on every page that should show the chat.",
+      DOMAIN_TIP,
+    ],
+  },
+  {
+    id: "react",
+    label: "React",
+    intro:
+      "For a React app made with Vite, Create React App or similar. Two ways: the quick one needs no React code at all.",
+    steps: [
+      {
+        text: "Quick way: open `index.html` (in the `public` folder for Create React App, in the project root for Vite) and find the closing `</body>` tag.",
+      },
+      { text: PASTE, snippet: true },
+      {
+        text: "Prefer to keep it in React? Instead, create a file `BrainStackChat.tsx` with this component:",
+        code: "react-component",
+      },
+      {
+        text: "Then render it once, near the top of your app, for example `<BrainStackChat />` inside `App.tsx`.",
+      },
+      {
+        text: "Run your app (or deploy it). A chat button appears in the bottom corner. Then come back here and click Check again.",
+      },
+    ],
+    tips: [
+      "Use one of the two ways, not both, or the chat loads twice.",
+      "While you develop on `localhost`, the chat only shows if `localhost:5173` (or your port) is under Allowed domains. Remove it again before you go live.",
+      DOMAIN_TIP,
+    ],
+  },
+  {
+    id: "nextjs",
+    label: "Next.js",
+    intro:
+      "For a Next.js site. It uses Next's own `Script` component, so the chat loads after the page is ready and never slows it down.",
+    steps: [
+      {
+        text: "App Router (the `app` folder): open `app/layout.tsx` and make it look like this, keeping anything else you already have:",
+        code: "next-layout",
+      },
+      {
+        text: "Pages Router (the `pages` folder) instead? Open `pages/_app.tsx` and use this:",
+        code: "next-pages",
+      },
+      {
+        text: "Deploy (or run `npm run dev`) and open your site. A chat button appears in the bottom corner. Then come back here and click Check again.",
+      },
+    ],
+    tips: [
+      "Not sure which router you use? If your project has a folder called `app` with a `layout.tsx` inside, it is the App Router.",
+      "If your site sets a strict Content-Security-Policy, allow this chat's address in `script-src`, `frame-src` and `connect-src`, or the browser will block it.",
+      "On Vercel, add both your own domain and your `your-project.vercel.app` address under Allowed domains if visitors can open either.",
       DOMAIN_TIP,
     ],
   },
