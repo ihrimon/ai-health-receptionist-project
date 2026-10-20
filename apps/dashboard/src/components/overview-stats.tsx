@@ -1,6 +1,12 @@
 "use client";
 
-import type { AnalyticsDay, AnalyticsOverview, AnalyticsTopQuestions } from "@brainstack/shared";
+import type {
+  AnalyticsDay,
+  AnalyticsOverview,
+  AnalyticsResponseTimes,
+  AnalyticsTopQuestions,
+} from "@brainstack/shared";
+import Link from "next/link";
 import { cn } from "cn";
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
@@ -26,6 +32,7 @@ import {
   shortDay,
 } from "@/lib/analytics";
 import { overviewKey, takeOrFetch } from "@/lib/prefetch";
+import { formatMs, mainCause, speedTone, timingBreakdown } from "@/lib/response-time";
 import { useSession } from "@/lib/session";
 import { toastError } from "@/lib/toast";
 
@@ -99,6 +106,7 @@ export function OverviewStats() {
             </div>
             <DailyChart daily={overview.daily} metric={metric} />
             <TopQuestions days={days} />
+            <ResponseTimes days={days} />
           </>
         ) : (
           <div className="grid gap-4" aria-busy="true">
@@ -341,6 +349,109 @@ function TopQuestions({ days }: { days: RangePreset }) {
             very short messages are skipped.
             {result.truncated && " Only the newest messages in this range were checked."}
           </p>
+        </>
+      )}
+    </section>
+  );
+}
+
+/**
+ * How fast answers were in the chosen range (M7-40): the typical time, the
+ * slow end, and the slowest answers with the question that caused each and
+ * what the time went on, so a slow question can be traced to its cause.
+ */
+function ResponseTimes({ days }: { days: RangePreset }) {
+  const { me } = useSession();
+  const [data, setData] = useState<{ days: number; result: AnalyticsResponseTimes } | null>(
+    null,
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+    analyticsApi.responseTimes(days).then(
+      (result) => !cancelled && setData({ days, result }),
+      (err: Error) => !cancelled && toastError(err.message),
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [days, me.activeWorkspace?.id]);
+
+  const result = data?.days === days ? data.result : null;
+
+  return (
+    <section className="grid gap-2" aria-labelledby="response-times-title">
+      <h3 id="response-times-title" className="text-sm font-medium">
+        Response time
+      </h3>
+      {!result ? (
+        <Skeleton className="h-24" aria-busy="true" />
+      ) : result.count === 0 ? (
+        <p className="text-sm text-muted-foreground">No answers in this range yet.</p>
+      ) : (
+        <>
+          <dl className="grid grid-cols-3 gap-2 text-center">
+            {[
+              ["Typical", result.p50Ms],
+              ["Average", result.avgMs],
+              ["Slowest 5%", result.p95Ms],
+            ].map(([label, ms]) => (
+              <div key={label as string} className="rounded-md border p-2">
+                <dt className="text-xs text-muted-foreground">{label}</dt>
+                <dd
+                  className={cn(
+                    "text-lg font-semibold tabular-nums",
+                    ms !== null && speedTone(ms as number) === "very-slow" && "text-destructive",
+                    ms !== null &&
+                      speedTone(ms as number) === "slow" &&
+                      "text-amber-600 dark:text-amber-500",
+                  )}
+                >
+                  {formatMs(ms as number | null)}
+                </dd>
+              </div>
+            ))}
+          </dl>
+          <p className="text-xs text-muted-foreground">
+            From the visitor&apos;s message until the answer is complete, over{" "}
+            {result.count.toLocaleString("en-US")} answers. Slowest answers:
+          </p>
+          <ol className="divide-y rounded-md border text-sm">
+            {result.slowest.map((a) => {
+              const cause = mainCause(a.timings);
+              return (
+                <li key={a.messageId} className="grid gap-0.5 p-2">
+                  <div className="flex items-start gap-3">
+                    <span
+                      className={cn(
+                        "w-16 shrink-0 text-right font-semibold tabular-nums",
+                        speedTone(a.latencyMs) === "very-slow" && "text-destructive",
+                        speedTone(a.latencyMs) === "slow" && "text-amber-600 dark:text-amber-500",
+                      )}
+                    >
+                      {formatMs(a.latencyMs)}
+                    </span>
+                    <span className="min-w-0 flex-1 break-words">
+                      {a.question || "(question not found)"}
+                    </span>
+                    <Link
+                      href={`/app/conversations/${a.conversationId}`}
+                      className="shrink-0 text-xs text-muted-foreground underline underline-offset-4 hover:text-foreground"
+                    >
+                      View
+                    </Link>
+                  </div>
+                  <p className="pl-[4.75rem] text-xs text-muted-foreground">
+                    {cause
+                      ? `Mostly: ${cause.label.toLowerCase()} (${formatMs(cause.ms)}). ${timingBreakdown(a.timings)}`
+                      : "No breakdown saved for this answer."}
+                    {a.timings?.firstTokenMs != null &&
+                      ` First words after ${formatMs(a.timings.firstTokenMs)}.`}
+                  </p>
+                </li>
+              );
+            })}
+          </ol>
         </>
       )}
     </section>

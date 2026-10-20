@@ -2,6 +2,7 @@ import type { ConversationMessage } from "@brainstack/shared";
 import { FileText, TriangleAlert } from "lucide-react";
 import { formatDateTime } from "@/lib/api";
 import { sourceLabel } from "@/lib/conversations";
+import { formatMs, speedTone, timingBreakdown } from "@/lib/response-time";
 
 const ANSWERED_BY: Record<string, string> = {
   custom_answer: "Custom answer",
@@ -63,6 +64,20 @@ export function TranscriptView({ messages }: { messages: ConversationMessage[] }
             )}
             <time className="text-[11px] text-muted-foreground" dateTime={m.createdAt}>
               {formatDateTime(m.createdAt)}
+              {!isUser && m.latencyMs !== null && (
+                <span
+                  className={
+                    speedTone(m.latencyMs) === "very-slow"
+                      ? "text-destructive"
+                      : speedTone(m.latencyMs) === "slow"
+                        ? "text-amber-600 dark:text-amber-500"
+                        : ""
+                  }
+                  title={timingBreakdown(m.timings) || undefined}
+                >
+                  {" · "}answered in {formatMs(m.latencyMs)}
+                </span>
+              )}
             </time>
           </li>
         );
