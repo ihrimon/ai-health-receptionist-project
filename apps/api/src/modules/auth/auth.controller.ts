@@ -4,6 +4,7 @@ import {
   Get,
   HttpCode,
   HttpStatus,
+  Patch,
   Post,
   Req,
   Res,
@@ -13,6 +14,7 @@ import type { AuthContext } from './auth-context';
 import { CurrentAuth, Public } from './auth-context';
 import { SESSION_COOKIE } from './auth.constants';
 import { AuthService, MeResponse, RequestMeta } from './auth.service';
+import { ChangePasswordDto, UpdateProfileDto } from './dto/account.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
@@ -92,6 +94,30 @@ export class AuthController {
   @Get('me')
   me(@CurrentAuth() auth: AuthContext): Promise<MeResponse> {
     return this.authService.me(auth);
+  }
+
+  /** The signed-in person's own name (M7-42). */
+  @Patch('profile')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  updateProfile(
+    @CurrentAuth() auth: AuthContext,
+    @Body() dto: UpdateProfileDto,
+  ): Promise<void> {
+    return this.authService.updateProfile(auth.user, dto.name);
+  }
+
+  /**
+   * Changes the signed-in person's password (M7-42). A wrong current
+   * password is a 400, not a 401, so the dashboard doesn't sign them out.
+   * Every other session of theirs ends; this one stays.
+   */
+  @Post('change-password')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  changePassword(
+    @CurrentAuth() auth: AuthContext,
+    @Body() dto: ChangePasswordDto,
+  ): Promise<void> {
+    return this.authService.changePassword(auth, dto);
   }
 
   @Public()

@@ -1,5 +1,6 @@
 import { defaultChatbotConfig } from '@brainstack/shared';
 import {
+  BadRequestException,
   ConflictException,
   Inject,
   Injectable,
@@ -11,6 +12,10 @@ import { requireTenant, runAsSystem } from '../../tenancy/tenant-context';
 import { TENANT_PRISMA, type TenantPrisma } from '../../tenancy/tenant-prisma';
 import { WorkspaceAccessService } from '../../tenancy/workspace-access.service';
 import type { AuthContext } from '../auth/auth-context';
+import {
+  canonicalTimeZone,
+  type UpdateWorkspaceDto,
+} from './dto/workspace.dto';
 import {
   generateChatbotPublicId,
   slugify,
@@ -27,6 +32,34 @@ export interface CreateWorkspaceInput {
   name: string;
   ownerUserId: string;
 }
+
+/** What Settings → Workspace shows and edits (M7-42). */
+const PROFILE_SELECT = {
+  id: true,
+  name: true,
+  slug: true,
+  status: true,
+  plan: true,
+  createdAt: true,
+  website: true,
+  industry: true,
+  contactEmail: true,
+  contactPhone: true,
+  timeZone: true,
+} satisfies Prisma.WorkspaceSelect;
+
+export type WorkspaceProfile = Prisma.WorkspaceGetPayload<{
+  select: typeof PROFILE_SELECT;
+}>;
+
+export interface WorkspaceMemberRow {
+  name: string;
+  email: string;
+  role: WorkspaceRole;
+  joinedAt: Date;
+}
+
+const toProfile = (row: WorkspaceProfile): WorkspaceProfile => row;
 
 @Injectable()
 export class WorkspacesService {
@@ -46,13 +79,59 @@ export class WorkspacesService {
     });
   }
 
-  /** Renames the current workspace. The slug stays, so links keep working. */
-  async renameCurrent(name: string) {
-    const workspace = await this.db.workspace.update({
+  /** The current workspace as its owner sees it in Settings (M7-42). */
+  async profile(): Promise<WorkspaceProfile> {
+    const row = await this.db.workspace.findUniqueOrThrow({
       where: { id: requireTenant().workspaceId },
-      data: { name },
+      select: PROFILE_SELECT,
     });
-    return { id: workspace.id, name: workspace.name, slug: workspace.slug };
+    return toProfile(row);
+  }
+
+  /**
+   * Changes the fields sent (name, website, industry, contact, time zone).
+   * The slug stays, so links keep working. Nothing to change is a 400.
+   */
+  async updateCurrent(dto: UpdateWorkspaceDto): Promise<WorkspaceProfile> {
+    const data: Prisma.WorkspaceUpdateInput = {};
+    if (dto.name !== undefined) data.name = dto.name;
+    if (dto.website !== undefined) data.website = dto.website;
+    if (dto.industry !== undefined) data.industry = dto.industry;
+    if (dto.contactEmail !== undefined) data.contactEmail = dto.contactEmail;
+    if (dto.contactPhone !== undefined) data.contactPhone = dto.contactPhone;
+    if (dto.timeZone !== undefined) {
+      data.timeZone = canonicalTimeZone(dto.timeZone);
+    }
+    if (Object.keys(data).length === 0) {
+      throw new BadRequestException('Send at least one field to change');
+    }
+    const row = await this.db.workspace.update({
+      where: { id: requireTenant().workspaceId },
+      data,
+      select: PROFILE_SELECT,
+    });
+    return toProfile(row);
+  }
+
+  /**
+   * Who belongs to the current workspace (owner and admin only): name,
+   * email, role and since when. Never anything else of their account.
+   */
+  async members(): Promise<WorkspaceMemberRow[]> {
+    const rows = await this.db.workspaceMember.findMany({
+      select: {
+        role: true,
+        createdAt: true,
+        user: { select: { name: true, email: true } },
+      },
+      orderBy: [{ createdAt: 'asc' }, { userId: 'asc' }],
+    });
+    return rows.map((r) => ({
+      name: r.user.name,
+      email: r.user.email,
+      role: r.role,
+      joinedAt: r.createdAt,
+    }));
   }
 
   /**
