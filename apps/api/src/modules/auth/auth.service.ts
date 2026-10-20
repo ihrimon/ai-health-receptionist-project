@@ -78,6 +78,11 @@ export class AuthService {
     private readonly resetQueue: PasswordResetQueue,
   ) {}
 
+  /** M7-37: verification and password-reset mail are off until a mail provider exists. */
+  private get emailFeatures(): boolean {
+    return this.config.get<boolean>('email.featuresEnabled') === true;
+  }
+
   /**
    * M1-16: user + workspace + OWNER membership + default chatbot in one
    * transaction, then a verification email (best-effort, outside the
@@ -101,7 +106,7 @@ export class AuthService {
       where: { email: dto.email },
     });
     if (existing) {
-      await this.notifyAccountExists(existing);
+      this.inBackground(() => this.notifyAccountExists(existing));
       return;
     }
 
@@ -110,7 +115,13 @@ export class AuthService {
       user = await runAsSystem('sign up', () =>
         this.prisma.$transaction(async (tx) => {
           const created = await tx.user.create({
-            data: { email: dto.email, name: dto.name, passwordHash },
+            data: {
+              email: dto.email,
+              name: dto.name,
+              passwordHash,
+              // No mail to confirm while email is off (M7-37).
+              emailVerifiedAt: this.emailFeatures ? undefined : new Date(),
+            },
           });
           await this.workspaces.createWithOwner(
             { name: dto.companyName, ownerUserId: created.id },
@@ -128,13 +139,23 @@ export class AuthService {
         const winner = await this.prisma.user.findUnique({
           where: { email: dto.email },
         });
-        if (winner) await this.notifyAccountExists(winner);
+        if (winner) this.inBackground(() => this.notifyAccountExists(winner));
         return;
       }
       throw err;
     }
 
-    await this.sendVerificationEmail(user);
+    // The mail is not awaited: sending takes seconds (SMTP) and the signup
+    // answer must not wait for it (M7-37).
+    this.inBackground(() => this.sendVerificationEmail(user));
+  }
+
+  /** Runs mail work after the answer; does nothing while email is off. */
+  private inBackground(work: () => Promise<void>): void {
+    if (!this.emailFeatures) return;
+    work().catch((err: unknown) =>
+      this.logger.error(`Background email failed: ${String(err)}`),
+    );
   }
 
   private async notifyAccountExists(user: User): Promise<void> {
@@ -267,7 +288,9 @@ export class AuthService {
     );
 
     // Known or not, the answer is the same and equally fast: the lookup,
-    // the token and the mail all happen in the queued job (M7-24).
+    // the token and the mail all happen in the queued job (M7-24). With
+    // email off nothing is queued, since nothing could be sent (M7-37).
+    if (!this.emailFeatures) return;
     await this.resetQueue.enqueue(email);
   }
 
@@ -351,7 +374,7 @@ export class AuthService {
 
   /** M1-20 */
   async resendVerification(user: User): Promise<void> {
-    if (user.emailVerifiedAt) return;
+    if (user.emailVerifiedAt || !this.emailFeatures) return;
     await this.rateLimit.consume({
       key: `resend-verification:email:${user.email}`,
       limit: 3,
