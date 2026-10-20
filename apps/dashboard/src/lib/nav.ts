@@ -80,9 +80,9 @@ export const NAV_GROUPS: NavGroup[] = [
         title: "Help",
         icon: LifeBuoy,
         children: [
-          { title: "Help", href: "/help", icon: LifeBuoy },
-          { title: "Terms of Service", href: "/terms", icon: FileText },
-          { title: "Privacy Policy", href: "/privacy", icon: ShieldCheck },
+          { title: "Help", href: "/app/help", icon: LifeBuoy },
+          { title: "Terms of Service", href: "/app/terms", icon: FileText },
+          { title: "Privacy Policy", href: "/app/privacy", icon: ShieldCheck },
         ],
       },
     ],

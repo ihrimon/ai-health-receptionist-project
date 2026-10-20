@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import Link from "next/link";
+import { DocLink } from "@/components/doc-frame";
 import { DocPage } from "@/components/doc-page";
 
 export const metadata: Metadata = { title: "Adding knowledge | BrainStack Help" };
@@ -64,7 +64,7 @@ export default function KnowledgeHelpPage() {
       </ul>
 
       <p>
-        Next: <Link href="/help/install">install the chat on your website</Link>.
+        Next: <DocLink href="/help/install">install the chat on your website</DocLink>.
       </p>
     </DocPage>
   );

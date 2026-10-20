@@ -9,6 +9,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { applyFavicon } from "@/lib/favicon";
 
 /** The six built-in accents (hex = the 600 shade of each Tailwind color). */
 export const ACCENTS = [
@@ -199,6 +200,12 @@ export function ThemeSettingsProvider({ children }: { children: ReactNode }) {
     // Read after mount so server and first client render match.
     Promise.resolve(read()).then(setSettings);
   }, []);
+
+  // The tab icon follows the accent, also on first load and after a reload.
+  const brandColor = brandOf(settings);
+  useEffect(() => {
+    applyFavicon(brandColor, textOn(brandColor));
+  }, [brandColor]);
 
   const update = useCallback((next: ThemeSettings) => {
     setSettings(next);

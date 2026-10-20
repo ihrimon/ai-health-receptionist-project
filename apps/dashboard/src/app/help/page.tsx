@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import Link from "next/link";
+import { DocLink } from "@/components/doc-frame";
 import { DocPage } from "@/components/doc-page";
 
 export const metadata: Metadata = { title: "Help | BrainStack" };
@@ -34,9 +34,9 @@ export default function HelpPage() {
       <ul className="!ml-0 !space-y-3">
         {ARTICLES.map((a) => (
           <li key={a.href} className="!ml-0 !list-none !pl-0">
-            <Link href={a.href} className="text-base font-semibold">
+            <DocLink href={a.href} className="text-base font-semibold">
               {a.title}
-            </Link>
+            </DocLink>
             <p className="text-muted-foreground">{a.description}</p>
           </li>
         ))}
