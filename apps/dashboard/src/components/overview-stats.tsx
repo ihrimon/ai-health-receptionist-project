@@ -247,11 +247,12 @@ function DailyChart({ daily, metric }: { daily: AnalyticsDay[]; metric: Overview
         {last && last !== first && <span>{shortDay(last.date)}</span>}
       </div>
 
-      <details className="text-sm">
-        <summary className="cursor-pointer text-xs text-muted-foreground hover:text-foreground">
-          Show as table
-        </summary>
-        <div className="mt-2 max-h-64 overflow-auto rounded-md border">
+      <section className="grid gap-2 text-sm" aria-labelledby="daily-table-title">
+        <h3 id="daily-table-title" className="text-sm font-medium">
+          Daily numbers
+        </h3>
+        {/* Header + 10 rows (2rem each) show at once; the rest scrolls. */}
+        <div className="max-h-[calc(11*2rem+10px)] overflow-auto rounded-md border">
           <table className="w-full text-xs tabular-nums">
             <caption className="sr-only">Daily numbers (UTC days)</caption>
             <thead className="sticky top-0 bg-muted text-left">
@@ -280,7 +281,7 @@ function DailyChart({ daily, metric }: { daily: AnalyticsDay[]; metric: Overview
             </tbody>
           </table>
         </div>
-      </details>
+      </section>
     </div>
   );
 }

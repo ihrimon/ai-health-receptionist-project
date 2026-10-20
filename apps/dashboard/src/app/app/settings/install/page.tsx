@@ -1,6 +1,6 @@
 "use client";
 
-import { Check, CircleAlert, CircleCheck, Clock, RefreshCw } from "lucide-react";
+import { Circle, CircleCheck, Clock, RefreshCw } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
@@ -95,7 +95,7 @@ export default function InstallPage() {
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             {status.installed ? (
-              <CircleCheck className="size-5 text-emerald-600" />
+              <CircleCheck className="size-5 text-primary" />
             ) : (
               <Clock className="size-5 text-muted-foreground" />
             )}
@@ -168,11 +168,11 @@ export default function InstallPage() {
         </CardHeader>
         <CardContent className="grid gap-2 text-sm">
           {checks.map((c) => (
-            <div key={c.text} className="flex items-start gap-2">
+            <div key={c.text} className="flex items-center gap-3">
               {c.ok ? (
-                <Check className="mt-0.5 size-4 shrink-0 text-emerald-600" />
+                <CircleCheck className="size-5 shrink-0 text-primary" />
               ) : (
-                <CircleAlert className="mt-0.5 size-4 shrink-0 text-amber-500" />
+                <Circle className="size-5 shrink-0 text-muted-foreground" />
               )}
               <span>
                 {c.text}
