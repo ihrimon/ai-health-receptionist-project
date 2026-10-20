@@ -1,4 +1,4 @@
-import { apiFetch } from "@/lib/api";
+import { apiFetch, type WorkspaceRole } from "@/lib/api";
 
 /* ─────────────── Platform admin (D-2 §2.8, M7-0) ─────────────── */
 
@@ -57,6 +57,88 @@ export const adminApi = {
     apiFetch<AdminWorkspace>(`/admin/workspaces/${id}`, {
       method: "PATCH",
       body: JSON.stringify(body),
+    }),
+};
+
+/* ─────────────── Users, support view, delete (M7-35) ─────────────── */
+
+export interface AdminUser {
+  id: string;
+  name: string;
+  email: string;
+  emailVerifiedAt: string | null;
+  isPlatformAdmin: boolean;
+  createdAt: string;
+  workspaces: { id: string; name: string; role: WorkspaceRole }[];
+}
+
+export interface AdminUserPage {
+  items: AdminUser[];
+  nextCursor: string | null;
+}
+
+/** Read-only look at a company's chatbot setup; never conversations or leads. */
+export interface SupportView {
+  workspace: {
+    id: string;
+    name: string;
+    slug: string;
+    status: WorkspaceStatus;
+    plan: WorkspacePlan;
+  };
+  chatbots: {
+    id: string;
+    publicId: string;
+    status: "ENABLED" | "DISABLED";
+    allowedDomains: string[];
+    installVerifiedHost: string | null;
+    draftConfig: unknown;
+    publishedVersion: { version: number; publishedAt: string } | null;
+  }[];
+  faqs: { id: string; question: string; answer: string }[];
+  customAnswers: {
+    id: string;
+    triggerQuestion: string;
+    answer: string;
+    isActive: boolean;
+  }[];
+  sources: {
+    id: string;
+    type: "POLICY" | "TEXT" | "DOCUMENT" | "URL";
+    title: string;
+    status: "QUEUED" | "PROCESSING" | "READY" | "FAILED";
+    error: string | null;
+    fileName: string | null;
+    fileSize: number | null;
+    createdAt: string;
+  }[];
+}
+
+/** "?q=sam&cursor=..." for GET /v1/admin/users; blanks are left out. */
+export function adminUsersQueryString(query: {
+  q?: string;
+  cursor?: string;
+  limit?: number;
+}): string {
+  return adminQueryString(query);
+}
+
+export const adminConsoleApi = {
+  listUsers: (query: { q?: string; cursor?: string; limit?: number }) =>
+    apiFetch<AdminUserPage>(`/admin/users${adminUsersQueryString(query)}`),
+  verifyEmail: (id: string) =>
+    apiFetch<AdminUser>(`/admin/users/${id}/verify-email`, { method: "POST" }),
+  setPlatformAdmin: (id: string, isPlatformAdmin: boolean, reason?: string) =>
+    apiFetch<AdminUser>(`/admin/users/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ isPlatformAdmin, reason }),
+    }),
+  supportView: (id: string) =>
+    apiFetch<SupportView>(`/admin/workspaces/${id}/support-view`),
+  deleteWorkspace: (id: string, confirmSlug: string, reason?: string) =>
+    apiFetch<{ deleted: true; filesDeleted: number }>(`/admin/workspaces/${id}`, {
+      method: "DELETE",
+      body: JSON.stringify({ confirmSlug, reason }),
     }),
 };
 

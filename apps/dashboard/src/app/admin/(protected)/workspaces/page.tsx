@@ -1,6 +1,7 @@
 "use client";
 
 import { Search } from "lucide-react";
+import Link from "next/link";
 import { useEffect, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -31,6 +32,7 @@ import {
 } from "@/components/ui/table";
 import {
   adminApi,
+  adminConsoleApi,
   PLAN_LABELS,
   type AdminWorkspace,
   type AdminWorkspaceQuery,
@@ -64,6 +66,8 @@ export default function AdminWorkspacesPage() {
   const [pending, setPending] = useState<Pending | null>(null);
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
+  const [deleting, setDeleting] = useState<AdminWorkspace | null>(null);
+  const [slugInput, setSlugInput] = useState("");
 
   // Typing settles before searching.
   useEffect(() => {
@@ -130,6 +134,25 @@ export default function AdminWorkspacesPage() {
       );
       toastSuccess(`Updated ${updated.name}.`);
       setPending(null);
+    } catch (err) {
+      toastError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function confirmDelete() {
+    if (!deleting) return;
+    setBusy(true);
+    try {
+      await adminConsoleApi.deleteWorkspace(
+        deleting.id,
+        slugInput.trim(),
+        reason.trim() || undefined,
+      );
+      setItems((list) => (list ?? []).filter((w) => w.id !== deleting.id));
+      toastSuccess(`Deleted ${deleting.name}.`);
+      setDeleting(null);
     } catch (err) {
       toastError((err as Error).message);
     } finally {
@@ -236,6 +259,13 @@ export default function AdminWorkspacesPage() {
                     {formatDateTime(w.createdAt)}
                   </TableCell>
                   <TableCell className="text-right">
+                    <div className="flex justify-end gap-2">
+                    <Link
+                      href={`/admin/workspaces/${w.id}`}
+                      className="inline-flex h-7 items-center rounded-md border px-2.5 text-sm hover:bg-muted"
+                    >
+                      View setup
+                    </Link>
                     {w.status === "SUSPENDED" ? (
                       <Button
                         size="sm"
@@ -253,6 +283,19 @@ export default function AdminWorkspacesPage() {
                         Suspend
                       </Button>
                     )}
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="text-destructive"
+                      onClick={() => {
+                        setReason("");
+                        setSlugInput("");
+                        setDeleting(w);
+                      }}
+                    >
+                      Delete
+                    </Button>
+                    </div>
                   </TableCell>
                 </TableRow>
               ))}
@@ -297,6 +340,52 @@ export default function AdminWorkspacesPage() {
                   onClick={confirm}
                 >
                   {busy ? "Saving…" : confirmButton(pending)}
+                </Button>
+              </DialogFooter>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={deleting !== null} onOpenChange={(open) => !open && !busy && setDeleting(null)}>
+        <DialogContent>
+          {deleting && (
+            <>
+              <DialogHeader>
+                <DialogTitle>Delete {deleting.name}?</DialogTitle>
+                <DialogDescription>
+                  This permanently removes the workspace, its chatbot, FAQs,
+                  documents, conversations, leads and usage. People keep their
+                  accounts. It cannot be undone. Type{" "}
+                  <span className="font-mono font-semibold">{deleting.slug}</span> to
+                  confirm.
+                </DialogDescription>
+              </DialogHeader>
+              <Input
+                aria-label="Workspace slug"
+                autoComplete="off"
+                placeholder={deleting.slug}
+                value={slugInput}
+                onChange={(e) => setSlugInput(e.target.value)}
+              />
+              <label className="grid gap-1.5 text-sm">
+                Reason (optional, saved in the audit log)
+                <Input
+                  value={reason}
+                  maxLength={500}
+                  onChange={(e) => setReason(e.target.value)}
+                />
+              </label>
+              <DialogFooter>
+                <Button variant="outline" disabled={busy} onClick={() => setDeleting(null)}>
+                  Cancel
+                </Button>
+                <Button
+                  variant="destructive"
+                  disabled={busy || slugInput.trim() !== deleting.slug}
+                  onClick={confirmDelete}
+                >
+                  {busy ? "Deleting…" : "Delete workspace"}
                 </Button>
               </DialogFooter>
             </>
