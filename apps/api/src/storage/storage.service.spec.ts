@@ -174,4 +174,15 @@ describe('StorageService', () => {
     expect(commands()[0]).toBeInstanceOf(DeleteObjectCommand);
     expect(commands()[0].input).toEqual({ Bucket: 'test-bucket', Key: key });
   });
+
+  it('deletes the files of a workspace being removed, skipping foreign keys', async () => {
+    const own = newKey(WS, 'documents', 'a.txt');
+    const foreign = newKey(OTHER, 'documents', 'b.txt');
+
+    const count = await service.deleteForWorkspace(WS, [own, foreign]);
+
+    expect(count).toBe(1);
+    expect(commands()).toHaveLength(1);
+    expect(commands()[0].input).toEqual({ Bucket: 'test-bucket', Key: own });
+  });
 });

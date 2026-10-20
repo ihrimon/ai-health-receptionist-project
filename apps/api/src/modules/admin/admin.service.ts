@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -11,11 +12,13 @@ import {
   WorkspaceRole,
   WorkspaceStatus,
 } from '../../generated/prisma/client';
+import { StorageService } from '../../storage/storage.service';
 import { runAsSystem } from '../../tenancy/tenant-context';
 import { periodOf } from '../usage/usage.service';
 import { WidgetPageCache } from '../widget-page/widget-page.cache';
 import type {
   AuditLogQueryDto,
+  DeleteWorkspaceDto,
   ListWorkspacesQueryDto,
   UpdateWorkspaceDto,
 } from './dto/admin.dto';
@@ -97,6 +100,8 @@ function toRow(w: WorkspaceWithUsage): AdminWorkspaceRow {
  */
 @Injectable()
 export class AdminService {
+  private readonly logger = new Logger(AdminService.name);
+
   /** The clock; tests replace it. */
   now: () => Date = () => new Date();
 
@@ -104,6 +109,7 @@ export class AdminService {
     private readonly prisma: PrismaService,
     private readonly widgetCache: WidgetPageCache,
     private readonly config: ConfigService,
+    private readonly storage: StorageService,
   ) {}
 
   /**
@@ -341,6 +347,152 @@ export class AdminService {
       select: workspaceSelect(period),
     });
     return toRow(updated);
+  }
+
+  /**
+   * Read-only look at how a company set up its chatbot and knowledge base
+   * (M7-35, "support view"): config, FAQs, custom answers and the list of
+   * sources. Never conversations, messages or leads. Every call is audited,
+   * because it shows a company's own content to the platform team.
+   */
+  supportView(actor: AdminActor, id: string) {
+    return this.asPlatform(() => this.supportViewInner(actor, id));
+  }
+
+  private async supportViewInner(actor: AdminActor, id: string) {
+    const workspace = await this.prisma.workspace.findUnique({
+      where: { id },
+      select: { id: true, name: true, slug: true, status: true, plan: true },
+    });
+    if (!workspace) throw new NotFoundException('Workspace not found');
+    const [chatbots, faqs, customAnswers, sources] = await Promise.all([
+      this.prisma.chatbot.findMany({
+        where: { workspaceId: id },
+        orderBy: { createdAt: 'asc' },
+        select: {
+          id: true,
+          publicId: true,
+          status: true,
+          allowedDomains: true,
+          installVerifiedHost: true,
+          draftConfig: true,
+          publishedVersion: { select: { version: true, publishedAt: true } },
+        },
+      }),
+      this.prisma.faq.findMany({
+        where: { workspaceId: id },
+        orderBy: { sortOrder: 'asc' },
+        select: { id: true, question: true, answer: true },
+      }),
+      this.prisma.customAnswer.findMany({
+        where: { workspaceId: id },
+        orderBy: { createdAt: 'asc' },
+        select: {
+          id: true,
+          triggerQuestion: true,
+          answer: true,
+          isActive: true,
+        },
+      }),
+      this.prisma.knowledgeSource.findMany({
+        where: { workspaceId: id },
+        orderBy: { createdAt: 'asc' },
+        select: {
+          id: true,
+          type: true,
+          title: true,
+          status: true,
+          error: true,
+          fileName: true,
+          fileSize: true,
+          createdAt: true,
+        },
+      }),
+    ]);
+    await this.prisma.auditLog.create({
+      data: {
+        actorUserId: actor.id,
+        actorEmail: actor.email,
+        action: 'workspace.support_view',
+        workspaceId: workspace.id,
+        workspaceName: workspace.name,
+        details: {},
+      },
+    });
+    return { workspace, chatbots, faqs, customAnswers, sources };
+  }
+
+  /**
+   * Deletes a workspace and everything it owns (the database cascades; the
+   * uploaded files go from storage afterwards). The slug must be typed
+   * again. The audit row is written in the same transaction and outlives
+   * the workspace. Its members' accounts stay.
+   */
+  deleteWorkspace(actor: AdminActor, id: string, dto: DeleteWorkspaceDto) {
+    return this.asPlatform(() => this.deleteWorkspaceInner(actor, id, dto));
+  }
+
+  private async deleteWorkspaceInner(
+    actor: AdminActor,
+    id: string,
+    dto: DeleteWorkspaceDto,
+  ): Promise<{ deleted: true; filesDeleted: number }> {
+    const workspace = await this.prisma.workspace.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        name: true,
+        slug: true,
+        plan: true,
+        _count: { select: { chatbots: true, members: true } },
+        chatbots: { select: { publicId: true } },
+        sources: {
+          where: { fileKey: { not: null } },
+          select: { fileKey: true },
+        },
+      },
+    });
+    if (!workspace) throw new NotFoundException('Workspace not found');
+    if (dto.confirmSlug !== workspace.slug) {
+      throw new BadRequestException(
+        'Type the workspace slug exactly to confirm the deletion',
+      );
+    }
+    const fileKeys = workspace.sources.flatMap((s) =>
+      s.fileKey ? [s.fileKey] : [],
+    );
+    await this.prisma.$transaction([
+      this.prisma.auditLog.create({
+        data: {
+          actorUserId: actor.id,
+          actorEmail: actor.email,
+          action: 'workspace.delete',
+          workspaceId: workspace.id,
+          workspaceName: workspace.name,
+          details: {
+            slug: workspace.slug,
+            plan: workspace.plan,
+            chatbots: workspace._count.chatbots,
+            members: workspace._count.members,
+            files: fileKeys.length,
+            reason: dto.reason || undefined,
+          },
+        },
+      }),
+      this.prisma.workspace.delete({ where: { id } }),
+    ]);
+    for (const bot of workspace.chatbots) {
+      this.widgetCache.invalidate(bot.publicId);
+    }
+    let filesDeleted = 0;
+    try {
+      filesDeleted = await this.storage.deleteForWorkspace(id, fileKeys);
+    } catch (err) {
+      this.logger.warn(
+        `Workspace ${id} deleted but its files were not removed: ${String(err)}`,
+      );
+    }
+    return { deleted: true, filesDeleted };
   }
 
   auditLog(query: AuditLogQueryDto) {

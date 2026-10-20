@@ -20,6 +20,7 @@ const ALLOWED = new Set([
   'modules/widget-page/widget-page.service.ts',
   // Platform-admin only: every workspace, and the platform audit trail.
   'modules/admin/admin.service.ts',
+  'modules/admin/admin-users.service.ts',
   'modules/llm-credentials/llm-credentials.service.ts',
   // CLI: queues re-indexing for every workspace.
   'modules/knowledge/reembed.script.ts',
