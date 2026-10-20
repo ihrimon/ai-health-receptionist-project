@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import Link from "next/link";
+import { DocLink } from "@/components/doc-frame";
 import { CONTACT_EMAIL, DocPage } from "@/components/doc-page";
 
 export const metadata: Metadata = { title: "Privacy Policy | BrainStack" };
@@ -118,7 +118,7 @@ export default function PrivacyPage() {
       <p>
         If we change this policy in an important way we will say so here and,
         for account holders, by email. See also our{" "}
-        <Link href="/terms">Terms of Service</Link>.
+        <DocLink href="/terms">Terms of Service</DocLink>.
       </p>
     </DocPage>
   );

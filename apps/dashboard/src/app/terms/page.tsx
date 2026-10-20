@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import Link from "next/link";
+import { DocLink } from "@/components/doc-frame";
 import { CONTACT_EMAIL, DocPage } from "@/components/doc-page";
 
 export const metadata: Metadata = { title: "Terms of Service | BrainStack" };
@@ -53,7 +53,7 @@ export default function TermsPage() {
           You are responsible for telling your website visitors how their chat
           is used and for having a lawful basis to handle their data. The chat
           shows a short notice and a link to our{" "}
-          <Link href="/privacy">Privacy Policy</Link>; you should also cover it
+          <DocLink href="/privacy">Privacy Policy</DocLink>; you should also cover it
           in your own privacy policy. For visitor data, you decide why and how
           it is used and we process it on your behalf.
         </li>

@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import Link from "next/link";
+import { DocLink } from "@/components/doc-frame";
 import { DocPage } from "@/components/doc-page";
 
 export const metadata: Metadata = { title: "Getting started | BrainStack Help" };
@@ -13,7 +13,7 @@ export default function GettingStartedPage() {
       <ol>
         <li>
           <strong>Create your account.</strong> Go to{" "}
-          <Link href="/signup">Sign up</Link> with your name, company name,
+          <DocLink href="/signup">Sign up</DocLink> with your name, company name,
           work email and a password of at least 10 characters. We send you an
           email: open it and confirm your address, then sign in. Your company
           gets its own workspace with one chatbot already created.
@@ -28,7 +28,7 @@ export default function GettingStartedPage() {
           <strong>Add what the chatbot should know.</strong> Open{" "}
           <em>Knowledge</em> (and <em>Products</em> if you sell things) and
           add your FAQs, policies and documents. See{" "}
-          <Link href="/help/knowledge">Adding knowledge</Link>.
+          <DocLink href="/help/knowledge">Adding knowledge</DocLink>.
         </li>
         <li>
           <strong>Make it yours.</strong> Open <em>Chatbot</em> to set its name,
@@ -47,7 +47,7 @@ export default function GettingStartedPage() {
         </li>
         <li>
           <strong>Put it on your website.</strong> Follow{" "}
-          <Link href="/help/install">Installing the chat</Link>.
+          <DocLink href="/help/install">Installing the chat</DocLink>.
         </li>
       </ol>
 
@@ -69,7 +69,7 @@ export default function GettingStartedPage() {
 
       <p>
         Stuck? Write to us at the address on the{" "}
-        <Link href="/privacy">Privacy Policy</Link> page.
+        <DocLink href="/privacy">Privacy Policy</DocLink> page.
       </p>
     </DocPage>
   );
