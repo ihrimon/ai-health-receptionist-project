@@ -144,11 +144,10 @@ describe('PreviewChatService', () => {
       expect(events.filter((e) => e.type === 'follow_up')).toEqual([
         { type: 'follow_up', text: CONTACT_FOLLOW_UP },
       ]);
-      expect(conversations.recordTurn).toHaveBeenCalledWith(
-        expect.objectContaining({
-          answer: expect.objectContaining({ followUp: CONTACT_FOLLOW_UP }),
-        }),
-      );
+      const [turn] = conversations.recordTurn.mock.calls[0] as [
+        { answer: { followUp?: string } },
+      ];
+      expect(turn.answer.followUp).toBe(CONTACT_FOLLOW_UP);
     });
 
     it('asks only once per conversation', async () => {
