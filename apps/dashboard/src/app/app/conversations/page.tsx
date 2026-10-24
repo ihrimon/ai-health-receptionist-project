@@ -25,6 +25,7 @@ import {
   visitorLabel,
 } from "@/lib/conversations";
 import { useSession } from "@/lib/session";
+import { useDebounced } from "@/lib/use-debounced";
 import { toastError } from "@/lib/toast";
 
 const PAGE_SIZE = 25;
@@ -58,26 +59,20 @@ export default function ConversationsPage() {
   const [to, setTo] = useState("");
   const [rating, setRating] = useState("all");
   const [lead, setLead] = useState("all");
-  const [query, setQuery] = useState<ConversationQuery>({});
+  // Typing settles before searching.
+  const query: ConversationQuery = useDebounced(
+    {
+      q: search,
+      from,
+      to,
+      rating: rating === "all" ? undefined : (rating as RatingFilter),
+      hasLead: lead === "all" ? undefined : (lead as "true" | "false"),
+    },
+    SEARCH_DELAY_MS,
+  );
   const [items, setItems] = useState<ConversationSummary[] | null>(null);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
-
-  // Typing settles before searching.
-  useEffect(() => {
-    const timer = setTimeout(
-      () =>
-        setQuery({
-          q: search,
-          from,
-          to,
-          rating: rating === "all" ? undefined : (rating as RatingFilter),
-          hasLead: lead === "all" ? undefined : (lead as "true" | "false"),
-        }),
-      SEARCH_DELAY_MS,
-    );
-    return () => clearTimeout(timer);
-  }, [search, from, to, rating, lead]);
 
   // A newer search can finish before an older one; only the latest counts.
   useEffect(() => {

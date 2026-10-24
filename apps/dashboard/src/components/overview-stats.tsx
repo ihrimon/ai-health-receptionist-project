@@ -9,6 +9,7 @@ import type {
 import Link from "next/link";
 import { cn } from "cn";
 import { useEffect, useState } from "react";
+import { LazyInView } from "@/components/lazy-in-view";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -105,8 +106,12 @@ export function OverviewStats() {
               ))}
             </div>
             <DailyChart daily={overview.daily} metric={metric} />
-            <TopQuestions days={days} />
-            <ResponseTimes days={days} />
+            <LazyInView placeholder={<Skeleton className="h-24" />}>
+              <TopQuestions days={days} />
+            </LazyInView>
+            <LazyInView placeholder={<Skeleton className="h-24" />}>
+              <ResponseTimes days={days} />
+            </LazyInView>
           </>
         ) : (
           <div className="grid gap-4" aria-busy="true">
