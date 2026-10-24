@@ -31,6 +31,35 @@ export type LlmStreamEvent =
  * only. The raw message can echo the API key (e.g. "Incorrect API key
  * provided: sk-..."), so it is never logged.
  */
+/** How long to wait before asking again after a short-lived provider error. */
+export const TRANSIENT_RETRY_DELAY_MS = 300;
+
+/**
+ * A short-lived failure worth asking again for: the provider's own 5xx
+ * (overloaded, unavailable) or a dropped connection. Not a bad key or a rate
+ * limit; those move on to the next credential instead.
+ */
+export function isTransientProviderError(err: unknown): boolean {
+  const e = err as {
+    status?: unknown;
+    code?: unknown;
+    message?: unknown;
+  } | null;
+  if (typeof e?.status === 'number') return e.status >= 500;
+  if (
+    typeof e?.code === 'string' &&
+    ['ECONNRESET', 'ETIMEDOUT', 'EAI_AGAIN', 'UND_ERR_SOCKET'].includes(e.code)
+  ) {
+    return true;
+  }
+  return (
+    typeof e?.message === 'string' &&
+    /fetch failed|network|socket hang up|connection (error|reset)/i.test(
+      e.message,
+    )
+  );
+}
+
 export function describeProviderError(err: unknown): string {
   const e = err as { name?: unknown; status?: unknown } | null;
   const kind = typeof e?.name === 'string' ? e.name : 'Error';
@@ -231,32 +260,46 @@ export class LlmChatClient {
     for (const credential of credentials) {
       const adapter = this.providerRegistry.get(credential.provider);
       let started = false;
-      try {
-        for await (const event of adapter.stream({
-          apiKey: credential.apiKey,
-          model: credential.model,
-          messages,
-          tools,
-        })) {
-          if (event.type === 'text') {
-            started = true;
-            yield event;
-          } else {
-            yield {
-              ...event,
-              credentialId: credential.id,
-              model: credential.model,
-            };
+      // A short-lived provider error is asked again once, before any text
+      // has gone out; then the same rules as before apply.
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+          for await (const event of adapter.stream({
+            apiKey: credential.apiKey,
+            model: credential.model,
+            messages,
+            tools,
+          })) {
+            if (event.type === 'text') {
+              started = true;
+              yield event;
+            } else {
+              yield {
+                ...event,
+                credentialId: credential.id,
+                model: credential.model,
+              };
+            }
           }
+          return;
+        } catch (err) {
+          if (!started && attempt === 0 && isTransientProviderError(err)) {
+            this.logger.warn(
+              `Workspace credential ${credential.id} (${credential.provider}, ${credential.model}) had a short-lived error, asking again: ${describeProviderError(err)}`,
+            );
+            await new Promise((resolve) =>
+              setTimeout(resolve, TRANSIENT_RETRY_DELAY_MS),
+            );
+            continue;
+          }
+          if (started || !adapter.isRetryableError(err)) {
+            throw err;
+          }
+          this.logger.warn(
+            `Workspace credential ${credential.id} (${credential.provider}, ${credential.model}) failed: ${describeProviderError(err)}`,
+          );
+          break;
         }
-        return;
-      } catch (err) {
-        if (started || !adapter.isRetryableError(err)) {
-          throw err;
-        }
-        this.logger.warn(
-          `Workspace credential ${credential.id} (${credential.provider}, ${credential.model}) failed: ${describeProviderError(err)}`,
-        );
       }
     }
     throw new AllLlmKeysExhaustedError();

@@ -62,12 +62,16 @@ describe("ChatWindow", () => {
   it("shows extra content under the messages and the branding line by default", () => {
     setup({ children: <p>Extra slot</p> });
     expect(screen.getByText("Extra slot")).toBeTruthy();
-    expect(screen.getByText(STRINGS.poweredBy)).toBeTruthy();
+    const brand = screen.getByRole("link", { name: STRINGS.brandName });
+    expect(brand.getAttribute("href")).toBe("https://brainstackstudios.com");
+    expect(brand.getAttribute("target")).toBe("_blank");
+    expect(brand.getAttribute("rel")).toContain("noopener");
+    expect(brand.parentElement?.textContent).toBe(`${STRINGS.poweredBy} ${STRINGS.brandName}`);
   });
 
   it("can hide the branding line", () => {
     setup({ showBranding: false });
-    expect(screen.queryByText(STRINGS.poweredBy)).toBeNull();
+    expect(screen.queryByRole("link", { name: STRINGS.brandName })).toBeNull();
   });
 
   it("shows the assistant's Markdown formatted and the visitor's text as typed", () => {
@@ -103,17 +107,8 @@ describe("ChatWindow", () => {
     expect(link.previousElementSibling?.textContent).toBe("Sorry, I don't know.");
   });
 
-  it("tells the visitor an AI answers and the chat is saved (M7-14)", () => {
+  it("has no notice above the message box", () => {
     setup();
-    expect(screen.getByTestId("privacy-notice").textContent).toContain(STRINGS.privacyNotice);
-    expect(screen.queryByRole("link", { name: STRINGS.privacyLink })).toBeNull();
-  });
-
-  it("links the notice to the Privacy Policy when the API gives its address", () => {
-    setup({ privacyUrl: "https://app.example.com/privacy" });
-    const link = screen.getByRole("link", { name: STRINGS.privacyLink });
-    expect(link.getAttribute("href")).toBe("https://app.example.com/privacy");
-    expect(link.getAttribute("target")).toBe("_blank");
-    expect(link.getAttribute("rel")).toContain("noopener");
+    expect(screen.queryByTestId("privacy-notice")).toBeNull();
   });
 });

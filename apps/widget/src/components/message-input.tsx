@@ -5,7 +5,7 @@ import type { Brand } from "../theme";
 import { MESSAGE_MAX_CHARS } from "../types";
 import { SendIcon } from "./icons";
 
-/** The box grows with the text up to this height, then scrolls. */
+/** The box grows with the text up to this height, then scrolls (without a visible bar). */
 export const INPUT_MAX_HEIGHT_PX = 160;
 
 /**
@@ -31,12 +31,18 @@ export function MessageInput({
   const canSend = !disabled && text.trim().length > 0;
 
   // Grow with the text so earlier lines never scroll out of sight; shrink
-  // back after sending.
+  // back after sending. The box is border-box, so the height must include
+  // the borders that scrollHeight leaves out; without them the box is a
+  // couple of pixels too short and shows a scrollbar instead of growing.
   useLayoutEffect(() => {
     const el = box.current;
     if (!el) return;
     el.style.height = "auto";
-    el.style.height = `${Math.min(el.scrollHeight, INPUT_MAX_HEIGHT_PX)}px`;
+    const borders = el.offsetHeight - el.clientHeight;
+    const wanted = el.scrollHeight + borders;
+    el.style.height = `${Math.min(wanted, INPUT_MAX_HEIGHT_PX)}px`;
+    // Scrolls only once it has stopped growing.
+    el.style.overflowY = wanted > INPUT_MAX_HEIGHT_PX ? "auto" : "hidden";
   }, [text]);
 
   function setBox(el: HTMLTextAreaElement | null) {
@@ -67,7 +73,7 @@ export function MessageInput({
         maxLength={MESSAGE_MAX_CHARS}
         aria-label={STRINGS.inputLabel}
         placeholder={STRINGS.inputPlaceholder}
-        class="max-h-40 min-h-9 flex-1 resize-none overflow-y-auto rounded-lg border border-zinc-300 px-3 py-2 text-base focus:border-zinc-500 sm:text-sm"
+        class="max-h-40 min-h-9 flex-1 resize-none overflow-y-hidden [scrollbar-width:none] [&::-webkit-scrollbar]:hidden rounded-lg border border-zinc-300 px-3 py-2 text-base focus:border-zinc-500 sm:text-sm"
         onInput={(e) => setText(e.currentTarget.value)}
         onKeyDown={(e) => {
           if (e.key === "Enter" && !e.shiftKey) {

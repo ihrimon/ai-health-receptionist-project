@@ -12,8 +12,6 @@ out/
 apps/api/src/generated/
 
 # Environment
-.env
-.env.local
 .env.*.local
 
 # Local load-test output (M7-5)
@@ -25,7 +23,6 @@ npm-debug.log*
 pnpm-debug.log*
 
 # Editor / OS
-.vscode/*
 !.vscode/extensions.json
 .idea/
 .DS_Store
@@ -51,3 +48,4 @@ coverage/
 
 # Built from apps/widget (pnpm --filter widget build:loader:dashboard), not edited by hand
 apps/dashboard/public/chatbot.js
+config.bat
