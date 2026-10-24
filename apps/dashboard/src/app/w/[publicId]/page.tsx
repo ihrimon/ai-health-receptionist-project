@@ -10,6 +10,7 @@ import {
   type Handoff,
   type PreviewMessage,
 } from "@/lib/preview-chat";
+import { ChatMarkdown } from "@/components/chat-markdown";
 import { cn } from "@/lib/utils";
 import {
   connectLoader,
@@ -237,7 +238,7 @@ function ChatWindow({
         {messages.map((m, i) => (
           <div key={i} className="space-y-1">
             <Bubble mine={m.role === "user"} brand={brand}>
-              {m.text}
+              {m.role === "user" ? m.text : <ChatMarkdown>{m.text}</ChatMarkdown>}
             </Bubble>
             {m.handoff && (
               <a
@@ -310,8 +311,8 @@ function Bubble({
   return (
     <div
       className={cn(
-        "w-fit max-w-[85%] rounded-2xl px-3 py-2 whitespace-pre-wrap",
-        mine ? "ml-auto" : "bg-zinc-100",
+        "w-fit max-w-[85%] rounded-2xl px-3 py-2",
+        mine ? "ml-auto whitespace-pre-wrap" : "bg-zinc-100",
       )}
       style={mine ? brand : undefined}
     >
