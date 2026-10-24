@@ -2,11 +2,13 @@
 
 import { useEffect, useState } from "react";
 import { MailWarning } from "lucide-react";
+import { LazyInView } from "@/components/lazy-in-view";
 import { OnboardingChecklist } from "@/components/onboarding-checklist";
 import { OverviewHero } from "@/components/overview-hero";
 import { OverviewStats } from "@/components/overview-stats";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { Skeleton } from "@/components/ui/skeleton";
 import { apiFetch, ApiError } from "@/lib/api";
 import { EMAIL_FEATURES_ENABLED } from "@/lib/features";
 import { useSession } from "@/lib/session";
@@ -48,9 +50,24 @@ export default function AppHomePage() {
         <VerifyEmailBanner email={me.user.email} />
       )}
 
-      {me.activeWorkspace && <OnboardingChecklist key={me.activeWorkspace.id} />}
+      {/* Below the first screen: these load when the visitor scrolls near them. */}
+      {me.activeWorkspace && (
+        <LazyInView
+          key={`checklist-${me.activeWorkspace.id}`}
+          placeholder={<Skeleton className="h-80 w-full" />}
+        >
+          <OnboardingChecklist />
+        </LazyInView>
+      )}
 
-      {me.activeWorkspace && <OverviewStats key={`stats-${me.activeWorkspace.id}`} />}
+      {me.activeWorkspace && (
+        <LazyInView
+          key={`stats-${me.activeWorkspace.id}`}
+          placeholder={<Skeleton className="h-[34rem] w-full" />}
+        >
+          <OverviewStats />
+        </LazyInView>
+      )}
     </div>
   );
 }

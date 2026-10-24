@@ -40,6 +40,7 @@ import {
   type WorkspaceStatus,
 } from "@/lib/admin";
 import { formatDateTime } from "@/lib/api";
+import { useDebounced } from "@/lib/use-debounced";
 import { toastError, toastSuccess } from "@/lib/toast";
 
 const PAGE_SIZE = 25;
@@ -59,7 +60,11 @@ type Pending =
 export default function AdminWorkspacesPage() {
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState<WorkspaceStatus | typeof ALL>(ALL);
-  const [query, setQuery] = useState<AdminWorkspaceQuery>({});
+  // Typing settles before searching.
+  const query: AdminWorkspaceQuery = useDebounced(
+    { q: search, status: status === ALL ? undefined : status },
+    SEARCH_DELAY_MS,
+  );
   const [items, setItems] = useState<AdminWorkspace[] | null>(null);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -68,15 +73,6 @@ export default function AdminWorkspacesPage() {
   const [busy, setBusy] = useState(false);
   const [deleting, setDeleting] = useState<AdminWorkspace | null>(null);
   const [slugInput, setSlugInput] = useState("");
-
-  // Typing settles before searching.
-  useEffect(() => {
-    const timer = setTimeout(
-      () => setQuery({ q: search, status: status === ALL ? undefined : status }),
-      SEARCH_DELAY_MS,
-    );
-    return () => clearTimeout(timer);
-  }, [search, status]);
 
   // A newer search can finish before an older one; only the latest counts.
   useEffect(() => {
