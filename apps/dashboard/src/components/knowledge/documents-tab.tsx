@@ -1,9 +1,10 @@
 "use client";
 
 import { KNOWLEDGE_LIMITS } from "@brainstack/shared";
-import { FileUp, RotateCw, Trash2 } from "lucide-react";
+import { FileText, FileUp, Loader2, RotateCw, Trash2 } from "lucide-react";
 import { cn } from "cn";
 import { useRef, useState, type DragEvent } from "react";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   checkUpload,
@@ -34,7 +35,8 @@ export function DocumentsTab({
 }) {
   const input = useRef<HTMLInputElement>(null);
   const [dragging, setDragging] = useState(false);
-  const [uploading, setUploading] = useState<string | null>(null);
+  /** The file being sent: its name, size and how much of it has gone (0 to 1). */
+  const [uploading, setUploading] = useState<{ name: string; size: number; progress: number } | null>(null);
   const [deleting, setDeleting] = useState<KnowledgeSource | null>(null);
   const limit = limitInfo(documents.length, KNOWLEDGE_LIMITS.documents);
 
@@ -47,9 +49,13 @@ export function DocumentsTab({
         toastError(problem);
         continue;
       }
-      setUploading(file.name);
+      setUploading({ name: file.name, size: file.size, progress: 0 });
       try {
-        onUploaded(await knowledgeApi.uploadDocument(file));
+        onUploaded(
+          await knowledgeApi.uploadDocument(file, (progress) =>
+            setUploading((u) => (u ? { ...u, progress } : u)),
+          ),
+        );
         count++;
         toastSuccess(`"${file.name}" uploaded. Reading it now…`);
       } catch (err) {
@@ -93,7 +99,7 @@ export function DocumentsTab({
         >
           <FileUp className="size-6 text-muted-foreground" />
           {uploading ? (
-            <p>Uploading &ldquo;{uploading}&rdquo;…</p>
+            <p>Uploading &ldquo;{uploading.name}&rdquo;…</p>
           ) : (
             <>
               <p>
@@ -123,13 +129,34 @@ export function DocumentsTab({
         </div>
       )}
 
-      {documents.length === 0 ? (
+      {documents.length === 0 && !uploading ? (
         <EmptyState
           title="No documents yet"
           example="A price list PDF or a product manual works well. Scanned pages (pictures of text) can't be read yet."
         />
       ) : (
         <ul className="divide-y rounded-lg border">
+          {uploading && (
+            <li className="relative flex items-start gap-3 overflow-hidden p-3">
+              {/* Fills with the primary color as the file is sent. */}
+              <div
+                aria-hidden
+                className="absolute inset-y-0 left-0 bg-primary/15 transition-[width] duration-300 ease-out"
+                style={{ width: `${Math.round(uploading.progress * 100)}%` }}
+              />
+              <FileText className="relative mt-0.5 size-4 shrink-0 text-muted-foreground" />
+              <div className="relative min-w-0 flex-1">
+                <p className="truncate font-medium">{uploading.name}</p>
+                <p className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                  <span>{formatBytes(uploading.size)}</span>
+                  <Badge variant="outline">
+                    <Loader2 className="animate-spin" />
+                    Uploading {Math.round(uploading.progress * 100)}%
+                  </Badge>
+                </p>
+              </div>
+            </li>
+          )}
           {documents.map((doc) => (
             <li key={doc.id} className="flex items-start gap-3 p-3">
               <div className="min-w-0 flex-1">

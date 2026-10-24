@@ -57,6 +57,28 @@ class FakeAdapter implements LlmProviderAdapter {
   }
 }
 
+/** A provider answering "overloaded" (503) for its first `failures` calls. */
+class OverloadedError extends Error {
+  readonly status = 503;
+}
+class FlakyAdapter extends FakeAdapter {
+  calls = 0;
+  constructor(private readonly failures: number) {
+    super('hello');
+  }
+
+  // eslint-disable-next-line @typescript-eslint/require-await
+  override async *stream(
+    p: AdapterCompleteParams,
+  ): AsyncGenerator<AdapterStreamEvent> {
+    this.calls += 1;
+    this.seenKeys.push(p.apiKey);
+    if (this.calls <= this.failures) throw new OverloadedError('overloaded');
+    yield { type: 'text', text: 'hello' };
+    yield { type: 'done', message: { role: 'assistant', content: 'hello' } };
+  }
+}
+
 const primary: LlmCredentialSnapshot = {
   id: 'primary',
   provider: LlmProvider.openai,
@@ -183,6 +205,31 @@ describe('LLM provider failover (M7-8)', () => {
       await expect(run).rejects.toThrow('dropped');
       expect(seen).toEqual([{ type: 'text', text: 'Par' }]);
       expect(b.seenKeys).toEqual([]);
+    });
+
+    it('asks the same provider again once after a short-lived 5xx, before any text', async () => {
+      const a = new FlakyAdapter(1);
+      const out = await collect(
+        makeClient({ openai: a }).streamWith([primary], []),
+      );
+      expect(a.calls).toBe(2);
+      expect(out).toEqual([
+        { type: 'text', text: 'hello' },
+        {
+          type: 'done',
+          message: { role: 'assistant', content: 'hello' },
+          credentialId: 'primary',
+          model: 'm-a',
+        },
+      ]);
+    });
+
+    it('gives up after one more try when the 5xx lasts', async () => {
+      const a = new FlakyAdapter(5);
+      await expect(
+        collect(makeClient({ openai: a }).streamWith([primary], [])),
+      ).rejects.toThrow('overloaded');
+      expect(a.calls).toBe(2);
     });
 
     it('ends in AllLlmKeysExhaustedError when every provider fails', async () => {

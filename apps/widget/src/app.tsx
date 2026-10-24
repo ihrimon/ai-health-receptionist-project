@@ -117,7 +117,6 @@ function Chat({
       busy={chat.busy}
       brand={brand}
       showBranding={config.showBranding}
-      privacyUrl={config.privacyUrl}
       onSend={send}
       onSubmitLead={chat.submitLead}
       onClose={onClose}

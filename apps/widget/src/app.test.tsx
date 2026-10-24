@@ -61,7 +61,7 @@ describe("App: published config (M4-4)", () => {
     expect(header.style.background).toBe("rgb(250, 204, 21)");
     // Black text reads better on yellow.
     expect(header.style.color).toBe("rgb(0, 0, 0)");
-    expect(screen.queryByText(STRINGS.poweredBy)).toBeNull();
+    expect(screen.queryByRole("link", { name: STRINGS.brandName })).toBeNull();
     expect(document.title).toBe("Acme Bot");
   });
 
@@ -159,6 +159,37 @@ describe("App: streaming chat (M4-3)", () => {
     const user = await ready();
     await user.type(screen.getByLabelText(STRINGS.inputLabel), "Hours?{Enter}");
     expect(await screen.findByText(STRINGS.tooFast)).toBeTruthy();
+  });
+
+  it("asks once more when the server was not reached (a sleeping free-plan server)", async () => {
+    let sends = 0;
+    api({
+      send: () => {
+        sends += 1;
+        return sends === 1
+          ? json({ message: "Bad Gateway" }, 502)
+          : sseResponse([sse("delta", { text: "We open at 9." }), sse("done", { conversationId: "c1", answeredBy: "llm" })]);
+      },
+    });
+    const user = await ready();
+    await user.type(screen.getByLabelText(STRINGS.inputLabel), "Hours?{Enter}");
+    expect(await screen.findByText("We open at 9.", {}, { timeout: 3000 })).toBeTruthy();
+    expect(sends).toBe(2);
+    expect(screen.queryByText(STRINGS.somethingWrong)).toBeNull();
+  });
+
+  it("does not send the message again once the answer had started", async () => {
+    let sends = 0;
+    api({
+      send: () => {
+        sends += 1;
+        return sseResponse([sse("delta", { text: "We open" }), sse("error", { message: "Something went wrong. Please try again." })]);
+      },
+    });
+    const user = await ready();
+    await user.type(screen.getByLabelText(STRINGS.inputLabel), "Hours?{Enter}");
+    await screen.findByText(STRINGS.somethingWrong);
+    expect(sends).toBe(1);
   });
 
   it("holds the next message until the answer is complete", async () => {
