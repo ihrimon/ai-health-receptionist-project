@@ -192,7 +192,7 @@ export function PreviewChat({
           value={input}
           rows={1}
           placeholder="Ask something about your business…"
-          className="max-h-32 min-h-9 resize-none"
+          className="field-sizing-content max-h-40 min-h-9 resize-none [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === "Enter" && !e.shiftKey) {

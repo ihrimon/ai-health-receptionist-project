@@ -114,6 +114,44 @@ export async function apiFetch<T>(
   return text ? (JSON.parse(text) as T) : (undefined as T);
 }
 
+/**
+ * A multipart upload that reports how much has been sent (fetch can't). Same
+ * rules as apiFetch: cookies, the CSRF header, an ApiError with the API's own
+ * message on a refusal. `onProgress` gets 0 to 1.
+ */
+export function apiUpload<T>(
+  path: string,
+  form: FormData,
+  onProgress?: (fraction: number) => void,
+): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", `${API_BASE}${path}`);
+    xhr.withCredentials = true;
+    xhr.setRequestHeader("X-Requested-With", "fetch");
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) onProgress?.(e.loaded / e.total);
+    };
+    xhr.onerror = () => reject(new ApiError("Couldn't reach the server", 0));
+    xhr.onload = () => {
+      let body: { message?: string | string[] } | null = null;
+      try {
+        body = xhr.responseText ? JSON.parse(xhr.responseText) : null;
+      } catch {
+        body = null;
+      }
+      if (xhr.status >= 200 && xhr.status < 300) {
+        onProgress?.(1);
+        resolve(body as T);
+        return;
+      }
+      const message = Array.isArray(body?.message) ? body.message.join(", ") : body?.message;
+      reject(new ApiError(message ?? `API returned ${xhr.status}`, xhr.status));
+    };
+    xhr.send(form);
+  });
+}
+
 export type WorkspaceRole = "OWNER" | "ADMIN" | "VIEWER";
 
 /** GET /v1/auth/me (D-2 §2.1). */

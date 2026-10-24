@@ -106,7 +106,7 @@ export function useChat(publicId: string) {
 
     try {
       const chat = await conversation();
-      await widgetApi.send(chat, message, (event) => {
+      await sendRetrying(chat, message, (event) => {
         if (event.type === "delta") {
           answer += event.text;
           setWaiting(false);
@@ -181,6 +181,35 @@ export function useChat(publicId: string) {
   }
 
   return { messages, waiting, busy, send, answered, rated, ratingRequested, rate, submitLead };
+}
+
+/** Waiting before the one retry, long enough for a sleeping server to wake. */
+export const RETRY_DELAY_MS = 1500;
+
+/**
+ * Sends a message; if the request never got an answer from the API (no
+ * connection, or a gateway error while a free-plan server wakes up), asks
+ * once more. Never after the first event arrived: by then the message was
+ * received, and sending it again would answer it twice.
+ */
+async function sendRetrying(
+  chat: Conversation,
+  message: string,
+  onEvent: Parameters<typeof widgetApi.send>[2],
+): Promise<void> {
+  let received = false;
+  const seen: typeof onEvent = (event) => {
+    received = true;
+    onEvent(event);
+  };
+  try {
+    await widgetApi.send(chat, message, seen);
+  } catch (err) {
+    const notReached = err instanceof ApiError && [0, 502, 503, 504].includes(err.status);
+    if (received || !notReached) throw err;
+    await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
+    await widgetApi.send(chat, message, seen);
+  }
 }
 
 /** The conversation no longer exists for this visitor. */

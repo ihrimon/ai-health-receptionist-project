@@ -235,14 +235,14 @@ function PageEditor({
   const textarea = (
     <Textarea
       aria-label="Page content (Markdown)"
-      className="min-h-80 font-mono text-sm"
+      className="h-80 resize-none overflow-y-auto font-mono text-sm"
       value={content}
       readOnly={!canEdit}
       onChange={(e) => setContent(e.target.value)}
     />
   );
   const preview = (
-    <div className="min-h-80 overflow-y-auto rounded-lg border p-3">
+    <div className="h-80 overflow-y-auto rounded-lg border p-3">
       {content.trim() ? (
         <Markdown>{content}</Markdown>
       ) : (
@@ -253,7 +253,7 @@ function PageEditor({
 
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="sm:max-w-5xl">
+      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-5xl">
         <DialogHeader>
           <DialogTitle>{isNew ? "New page" : "Edit page"}</DialogTitle>
         </DialogHeader>
