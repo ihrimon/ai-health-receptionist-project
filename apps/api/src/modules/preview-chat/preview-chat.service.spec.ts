@@ -132,8 +132,8 @@ describe('PreviewChatService', () => {
         type: 'sources',
         sources: [{ title: 'Returns', page: 2, similarity: 0.81 }],
       },
-      { type: 'delta', text: '30 ' },
-      { type: 'delta', text: 'days.' },
+      { type: 'delta', text: '30' },
+      { type: 'delta', text: ' days.' },
       { type: 'done', conversationId: 'conv-1', answeredBy: 'llm' },
     ]);
     // The question is embedded once and shared by both searches.
