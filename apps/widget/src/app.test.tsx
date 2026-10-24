@@ -371,6 +371,39 @@ describe("App: rating (M5-7)", () => {
     expect(await screen.findByRole("region", { name: STRINGS.ratingQuestion })).toBeTruthy();
   });
 
+  it("shows the contact follow-up as its own bubble, then asks for the rating once it is answered", async () => {
+    let sends = 0;
+    api({
+      send: () => {
+        sends += 1;
+        return sends === 1
+          ? sseResponse([
+              sse("delta", { text: "Fill in the form." }),
+              sse("follow_up", { text: "Were you able to reach us?" }),
+              sse("done", { conversationId: "c1", answeredBy: "llm" }),
+            ])
+          : sseResponse([
+              sse("delta", { text: "Glad to hear it." }),
+              sse("rating_prompt", {}),
+              sse("done", { conversationId: "c1", answeredBy: "llm" }),
+            ]);
+      },
+    });
+    // A long quiet time: only the server's signal can bring the prompt here.
+    const user = await ready(60_000);
+    await user.type(screen.getByLabelText(STRINGS.inputLabel), "How do I get in touch?{Enter}");
+    await screen.findByText("Were you able to reach us?");
+    expect(bubbles().slice(-2)).toEqual([
+      ["assistant", "Fill in the form."],
+      ["assistant", "Were you able to reach us?"],
+    ]);
+    expect(prompt()).toBeNull();
+
+    await user.type(screen.getByLabelText(STRINGS.inputLabel), "Yes, done{Enter}");
+    await screen.findByText("Glad to hear it.");
+    expect(await screen.findByRole("region", { name: STRINGS.ratingQuestion })).toBeTruthy();
+  });
+
   it("'Skip for now' hides it without sending anything", async () => {
     const { requests } = api();
     const user = await ready(10);

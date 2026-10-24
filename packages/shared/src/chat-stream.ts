@@ -27,6 +27,17 @@ export type ChatStreamEvent =
    * (M7-41). Carries nothing: the form's fields are fixed.
    */
   | { type: 'lead_form' }
+  /**
+   * A second, separate bot message right after an answer that gave contact
+   * details: it asks whether the visitor got in touch. Stored in the
+   * conversation like any other message.
+   */
+  | { type: 'follow_up'; text: string }
+  /**
+   * The visitor has answered that follow-up: the widget may ask for the
+   * star rating now instead of waiting for the chat to go quiet.
+   */
+  | { type: 'rating_prompt' }
   /** The answer is complete. `conversationId` is null when nothing was stored. */
   | {
       type: 'done';

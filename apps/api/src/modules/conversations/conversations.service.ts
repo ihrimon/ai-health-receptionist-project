@@ -21,6 +21,8 @@ export interface AnswerDetails {
   latencyMs: number;
   /** Where the time went (M7-40). */
   timings: AnswerTimings;
+  /** A second bot message saved right after the answer (the contact follow-up). */
+  followUp?: string;
 }
 
 export interface RecordTurn {
@@ -160,6 +162,15 @@ export class ConversationsService {
         latencyMs: turn.answer.latencyMs,
         timings: turn.answer.timings as unknown as object,
       },
+      ...(turn.answer.followUp
+        ? [
+            {
+              role: MessageRole.ASSISTANT,
+              content: turn.answer.followUp,
+              createdAt: new Date(now.getTime() + 2),
+            },
+          ]
+        : []),
     ];
 
     // One transaction for the whole write (M7-32): one RLS round trip, not
@@ -175,7 +186,10 @@ export class ConversationsService {
             visitorId: turn.visitorId,
             isPreview: turn.isPreview,
           },
-          data: { messageCount: { increment: 2 }, lastMessageAt: now },
+          data: {
+            messageCount: { increment: messages.length },
+            lastMessageAt: now,
+          },
         });
         if (continued.count === 1) {
           await tx.message.createMany({
@@ -196,7 +210,7 @@ export class ConversationsService {
           visitorId: turn.visitorId,
           isPreview: turn.isPreview,
           versionId: turn.versionId ?? null,
-          messageCount: 2,
+          messageCount: messages.length,
           startedAt: now,
           lastMessageAt: now,
           messages: {

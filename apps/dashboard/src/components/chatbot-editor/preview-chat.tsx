@@ -83,6 +83,12 @@ export function PreviewChat({
         } else if (event.type === "handoff") {
           handoff = event;
           showAnswer(text);
+        } else if (event.type === "follow_up") {
+          // A second bot message right after the answer (it gave contact details).
+          setMessages((current) => [
+            ...current,
+            { role: "assistant", text: event.text },
+          ]);
         } else if (event.type === "done") {
           setConversationId(event.conversationId);
         } else if (event.type === "error") {
