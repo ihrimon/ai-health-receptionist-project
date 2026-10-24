@@ -154,7 +154,8 @@ function useRatingPrompt(chat: ReturnType<typeof useChat>, host: Host, idleMs: n
   }, [waiting, closed, idleMs]);
 
   return {
-    show: !chat.busy && !dismissed && (thanked || (asked && !chat.rated)),
+    // The visitor answering "were you able to reach us?" asks for it at once.
+    show: !chat.busy && !dismissed && (thanked || ((asked || chat.ratingRequested) && !chat.rated)),
     onRate: (stars: number) => {
       setThanked(true);
       void chat.rate(stars);

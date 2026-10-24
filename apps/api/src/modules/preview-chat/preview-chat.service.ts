@@ -32,6 +32,12 @@ import type {
 } from '../llm/providers/provider-adapter.types';
 import { AnswerTimer } from './answer-timer';
 import { wantsToBeContacted } from './contact-intent';
+import {
+  CONTACT_FOLLOW_UP,
+  followUpAsked,
+  givesContactDetails,
+  lastWasFollowUp,
+} from './contact-follow-up';
 import { EmDashFilter, withoutEmDashes } from './dash-filter';
 import {
   CAPTURE_LEAD_TOOL,
@@ -206,7 +212,33 @@ export class PreviewChatService {
       if (context.includeSources) emit({ type: 'sources', sources });
       timer.firstToken();
       if (!emit({ type: 'delta', text: custom.answer })) return;
+      // A custom answer with contact details gets the follow-up too (item 11).
+      let customFollowUp: string | undefined;
+      if (
+        givesContactDetails(
+          custom.answer,
+          config,
+          wantsToBeContacted(request.message),
+        )
+      ) {
+        const earlier = request.conversationId
+          ? await this.conversations.recentTurns(
+              {
+                conversationId: request.conversationId,
+                chatbotId: botId,
+                visitorId: context.visitorId,
+                isPreview: context.isPreview,
+              },
+              PREVIEW_CHAT_LIMITS.historyTurns,
+            )
+          : [];
+        if (!followUpAsked(earlier)) {
+          customFollowUp = CONTACT_FOLLOW_UP;
+          emit({ type: 'follow_up', text: customFollowUp });
+        }
+      }
       const conversationId = await this.store(botId, request, context, {
+        followUp: customFollowUp,
         content: custom.answer,
         sources,
         answeredBy: 'custom_answer',
@@ -228,7 +260,10 @@ export class PreviewChatService {
     // go to the model: they need no knowledge. A chatbot with products goes
     // on: the answer may come from the product tools (M3-8). So does one
     // with questions to ask: the message may be the visitor's answer (M5-4).
-    const smallTalk = isSmallTalk(request.message);
+    // The visitor is answering "were you able to reach us?": thank them, do
+    // not send them to the fallback for lack of a matching topic (item 11).
+    const answeringFollowUp = lastWasFollowUp(history);
+    const smallTalk = isSmallTalk(request.message) || answeringFollowUp;
     const hasLeadTool = LeadToolService.offered(config);
     // A visitor who wants to buy or book goes to the model even without a
     // knowledge match: it can show the contact form (M7-41).
@@ -419,7 +454,25 @@ export class PreviewChatService {
     }
     if (answeredBy === 'fallback') emitHandoff(config, emit);
 
+    // Item 11: the answer gave contact details, so a second message asks if
+    // the visitor got in touch (once per conversation); and once they have
+    // answered it, the widget may ask for the rating right away.
+    let followUp: string | undefined;
+    if (
+      answeredBy === 'llm' &&
+      !formShown &&
+      !followUpAsked(history) &&
+      givesContactDetails(reply, config, wantsContact)
+    ) {
+      followUp = CONTACT_FOLLOW_UP;
+      emit({ type: 'follow_up', text: followUp });
+    }
+    if (answeringFollowUp && answeredBy === 'llm') {
+      emit({ type: 'rating_prompt' });
+    }
+
     const conversationId = await this.store(botId, request, context, {
+      followUp,
       content: reply,
       sources: answerSources,
       answeredBy,

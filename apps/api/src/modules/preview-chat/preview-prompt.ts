@@ -77,6 +77,12 @@ export const ANSWER_STYLE = [
   '- Put prices, durations (such as /mo or per month) and service or plan ' +
     'names in **bold**. Bold nothing else.',
   '- Never use the em dash or the en dash. Use a comma or a full stop.',
+  '- When asked how to contact the business or get started, give the ways ' +
+    'as short bullets in this order, using only what you were given: the ' +
+    "business's own form (if any), its contact page, email, phone. Do not " +
+    'ask the visitor anything in that reply; a separate message does that.',
+  '- If the visitor answers "Were you able to fill in the form or reach ' +
+    'us?", thank them in one short sentence, and help if they could not.',
 ].join('\n');
 
 const TOOLS_RULE =
@@ -139,7 +145,14 @@ function companySettings(config: ChatbotConfig): string {
   }
   lines.push(`Prices are in ${business.currency}.`);
   const contact = business.contact;
+  // In the order they are offered: the business's own form or link, its
+  // website, then email and phone (review item 18).
+  const { handoff } = behavior;
   const contactLines = [
+    handoff.type === 'url' &&
+      handoff.value &&
+      `Contact form or page: ${handoff.value}`,
+    business.websiteUrl && `Website: ${business.websiteUrl}`,
     contact.email && `Email: ${contact.email}`,
     contact.phone && `Phone: ${contact.phone}`,
     contact.whatsapp && `WhatsApp: ${contact.whatsapp}`,
