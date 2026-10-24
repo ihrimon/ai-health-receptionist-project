@@ -4,13 +4,13 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "tsc --noEmit && vite build && pnpm build:loader",
+    "dev": "node init && vite",
+    "build": "node init && tsc --noEmit && vite build && pnpm build:loader",
     "preview": "vite preview",
     "lint": "eslint .",
     "test": "vitest run",
-    "build:loader": "vite build --config vite.loader.config.ts",
-    "build:loader:dashboard": "vite build --config vite.loader.config.ts --mode dashboard"
+    "build:loader": "node init && vite build --config vite.loader.config.ts",
+    "build:loader:dashboard": "node init && vite build --config vite.loader.config.ts --mode dashboard"
   },
   "packageManager": "pnpm@10.22.0",
   "dependencies": {
