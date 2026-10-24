@@ -9,8 +9,8 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
-    "dev": "tsc -p tsconfig.build.json --watch --preserveWatchOutput",
+    "build": "node init && tsc -p tsconfig.build.json",
+    "dev": "node init && tsc -p tsconfig.build.json --watch --preserveWatchOutput",
     "lint": "tsc --noEmit",
     "postinstall": "tsc -p tsconfig.build.json"
   },

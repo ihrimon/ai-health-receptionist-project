@@ -3,9 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "pnpm --filter widget build:loader:dashboard && next dev",
-    "build": "pnpm --filter widget build:loader:dashboard && next build",
-    "start": "next start",
+    "dev": "node init && pnpm --filter widget build:loader:dashboard && next dev",
+    "build": "node init && pnpm --filter widget build:loader:dashboard && next build",
+    "start": "node init && next start",
     "lint": "eslint",
     "test": "vitest run"
   },
