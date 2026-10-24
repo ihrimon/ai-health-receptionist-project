@@ -32,6 +32,7 @@ import type {
 } from '../llm/providers/provider-adapter.types';
 import { AnswerTimer } from './answer-timer';
 import { wantsToBeContacted } from './contact-intent';
+import { EmDashFilter, withoutEmDashes } from './dash-filter';
 import {
   CAPTURE_LEAD_TOOL,
   CONTACT_FORM_RESULT,
@@ -279,6 +280,7 @@ export class PreviewChatService {
             ? offeredTools
             : undefined;
         let roundText = '';
+        const dashes = new EmDashFilter();
         const endModel = timer.begin('llmMs');
         let toolCalls: NonNullable<
           Extract<
@@ -292,16 +294,17 @@ export class PreviewChatService {
           tools,
         )) {
           if (event.type === 'text') {
-            roundText += event.text;
+            const piece = dashes.push(event.text);
+            roundText += piece;
             // Held back only until a tool has found a product or saved a
             // lead: from then on the answer is grounded, so it streams like
             // any other.
             if (!needsToolData || grounded()) {
               streamed = true;
               timer.firstToken();
-              text += event.text;
+              text += piece;
               // The client has gone: stop, and store nothing.
-              if (!emit({ type: 'delta', text: event.text })) return;
+              if (piece && !emit({ type: 'delta', text: piece })) return;
             }
           } else {
             void this.keys.markUsed(event.credentialId);
@@ -316,7 +319,7 @@ export class PreviewChatService {
         endModel();
 
         if (toolCalls.length === 0) {
-          if (needsToolData && !streamed) text = roundText;
+          if (needsToolData && !streamed) text = withoutEmDashes(roundText);
           break;
         }
         messages.push({

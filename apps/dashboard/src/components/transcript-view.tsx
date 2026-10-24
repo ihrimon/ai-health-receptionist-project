@@ -1,5 +1,6 @@
 import type { ConversationMessage } from "@brainstack/shared";
 import { FileText, TriangleAlert } from "lucide-react";
+import { ChatMarkdown } from "@/components/chat-markdown";
 import { formatDateTime } from "@/lib/api";
 import { sourceLabel } from "@/lib/conversations";
 import { formatMs, speedTone, timingBreakdown } from "@/lib/response-time";
@@ -34,13 +35,13 @@ export function TranscriptView({ messages }: { messages: ConversationMessage[] }
             className={`flex flex-col gap-1 ${isUser ? "items-end" : "items-start"}`}
           >
             <div
-              className={`max-w-[85%] rounded-lg px-3 py-2 text-sm whitespace-pre-wrap break-words ${
+              className={`max-w-[85%] rounded-lg px-3 py-2 text-sm break-words ${
                 isUser
-                  ? "bg-primary text-primary-foreground"
+                  ? "whitespace-pre-wrap bg-primary text-primary-foreground"
                   : "border bg-card text-card-foreground"
               }`}
             >
-              {m.text}
+              {isUser ? m.text : <ChatMarkdown>{m.text}</ChatMarkdown>}
             </div>
             {!isUser && (how || m.sources.length > 0) && (
               <div className="flex max-w-[85%] flex-col gap-1 text-xs text-muted-foreground">

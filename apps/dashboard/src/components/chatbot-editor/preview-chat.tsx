@@ -3,6 +3,7 @@
 import type { PreviewChatSource } from "@brainstack/shared";
 import { Info, RotateCcw, Send } from "lucide-react";
 import { type FormEvent, useEffect, useRef, useState } from "react";
+import { ChatMarkdown } from "@/components/chat-markdown";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import {
@@ -214,16 +215,19 @@ function Bubble({
   role: PreviewMessage["role"];
   children: React.ReactNode;
 }) {
+  // An answer is Markdown (bold prices, short lists); what the visitor typed is not.
+  const markdown = role === "assistant" && typeof children === "string";
   return (
     <div
       className={cn(
-        "w-fit max-w-[85%] rounded-2xl px-3 py-2 whitespace-pre-wrap",
+        "w-fit max-w-[85%] rounded-2xl px-3 py-2",
+        !markdown && "whitespace-pre-wrap",
         role === "user"
           ? "ml-auto bg-primary text-primary-foreground"
           : "bg-muted",
       )}
     >
-      {children}
+      {markdown ? <ChatMarkdown>{children}</ChatMarkdown> : children}
     </div>
   );
 }
