@@ -156,6 +156,9 @@ function companySettings(config: ChatbotConfig): string {
     contact.email && `Email: ${contact.email}`,
     contact.phone && `Phone: ${contact.phone}`,
     contact.whatsapp && `WhatsApp: ${contact.whatsapp}`,
+    contact.facebook && `Facebook: ${contact.facebook}`,
+    contact.linkedin && `LinkedIn: ${contact.linkedin}`,
+    contact.instagram && `Instagram: ${contact.instagram}`,
     contact.address && `Address: ${contact.address}`,
     contact.hours && `Opening hours: ${contact.hours}`,
   ].filter((line): line is string => Boolean(line));

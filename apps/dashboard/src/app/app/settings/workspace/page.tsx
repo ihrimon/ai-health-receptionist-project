@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -12,6 +12,13 @@ import {
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Table,
@@ -23,6 +30,7 @@ import {
 } from "@/components/ui/table";
 import { ApiError, formatDateTime } from "@/lib/api";
 import { EMAIL_FEATURES_ENABLED } from "@/lib/features";
+import { TIME_ZONES, withSaved } from "@/lib/select-options";
 import { useSession } from "@/lib/session";
 import { toastError, toastSuccess } from "@/lib/toast";
 import {
@@ -31,7 +39,6 @@ import {
   PLAN_NAMES,
   passwordProblem,
   ROLE_LABELS,
-  timeZoneNames,
   workspaceSettingsApi,
   type ProfileForm,
   type WorkspaceMember,
@@ -71,7 +78,6 @@ function WorkspaceCard({ isOwner }: { isOwner: boolean }) {
   const [profile, setProfile] = useState<WorkspaceProfile | null>(null);
   const [form, setForm] = useState<ProfileForm | null>(null);
   const [saving, setSaving] = useState(false);
-  const zones = useMemo(() => timeZoneNames(), []);
 
   useEffect(() => {
     let cancelled = false;
@@ -189,19 +195,24 @@ function WorkspaceCard({ isOwner }: { isOwner: boolean }) {
             </Field>
           </div>
           <Field id="ws-timezone" label="Time zone">
-            <Input
-              id="ws-timezone"
-              list="ws-timezones"
-              maxLength={64}
-              disabled={!isOwner}
+            <Select
+              items={withSaved(TIME_ZONES, form.timeZone)}
               value={form.timeZone}
-              onChange={(e) => set("timeZone")(e.target.value)}
-            />
-            <datalist id="ws-timezones">
-              {zones.map((z) => (
-                <option key={z} value={z} />
-              ))}
-            </datalist>
+              disabled={!isOwner}
+              onValueChange={(v) => set("timeZone")(v as string)}
+            >
+              <SelectTrigger id="ws-timezone" className="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {withSaved(TIME_ZONES, form.timeZone).map((z) => (
+                  <SelectItem key={z.value} value={z.value}>
+                    <span>{z.label}</span>
+                    <span className="text-muted-foreground">{z.description}</span>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </Field>
           {isOwner && (
             <Button type="submit" disabled={saving || !changes} className="w-fit">
