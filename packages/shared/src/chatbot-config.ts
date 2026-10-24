@@ -25,6 +25,12 @@ const email = z.email().max(200);
 
 const httpsUrl = z.url({ protocol: /^https$/ }).max(500);
 
+/**
+ * A social profile link. The key may be missing, so a chatbot saved before
+ * these fields existed is still valid.
+ */
+const socialLink = optional(z.url({ protocol: /^https?$/ }).max(200)).optional();
+
 const topicList = z.array(text(1, 80)).max(20);
 
 export const TONES = ['friendly', 'professional', 'casual'] as const;
@@ -129,6 +135,9 @@ export const chatbotConfigSchema = z.strictObject({
       email: optional(email),
       phone: optional(phone),
       whatsapp: optional(phone),
+      facebook: socialLink,
+      linkedin: socialLink,
+      instagram: socialLink,
       address: optional(text(1, 200, true)),
       hours: optional(text(1, 200)),
     }),
