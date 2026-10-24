@@ -21,66 +21,83 @@ import {
 } from "@/lib/knowledge";
 import { useSession } from "@/lib/session";
 
-interface Lists {
-  faqs: Faq[];
-  customAnswers: CustomAnswer[];
-  sources: KnowledgeSource[];
-}
+type TabId = "faqs" | "pages" | "custom" | "documents";
 
-const loadAll = async (): Promise<Lists> => {
-  const [faqs, customAnswers, sources] = await Promise.all([
-    knowledgeApi.listFaqs(),
-    knowledgeApi.listCustomAnswers(),
-    knowledgeApi.listSources(),
-  ]);
-  return { faqs, customAnswers, sources };
-};
+/** Policies & info and Documents are both read from the sources list. */
+const listOf = (tab: TabId) =>
+  tab === "faqs" ? "faqs" : tab === "custom" ? "custom" : "sources";
 
 /**
  * Knowledge base (D-3 §3.3, M2-19): FAQs, policy/info pages, custom
  * answers and documents. Every change is live at once (only the chatbot
  * settings have a draft); the publish banner refreshes, since the first
  * FAQ or policy is what makes publishing possible.
+ *
+ * Only the open tab's list is loaded (the others when the tab is first
+ * opened), so the page starts with one request instead of three.
  */
 export default function KnowledgePage() {
   const { me } = useSession();
+  // A new workspace starts again from the first tab.
+  return <KnowledgeView key={me.activeWorkspace?.id} />;
+}
+
+function KnowledgeView() {
+  const { me } = useSession();
   const { refresh: refreshChatbot } = useChatbot();
   const canEdit = me.role === "OWNER" || me.role === "ADMIN";
-  const [lists, setLists] = useState<Lists | null>(null);
+  const [tab, setTab] = useState<TabId>("faqs");
+  const [faqs, setFaqs] = useState<Faq[] | null>(null);
+  const [customAnswers, setCustomAnswers] = useState<CustomAnswer[] | null>(null);
+  const [sources, setSources] = useState<KnowledgeSource[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [attempt, setAttempt] = useState(0);
 
+  const list = listOf(tab);
+  const loaded =
+    list === "faqs" ? faqs !== null : list === "custom" ? customAnswers !== null : sources !== null;
+
+  /** (Re)loads the list behind a tab. */
+  const load = useCallback(
+    (which: ReturnType<typeof listOf>): Promise<void> =>
+      which === "faqs"
+        ? knowledgeApi.listFaqs().then(setFaqs)
+        : which === "custom"
+          ? knowledgeApi.listCustomAnswers().then(setCustomAnswers)
+          : knowledgeApi.listSources().then(setSources),
+    [],
+  );
+
+  // Load the open tab's list the first time it is needed (or on "Try again").
   useEffect(() => {
+    if (loaded) return;
     let cancelled = false;
-    loadAll().then(
-      (loaded) => !cancelled && setLists(loaded),
-      (err: unknown) => !cancelled && setError((err as Error).message),
-    );
+    load(list).catch((err: unknown) => {
+      if (!cancelled) setError((err as Error).message);
+    });
     return () => {
       cancelled = true;
     };
-  }, [attempt, me.activeWorkspace?.id]);
+  }, [list, loaded, load, attempt]);
 
-  /** Reloads after a change, and lets the banner re-check publishing. */
+  /** Reloads the open tab after a change, and lets the banner re-check publishing. */
   const changed = useCallback(async () => {
-    setLists(await loadAll());
+    await load(list);
     await refreshChatbot().catch(() => {});
-  }, [refreshChatbot]);
+  }, [load, list, refreshChatbot]);
 
   /** A stored document appears in the list at once, before the next upload starts. */
   const addSource = useCallback(
     (source: KnowledgeSource) =>
-      setLists((l) =>
-        l && !l.sources.some((s) => s.id === source.id)
-          ? { ...l, sources: [...l.sources, source] }
-          : l,
+      setSources((s) =>
+        s && !s.some((x) => x.id === source.id) ? [...s, source] : s,
       ),
     [],
   );
 
   // While a source is being indexed, check its status: every 3 s at first,
   // slower while nothing changes, and not at all while the tab is hidden.
-  const polling = lists ? needsPolling(lists.sources) : false;
+  const polling = sources ? needsPolling(sources) : false;
   useEffect(() => {
     if (!polling) return;
     let cancelled = false;
@@ -94,12 +111,12 @@ export default function KnowledgePage() {
       }
       knowledgeApi
         .listSources()
-        .then((sources) => {
+        .then((next) => {
           if (cancelled) return;
-          const now = statusSignature(sources);
+          const now = statusSignature(next);
           unchanged = now === last ? unchanged + 1 : 0;
           last = now;
-          setLists((l) => (l ? { ...l, sources } : l));
+          setSources(next);
         })
         .catch(() => {
           unchanged += 1;
@@ -115,32 +132,33 @@ export default function KnowledgePage() {
     };
   }, [polling]);
 
-  if (!lists) {
-    return error ? (
-      <div className="flex flex-1 flex-col items-center justify-center gap-3 p-4 text-center">
-        <p className="text-sm text-muted-foreground">
-          Couldn&apos;t load your knowledge base: {error}
-        </p>
-        <Button
-          variant="outline"
-          onClick={() => {
-            setError(null);
-            setAttempt((n) => n + 1);
-          }}
-        >
-          Try again
-        </Button>
-      </div>
-    ) : (
-      <div className="mx-auto grid w-full max-w-4xl gap-4 p-4 sm:p-6">
-        <Skeleton className="h-8 w-2/3" />
-        <Skeleton className="h-64 w-full" />
-      </div>
-    );
-  }
+  const pages = sources?.filter((s) => s.type === "POLICY" || s.type === "TEXT");
+  const documents = sources?.filter((s) => s.type === "DOCUMENT");
+  /** Tab titles show a count once that list has been loaded. */
+  const count = (n: number | undefined) => (n === undefined ? "" : ` (${n})`);
 
-  const pages = lists.sources.filter((s) => s.type === "POLICY" || s.type === "TEXT");
-  const documents = lists.sources.filter((s) => s.type === "DOCUMENT");
+  const loading = (
+    <div className="grid gap-4 py-2">
+      <Skeleton className="h-8 w-2/3" />
+      <Skeleton className="h-64 w-full" />
+    </div>
+  );
+  const failed = error && !loaded && (
+    <div className="flex flex-col items-center justify-center gap-3 p-4 text-center">
+      <p className="text-sm text-muted-foreground">
+        Couldn&apos;t load your knowledge base: {error}
+      </p>
+      <Button
+        variant="outline"
+        onClick={() => {
+          setError(null);
+          setAttempt((n) => n + 1);
+        }}
+      >
+        Try again
+      </Button>
+    </div>
+  );
 
   return (
     <div className="mx-auto grid w-full max-w-4xl gap-4 p-4 sm:p-6">
@@ -151,46 +169,68 @@ export default function KnowledgePage() {
         </p>
       </div>
 
-      <Tabs defaultValue="faqs">
+      <Tabs
+        value={tab}
+        onValueChange={(next) => {
+          setError(null);
+          setTab(next as TabId);
+        }}
+      >
         <TabsList className="h-auto w-full flex-wrap justify-start sm:w-fit">
-          <TabsTrigger value="faqs">FAQs ({lists.faqs.length})</TabsTrigger>
-          <TabsTrigger value="pages">Policies &amp; info ({pages.length})</TabsTrigger>
+          <TabsTrigger value="faqs">FAQs{count(faqs?.length)}</TabsTrigger>
+          <TabsTrigger value="pages">Policies &amp; info{count(pages?.length)}</TabsTrigger>
           <TabsTrigger value="custom">
-            Custom answers ({lists.customAnswers.length})
+            Custom answers{count(customAnswers?.length)}
           </TabsTrigger>
-          <TabsTrigger value="documents">Documents ({documents.length})</TabsTrigger>
+          <TabsTrigger value="documents">Documents{count(documents?.length)}</TabsTrigger>
         </TabsList>
         <TabsContent value="faqs">
-          <FaqsTab
-            faqs={lists.faqs}
-            max={KNOWLEDGE_LIMITS.faqs}
-            canEdit={canEdit}
-            onChanged={changed}
-          />
+          {faqs ? (
+            <FaqsTab
+              faqs={faqs}
+              max={KNOWLEDGE_LIMITS.faqs}
+              canEdit={canEdit}
+              onChanged={changed}
+            />
+          ) : (
+            (failed ?? loading)
+          )}
         </TabsContent>
         <TabsContent value="pages">
-          <PoliciesTab
-            pages={pages}
-            max={KNOWLEDGE_LIMITS.textSources}
-            canEdit={canEdit}
-            onChanged={changed}
-          />
+          {pages ? (
+            <PoliciesTab
+              pages={pages}
+              max={KNOWLEDGE_LIMITS.textSources}
+              canEdit={canEdit}
+              onChanged={changed}
+            />
+          ) : (
+            (failed ?? loading)
+          )}
         </TabsContent>
         <TabsContent value="custom">
-          <CustomAnswersTab
-            answers={lists.customAnswers}
-            max={KNOWLEDGE_LIMITS.customAnswers}
-            canEdit={canEdit}
-            onChanged={changed}
-          />
+          {customAnswers ? (
+            <CustomAnswersTab
+              answers={customAnswers}
+              max={KNOWLEDGE_LIMITS.customAnswers}
+              canEdit={canEdit}
+              onChanged={changed}
+            />
+          ) : (
+            (failed ?? loading)
+          )}
         </TabsContent>
         <TabsContent value="documents">
-          <DocumentsTab
-            documents={documents}
-            canEdit={canEdit}
-            onChanged={changed}
-            onUploaded={addSource}
-          />
+          {documents ? (
+            <DocumentsTab
+              documents={documents}
+              canEdit={canEdit}
+              onChanged={changed}
+              onUploaded={addSource}
+            />
+          ) : (
+            (failed ?? loading)
+          )}
         </TabsContent>
       </Tabs>
     </div>

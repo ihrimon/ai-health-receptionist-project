@@ -76,7 +76,7 @@ describe("checkUpload", () => {
 
 describe("statusBadge and needsPolling", () => {
   it("labels each status", () => {
-    expect(statusBadge("QUEUED")).toEqual({ label: "Queued", tone: "neutral" });
+    expect(statusBadge("QUEUED")).toEqual({ label: "Processing…", tone: "busy" });
     expect(statusBadge("PROCESSING").tone).toBe("busy");
     expect(statusBadge("READY")).toEqual({ label: "Ready", tone: "ok" });
     expect(statusBadge("FAILED").tone).toBe("error");

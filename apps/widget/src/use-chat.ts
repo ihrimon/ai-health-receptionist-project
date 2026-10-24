@@ -29,11 +29,14 @@ export function useChat(publicId: string) {
   /** The conversation has at least one complete answer from the bot. */
   const [answered, setAnswered] = useState(false);
   const [rated, setRated] = useState(false);
+  /** The server says the visitor has answered the follow-up: ask for the rating now. */
+  const [ratingRequested, setRatingRequested] = useState(false);
 
   const forget = () => {
     conversationRef.current = null;
     setAnswered(false);
     setRated(false);
+    setRatingRequested(false);
     const { visitorId } = loadStored(publicId);
     saveStored(publicId, { visitorId });
   };
@@ -89,6 +92,7 @@ export function useChat(publicId: string) {
     let answer = "";
     let handoff: Handoff | undefined;
     let leadForm = false;
+    let followUp = "";
     let streaming = true;
     setMessages((current) => [...current, { id: newId(), role: "user", text: message }]);
 
@@ -102,7 +106,7 @@ export function useChat(publicId: string) {
 
     try {
       const chat = await conversation();
-      await widgetApi.send(chat, message, (event) => {
+      await sendRetrying(chat, message, (event) => {
         if (event.type === "delta") {
           answer += event.text;
           setWaiting(false);
@@ -113,6 +117,11 @@ export function useChat(publicId: string) {
         } else if (event.type === "lead_form") {
           // The visitor wants to buy or book: the contact form comes with this answer.
           leadForm = true;
+        } else if (event.type === "follow_up") {
+          // A second message right after this answer (it gave contact details).
+          followUp = event.text;
+        } else if (event.type === "rating_prompt") {
+          setRatingRequested(true);
         } else if (event.type === "error") {
           throw new ApiError(event.message, 200);
         }
@@ -121,6 +130,9 @@ export function useChat(publicId: string) {
       // Complete: the end is no longer cut mid-mark, and the handoff shows.
       streaming = false;
       showAnswer();
+      if (followUp) {
+        setMessages((current) => [...current, { id: newId(), role: "assistant", text: followUp }]);
+      }
       setAnswered(true);
     } catch (err) {
       if (isGone(err)) forget();
@@ -168,7 +180,36 @@ export function useChat(publicId: string) {
     await widgetApi.rate(chat, stars).catch(() => undefined);
   }
 
-  return { messages, waiting, busy, send, answered, rated, rate, submitLead };
+  return { messages, waiting, busy, send, answered, rated, ratingRequested, rate, submitLead };
+}
+
+/** Waiting before the one retry, long enough for a sleeping server to wake. */
+export const RETRY_DELAY_MS = 1500;
+
+/**
+ * Sends a message; if the request never got an answer from the API (no
+ * connection, or a gateway error while a free-plan server wakes up), asks
+ * once more. Never after the first event arrived: by then the message was
+ * received, and sending it again would answer it twice.
+ */
+async function sendRetrying(
+  chat: Conversation,
+  message: string,
+  onEvent: Parameters<typeof widgetApi.send>[2],
+): Promise<void> {
+  let received = false;
+  const seen: typeof onEvent = (event) => {
+    received = true;
+    onEvent(event);
+  };
+  try {
+    await widgetApi.send(chat, message, seen);
+  } catch (err) {
+    const notReached = err instanceof ApiError && [0, 502, 503, 504].includes(err.status);
+    if (received || !notReached) throw err;
+    await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
+    await widgetApi.send(chat, message, seen);
+  }
 }
 
 /** The conversation no longer exists for this visitor. */

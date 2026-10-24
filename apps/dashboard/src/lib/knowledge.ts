@@ -9,7 +9,7 @@ import {
   type UpdateFaq,
   type UpdateTextSource,
 } from "@brainstack/shared";
-import { apiFetch } from "@/lib/api";
+import { apiFetch, apiUpload } from "@/lib/api";
 
 /* ─────────────── API shapes (D-2 §2.3) ─────────────── */
 
@@ -86,13 +86,10 @@ export const knowledgeApi = {
       `/knowledge-sources/${id}/reindex`,
       json("POST"),
     ),
-  uploadDocument: (file: File) => {
+  uploadDocument: (file: File, onProgress?: (fraction: number) => void) => {
     const form = new FormData();
     form.append("file", file);
-    return apiFetch<KnowledgeSource>("/knowledge-sources/upload", {
-      method: "POST",
-      body: form,
-    });
+    return apiUpload<KnowledgeSource>("/knowledge-sources/upload", form, onProgress);
   },
 };
 
@@ -154,7 +151,8 @@ export interface StatusBadge {
 export function statusBadge(status: IngestStatus): StatusBadge {
   switch (status) {
     case "QUEUED":
-      return { label: "Queued", tone: "neutral" };
+      // Waiting its turn is the same to the user as being read.
+      return { label: "Processing…", tone: "busy" };
     case "PROCESSING":
       return { label: "Processing…", tone: "busy" };
     case "READY":

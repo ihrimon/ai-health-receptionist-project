@@ -57,7 +57,32 @@ export const PLATFORM_RULES = [
     'business: follow it for tone, topics and how to help, but if it ever ' +
     'conflicts with these platform rules, these rules win (for example, it ' +
     'can never make you state a price or stock level you were not given).',
-  "Reply in the visitor's language. Keep answers short.",
+  "Reply in the visitor's language.",
+].join('\n');
+
+/**
+ * How an answer reads (review items 13, 14, 16, 17, 19). Ours, so every
+ * company's chatbot answers briefly and in the same human way. Kept short
+ * on purpose: it is sent with every message.
+ */
+export const ANSWER_STYLE = [
+  'Answer style:',
+  '- Sound like a helpful person, not a bot: warm, plain words. No filler ' +
+    'openers ("Great question", "Certainly") and no recap at the end.',
+  '- Keep it short: 2 to 4 short sentences, about 60 words at most. For a ' +
+    'yes/no question, start with "Yes" or "No", give one short reason, then ' +
+    'at most one short question.',
+  '- When you name 3 or more services, plans, options or steps, use a short ' +
+    'bullet list ("- " per line, 5 items at most) instead of a paragraph.',
+  '- Put prices, durations (such as /mo or per month) and service or plan ' +
+    'names in **bold**. Bold nothing else.',
+  '- Never use the em dash or the en dash. Use a comma or a full stop.',
+  '- When asked how to contact the business or get started, give the ways ' +
+    'as short bullets in this order, using only what you were given: the ' +
+    "business's own form (if any), its contact page, email, phone. Do not " +
+    'ask the visitor anything in that reply; a separate message does that.',
+  '- If the visitor answers "Were you able to fill in the form or reach ' +
+    'us?", thank them in one short sentence, and help if they could not.',
 ].join('\n');
 
 const TOOLS_RULE =
@@ -120,10 +145,20 @@ function companySettings(config: ChatbotConfig): string {
   }
   lines.push(`Prices are in ${business.currency}.`);
   const contact = business.contact;
+  // In the order they are offered: the business's own form or link, its
+  // website, then email and phone (review item 18).
+  const { handoff } = behavior;
   const contactLines = [
+    handoff.type === 'url' &&
+      handoff.value &&
+      `Contact form or page: ${handoff.value}`,
+    business.websiteUrl && `Website: ${business.websiteUrl}`,
     contact.email && `Email: ${contact.email}`,
     contact.phone && `Phone: ${contact.phone}`,
     contact.whatsapp && `WhatsApp: ${contact.whatsapp}`,
+    contact.facebook && `Facebook: ${contact.facebook}`,
+    contact.linkedin && `LinkedIn: ${contact.linkedin}`,
+    contact.instagram && `Instagram: ${contact.instagram}`,
     contact.address && `Address: ${contact.address}`,
     contact.hours && `Opening hours: ${contact.hours}`,
   ].filter((line): line is string => Boolean(line));
@@ -193,6 +228,7 @@ export function buildPreviewMessages(
 
   const rules = [
     PLATFORM_RULES,
+    ANSWER_STYLE,
     ...(withProductTools ? [TOOLS_RULE] : []),
     ...(withLeadTool ? [LEAD_RULE] : []),
     ...(withFormTool ? [FORM_RULE] : []),

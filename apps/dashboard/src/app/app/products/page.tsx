@@ -34,6 +34,7 @@ import {
   stockLabel,
 } from "@/lib/products";
 import { useSession } from "@/lib/session";
+import { useDebounced } from "@/lib/use-debounced";
 import { toastError, toastSuccess } from "@/lib/toast";
 
 const PAGE_SIZE = 25;
@@ -58,27 +59,21 @@ export default function ProductsPage() {
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState("");
   const [active, setActive] = useState("all");
-  const [query, setQuery] = useState<ProductQuery>({});
+  // Typing settles before searching.
+  const query: ProductQuery = useDebounced(
+    {
+      q: search,
+      category,
+      isActive: active === "all" ? undefined : active === "true",
+    },
+    SEARCH_DELAY_MS,
+  );
   const [items, setItems] = useState<Product[] | null>(null);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
   const [editing, setEditing] = useState<Product | "new" | null>(null);
   const [deleting, setDeleting] = useState<Product | null>(null);
   const [importing, setImporting] = useState(false);
-
-  // Typing settles before searching.
-  useEffect(() => {
-    const timer = setTimeout(
-      () =>
-        setQuery({
-          q: search,
-          category,
-          isActive: active === "all" ? undefined : active === "true",
-        }),
-      SEARCH_DELAY_MS,
-    );
-    return () => clearTimeout(timer);
-  }, [search, category, active]);
 
   const loadFirst = useCallback(async () => {
     const page = await productsApi.list({ ...query, limit: PAGE_SIZE });

@@ -1,9 +1,25 @@
 "use client";
 
 import type { ChatbotConfig } from "@brainstack/shared";
+import { useState } from "react";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import type { FieldErrors } from "@/lib/config-form";
+import {
+  CURRENCIES,
+  firstSocial,
+  SOCIAL,
+  SOCIAL_KINDS,
+  type SocialKind,
+  withSaved,
+} from "@/lib/select-options";
 import { Section } from "./section";
-import { TextAreaField, TextField } from "./fields";
+import { Field, TextAreaField, TextField } from "./fields";
 
 export interface TabProps {
   draft: ChatbotConfig;
@@ -16,6 +32,9 @@ export interface TabProps {
 export function GeneralTab({ draft, edit, errors }: TabProps) {
   const { identity, business } = draft;
   const contact = business.contact;
+  // Every social contact keeps its own value; the select picks which one is edited.
+  const [social, setSocial] = useState<SocialKind>(() => firstSocial(contact));
+  const currencies = withSaved(CURRENCIES, business.currency);
   return (
     <>
       <Section title="Bot">
@@ -35,9 +54,6 @@ export function GeneralTab({ draft, edit, errors }: TabProps) {
           error={errors["identity.welcomeMessage"]}
           onChange={(v) => edit((d) => void (d.identity.welcomeMessage = v))}
         />
-        <p className="text-xs text-muted-foreground">
-          Uploading an avatar comes with image uploads later.
-        </p>
       </Section>
 
       <Section
@@ -70,15 +86,26 @@ export function GeneralTab({ draft, edit, errors }: TabProps) {
             error={errors["business.websiteUrl"]}
             onChange={(v) => edit((d) => void (d.business.websiteUrl = v))}
           />
-          <TextField
-            label="Currency"
-            hint="e.g. BDT, USD"
-            value={business.currency}
-            error={errors["business.currency"]}
-            onChange={(v) =>
-              edit((d) => void (d.business.currency = v.toUpperCase()))
-            }
-          />
+          <Field label="Currency" error={errors["business.currency"]}>
+            <Select
+              items={currencies}
+              value={business.currency}
+              onValueChange={(v) =>
+                edit((d) => void (d.business.currency = v as string))
+              }
+            >
+              <SelectTrigger className="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {currencies.map((c) => (
+                  <SelectItem key={c.value} value={c.value}>
+                    {c.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </Field>
         </div>
       </Section>
 
@@ -101,15 +128,37 @@ export function GeneralTab({ draft, edit, errors }: TabProps) {
             error={errors["business.contact.phone"]}
             onChange={(v) => edit((d) => void (d.business.contact.phone = v))}
           />
-          <TextField
-            label="WhatsApp"
-            type="tel"
-            value={contact.whatsapp}
-            error={errors["business.contact.whatsapp"]}
-            onChange={(v) =>
-              edit((d) => void (d.business.contact.whatsapp = v))
-            }
-          />
+          <div className="grid gap-4 sm:col-span-2 sm:grid-cols-[12rem_1fr]">
+            <Field label="Social Contact">
+              <Select
+                items={SOCIAL_KINDS.map((k) => ({ value: k, label: SOCIAL[k].label }))}
+                value={social}
+                onValueChange={(v) => setSocial(v as SocialKind)}
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {SOCIAL_KINDS.map((k) => (
+                    <SelectItem key={k} value={k}>
+                      {SOCIAL[k].label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </Field>
+            <TextField
+              key={social}
+              label={SOCIAL[social].field}
+              type={SOCIAL[social].type}
+              placeholder={SOCIAL[social].placeholder}
+              value={contact[social] ?? null}
+              error={errors[`business.contact.${social}`]}
+              onChange={(v) =>
+                edit((d) => void (d.business.contact[social] = v))
+              }
+            />
+          </div>
           <TextField
             label="Opening hours"
             placeholder="Sat–Thu 10am–8pm"

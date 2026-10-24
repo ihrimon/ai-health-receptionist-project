@@ -3,6 +3,7 @@
 import type { PreviewChatSource } from "@brainstack/shared";
 import { Info, RotateCcw, Send } from "lucide-react";
 import { type FormEvent, useEffect, useRef, useState } from "react";
+import { ChatMarkdown } from "@/components/chat-markdown";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import {
@@ -82,6 +83,12 @@ export function PreviewChat({
         } else if (event.type === "handoff") {
           handoff = event;
           showAnswer(text);
+        } else if (event.type === "follow_up") {
+          // A second bot message right after the answer (it gave contact details).
+          setMessages((current) => [
+            ...current,
+            { role: "assistant", text: event.text },
+          ]);
         } else if (event.type === "done") {
           setConversationId(event.conversationId);
         } else if (event.type === "error") {
@@ -185,7 +192,7 @@ export function PreviewChat({
           value={input}
           rows={1}
           placeholder="Ask something about your business…"
-          className="max-h-32 min-h-9 resize-none"
+          className="field-sizing-content max-h-40 min-h-9 resize-none [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === "Enter" && !e.shiftKey) {
@@ -214,16 +221,19 @@ function Bubble({
   role: PreviewMessage["role"];
   children: React.ReactNode;
 }) {
+  // An answer is Markdown (bold prices, short lists); what the visitor typed is not.
+  const markdown = role === "assistant" && typeof children === "string";
   return (
     <div
       className={cn(
-        "w-fit max-w-[85%] rounded-2xl px-3 py-2 whitespace-pre-wrap",
+        "w-fit max-w-[85%] rounded-2xl px-3 py-2",
+        !markdown && "whitespace-pre-wrap",
         role === "user"
           ? "ml-auto bg-primary text-primary-foreground"
           : "bg-muted",
       )}
     >
-      {children}
+      {markdown ? <ChatMarkdown>{children}</ChatMarkdown> : children}
     </div>
   );
 }

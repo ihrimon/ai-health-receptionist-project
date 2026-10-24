@@ -12,6 +12,7 @@ import { KnowledgeService } from '../knowledge/knowledge.service';
 import { TENANT_PRISMA } from '../../tenancy/tenant-prisma';
 import { UsageService } from '../usage/usage.service';
 import { LeadsService } from '../leads/leads.service';
+import { CONTACT_FOLLOW_UP } from './contact-follow-up';
 import { LeadToolService } from './lead-tool.service';
 import { ProductToolsService } from './product-tools.service';
 import { LlmKeysService } from '../llm-keys/llm-keys.service';
@@ -124,6 +125,65 @@ describe('PreviewChatService', () => {
       emit,
     );
 
+  describe('the contact follow-up (item 11)', () => {
+    const contactAnswer = () =>
+      llm.streamWith.mockImplementation(() =>
+        llmStream(['Fill in the form: https://forms.test/abc']),
+      );
+    const getInTouch = (conversationId?: string) =>
+      service.send(
+        'user-1',
+        { message: 'I want to get in touch', history: [], conversationId },
+        emit,
+      );
+
+    it('sends a second message after an answer with contact details, and stores it', async () => {
+      contactAnswer();
+      await getInTouch();
+
+      expect(events.filter((e) => e.type === 'follow_up')).toEqual([
+        { type: 'follow_up', text: CONTACT_FOLLOW_UP },
+      ]);
+      const [turn] = conversations.recordTurn.mock.calls[0] as [
+        { answer: { followUp?: string } },
+      ];
+      expect(turn.answer.followUp).toBe(CONTACT_FOLLOW_UP);
+    });
+
+    it('asks only once per conversation', async () => {
+      contactAnswer();
+      conversations.recentTurns.mockResolvedValue([
+        { role: 'assistant', text: CONTACT_FOLLOW_UP },
+        { role: 'user', text: 'ok' },
+        { role: 'assistant', text: 'Glad to help.' },
+      ]);
+      await getInTouch('conv-1');
+
+      expect(events.some((e) => e.type === 'follow_up')).toBe(false);
+    });
+
+    it('lets the widget ask for the rating once the visitor has answered it', async () => {
+      // Nothing in the knowledge matches "yes, done", yet it is not a fallback.
+      knowledge.search.mockResolvedValue([]);
+      conversations.recentTurns.mockResolvedValue([
+        { role: 'assistant', text: CONTACT_FOLLOW_UP },
+      ]);
+      llm.streamWith.mockImplementation(() => llmStream(['Great, thank you!']));
+      await service.send(
+        'user-1',
+        { message: 'yes, done', history: [], conversationId: 'conv-1' },
+        emit,
+      );
+
+      expect(events.some((e) => e.type === 'rating_prompt')).toBe(true);
+      expect(events.at(-1)).toEqual({
+        type: 'done',
+        conversationId: 'conv-1',
+        answeredBy: 'llm',
+      });
+    });
+  });
+
   it('streams the answer piece by piece, with its sources first and a done at the end', async () => {
     await send();
 
@@ -132,8 +192,8 @@ describe('PreviewChatService', () => {
         type: 'sources',
         sources: [{ title: 'Returns', page: 2, similarity: 0.81 }],
       },
-      { type: 'delta', text: '30 ' },
-      { type: 'delta', text: 'days.' },
+      { type: 'delta', text: '30' },
+      { type: 'delta', text: ' days.' },
       { type: 'done', conversationId: 'conv-1', answeredBy: 'llm' },
     ]);
     // The question is embedded once and shared by both searches.

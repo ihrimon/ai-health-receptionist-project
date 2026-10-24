@@ -12,6 +12,7 @@ import { formatDateTime } from "@/lib/api";
 import { originLabel, timeAgo } from "@/lib/conversations";
 import { type LeadQuery, leadsApi, leadTitle } from "@/lib/leads";
 import { useSession } from "@/lib/session";
+import { useDebounced } from "@/lib/use-debounced";
 import { toastError, toastSuccess } from "@/lib/toast";
 
 const PAGE_SIZE = 25;
@@ -29,18 +30,12 @@ export default function LeadsPage() {
   const [search, setSearch] = useState("");
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
-  const [query, setQuery] = useState<LeadQuery>({});
+  const query: LeadQuery = useDebounced({ q: search, from, to }, SEARCH_DELAY_MS);
   const [items, setItems] = useState<LeadSummary[] | null>(null);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [deleting, setDeleting] = useState<LeadSummary | null>(null);
-
-  // Typing settles before searching.
-  useEffect(() => {
-    const timer = setTimeout(() => setQuery({ q: search, from, to }), SEARCH_DELAY_MS);
-    return () => clearTimeout(timer);
-  }, [search, from, to]);
 
   // A newer search can finish before an older one; only the latest counts.
   useEffect(() => {
