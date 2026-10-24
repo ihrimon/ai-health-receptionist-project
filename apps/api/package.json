@@ -26,6 +26,7 @@
     "test:load:vector": "ts-node -r tsconfig-paths/register test/load/vector-bench.ts",
     "test:load": "ts-node -r tsconfig-paths/register test/load/run.ts",
     "test:integration": "node --experimental-vm-modules node_modules/jest/bin/jest.js --config ./test/jest-integration.json --runInBand",
+    "llm:latency": "ts-node -r tsconfig-paths/register src/modules/llm/latency-probe.script.ts",
     "knowledge:eval": "ts-node -r tsconfig-paths/register src/modules/knowledge/eval/retrieval-eval.script.ts",
     "knowledge:reembed": "ts-node -r tsconfig-paths/register src/modules/knowledge/reembed.script.ts",
     "db:app-role": "ts-node -r tsconfig-paths/register src/database/app-role.script.ts",
