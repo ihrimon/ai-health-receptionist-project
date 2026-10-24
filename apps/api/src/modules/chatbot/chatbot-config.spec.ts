@@ -98,6 +98,33 @@ describe('chatbotConfigSchema', () => {
     ).toEqual([]);
   });
 
+  describe('social contacts (review item 8)', () => {
+    it('accepts a chatbot saved before they existed', () => {
+      const old = valid();
+      delete old.business.contact.facebook;
+      delete old.business.contact.linkedin;
+      delete old.business.contact.instagram;
+      expect(chatbotConfigSchema.safeParse(old).success).toBe(true);
+    });
+
+    it('takes a link for each, and turns a blank one into null', () => {
+      const config = valid();
+      config.business.contact.facebook = 'https://facebook.com/acme';
+      config.business.contact.linkedin = '   ';
+      const parsed = chatbotConfigSchema.parse(config);
+      expect(parsed.business.contact.facebook).toBe(
+        'https://facebook.com/acme',
+      );
+      expect(parsed.business.contact.linkedin).toBeNull();
+    });
+
+    it('rejects a value that is not a link', () => {
+      expect(
+        issuePaths((c) => (c.business.contact.instagram = '@acme')),
+      ).toEqual(['business.contact.instagram']);
+    });
+  });
+
   describe('handoff', () => {
     const handoff = (type: HandoffType, value: string | null) =>
       issuePaths((c) => (c.behavior.handoff = { type, value, label: null }));
